@@ -191,7 +191,7 @@ class WebRTCService(
             delay(2000)
             while (isActive && connectionState.value == PeerConnectionState.CONNECTED) {
                 peerConnection?.getStats { reports ->
-                    for (report in reports) {
+                    for (report in (reports as Map<String, RTCStats>).values) {
                         if (report.type == "inbound-rtp" && report.members["kind"] == "video") {
                             val w = (report.members["frameWidth"] as? String)?.toIntOrNull() ?: 0
                             val h = (report.members["frameHeight"] as? String)?.toIntOrNull() ?: 0

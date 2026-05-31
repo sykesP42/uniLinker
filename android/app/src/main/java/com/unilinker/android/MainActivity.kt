@@ -99,7 +99,9 @@ class MainActivity : ComponentActivity() {
                         onStrategySelected = { strategy ->
                             activeStrategyId = strategy.id
                             platform.config.set("active_strategy", strategy.id)
-                            strategy.start()
+                            kotlinx.coroutines.MainScope().launch {
+                                strategy.start()
+                            }
                         },
                         onConnectCode = { code ->
                             val codeStrategy = platform.strategies.firstOrNull {

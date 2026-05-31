@@ -6,6 +6,7 @@ import com.unilinker.android.core.strategies.LanMdnsStrategy
 import com.unilinker.android.core.strategies.ManualIpStrategy
 import com.unilinker.android.sdk.*
 import com.unilinker.android.sdk.models.PluginInfo
+import kotlinx.coroutines.runBlocking
 
 class Platform(
     private val context: Context,
@@ -63,7 +64,7 @@ class Platform(
                     object : IDeviceDiscovery {
                         override val isScanning = kotlinx.coroutines.flow.MutableStateFlow(false)
                         override fun discover() = it.discover()
-                        override fun stop() = it.stop()
+                        override fun stop() = runBlocking { it.stop() }
                     }
                 }
                 override val config = this@Platform.config
@@ -77,7 +78,9 @@ class Platform(
     fun getRegisteredTabs(): List<PluginTab> = pendingTabs.toList()
 
     fun onDestroy() {
-        strategies.forEach { runCatching { it.stop() } }
-        plugins.values.forEach { runCatching { it.shutdown() } }
+        runBlocking {
+            strategies.forEach { runCatching { it.stop() } }
+            plugins.values.forEach { runCatching { it.shutdown() } }
+        }
     }
 }
