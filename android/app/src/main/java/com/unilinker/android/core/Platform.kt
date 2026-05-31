@@ -1,28 +1,40 @@
 package com.unilinker.android.core
 
 import android.content.Context
+import com.unilinker.android.core.strategies.ConnectionCodeStrategy
+import com.unilinker.android.core.strategies.LanMdnsStrategy
+import com.unilinker.android.core.strategies.ManualIpStrategy
 import com.unilinker.android.sdk.*
 import com.unilinker.android.sdk.models.PluginInfo
 
 class Platform(
     private val context: Context,
 ) {
-    val discovery = DiscoveryService(context)
+    // Connection strategies
+    val lanStrategy = LanMdnsStrategy(context)
+    val manualIpStrategy = ManualIpStrategy()
+    val codeStrategy = ConnectionCodeStrategy()
+
+    val strategies: List<IConnectionStrategy> = listOf(
+        lanStrategy,
+        manualIpStrategy,
+        codeStrategy,
+    )
+
+    val activeStrategy: IConnectionStrategy
+        get() = strategies.firstOrNull { it.id == config.get("active_strategy", "lan-mdns") }
+            ?: lanStrategy
+
     val config = ConfigStore(context)
 
     private val plugins = mutableMapOf<String, IPlugin>()
     val loadedPlugins: Map<String, IPlugin> get() = plugins
 
-    private data class RegisteredTab(
-        val pluginId: String,
-        val tab: PluginTab,
-    )
-
-    private val pendingTabs = mutableListOf<RegisteredTab>()
+    private val pendingTabs = mutableListOf<PluginTab>()
 
     val uiProvider = object : IUIProvider {
         override fun registerTab(tab: PluginTab) {
-            pendingTabs.add(RegisteredTab(tab.pluginId, tab))
+            pendingTabs.add(tab)
         }
     }
 
@@ -31,6 +43,10 @@ class Platform(
     }
 
     suspend fun start() {
+        // Start the active connection strategy
+        activeStrategy.start()
+
+        // Initialize all plugins
         for ((id, plugin) in plugins) {
             val info = PluginInfo(
                 id = plugin.id,
@@ -39,26 +55,29 @@ class Platform(
                 capabilities = plugin.capabilities,
             )
 
-            val context = object : IPluginContext {
+            val ctx = object : IPluginContext {
                 override val self = info
-                // Note: peers is created per-connection by the plugin itself
                 override val peers get() = throw UnsupportedOperationException(
-                    "Peers are managed by plugin implementation")
-                override val discovery = this@Platform.discovery
+                    "Peers managed by plugin")
+                override val discovery = this@Platform.lanStrategy.let {
+                    object : IDeviceDiscovery {
+                        override val isScanning = kotlinx.coroutines.flow.MutableStateFlow(false)
+                        override fun discover() = it.discover()
+                        override fun stop() = it.stop()
+                    }
+                }
                 override val config = this@Platform.config
                 override val ui = uiProvider
             }
 
-            val ok = plugin.initialize(context)
-            if (!ok) {
-                plugins.remove(id)
-            }
+            runCatching { plugin.initialize(ctx) }
         }
     }
 
-    fun getRegisteredTabs(): List<RegisteredTab> = pendingTabs.toList()
+    fun getRegisteredTabs(): List<PluginTab> = pendingTabs.toList()
 
     fun onDestroy() {
+        strategies.forEach { runCatching { it.stop() } }
         plugins.values.forEach { runCatching { it.shutdown() } }
     }
 }
