@@ -6,7 +6,7 @@ public class ScreenMirrorPlugin : IPlugin
 {
     private IPluginContext? _ctx;
     private WgcCapture? _capture;
-    private MfEncoder? _encoder;
+    private FfmpegEncoder? _encoder;
     private bool _isSharing;
 
     public string Id => "com.unilinker.screen-mirror";
@@ -19,7 +19,7 @@ public class ScreenMirrorPlugin : IPlugin
     {
         _ctx = context;
         _capture = new WgcCapture();
-        _encoder = new MfEncoder();
+        _encoder = new FfmpegEncoder();
 
         _ctx.UI.RegisterPanel(Id, new PanelInfo
         {

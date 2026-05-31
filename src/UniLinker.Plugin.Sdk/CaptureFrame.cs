@@ -5,4 +5,5 @@ public record CaptureFrame(
     int Width,
     int Height,
     int Pitch,
-    long TimestampUs);
+    long TimestampUs,
+    byte[]? RawData = null);

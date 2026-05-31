@@ -1,3 +1,5 @@
+using System.Drawing;
+using System.Drawing.Imaging;
 using System.Runtime.InteropServices;
 using Windows.Graphics;
 using Windows.Graphics.Capture;
@@ -83,14 +85,29 @@ public class WgcCapture : ICapture
             using var frame = sender.TryGetNextFrame();
             if (frame == null) return;
 
+            // GDI fallback: capture screen using CopyFromScreen.
+            // This is slower than D3D11 texture readback (10-30ms vs 1-3ms)
+            // but is reliable and produces real BGRA pixel data.
+            // TODO: replace with D3D11 staging texture readback for lower latency.
+            using var bitmap = new Bitmap(_width, _height);
+            using var g = Graphics.FromImage(bitmap);
+            g.CopyFromScreen(0, 0, 0, 0, new Size(_width, _height));
+
+            var rect = new Rectangle(0, 0, bitmap.Width, bitmap.Height);
+            var bmpData = bitmap.LockBits(rect, ImageLockMode.ReadOnly, PixelFormat.Format32bppArgb);
+            var rawData = new byte[bmpData.Stride * bmpData.Height];
+            Marshal.Copy(bmpData.Scan0, rawData, 0, rawData.Length);
+            bitmap.UnlockBits(bmpData);
+
             var ts = (long)(frame.SystemRelativeTime.TotalMilliseconds * 1000);
 
             var captureFrame = new CaptureFrame(
-                D3dTexture: 0, // Native texture pointer not directly accessible
-                Width: frame.ContentSize.Width,
-                Height: frame.ContentSize.Height,
-                Pitch: frame.ContentSize.Width * 4,
-                TimestampUs: ts);
+                D3dTexture: 0,
+                Width: _width,
+                Height: _height,
+                Pitch: bmpData.Stride,
+                TimestampUs: ts,
+                RawData: rawData);
 
             FrameCaptured?.Invoke(captureFrame);
         }

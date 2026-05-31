@@ -22,6 +22,8 @@ public class PeerConnection : IDisposable
     public string Id { get; } = Guid.NewGuid().ToString("N")[..8];
     public PeerInfo RemotePeer { get; }
     public PeerConnectionState State { get; private set; } = PeerConnectionState.New;
+    public int LocalRtpPort => _localRtpPort;
+    public IPEndPoint? RemoteEndPoint => _remoteEndPoint;
 
     public event Action<byte[]>? RtpPacketReceived;
     public event Action<PeerConnectionState>? StateChanged;
@@ -29,6 +31,18 @@ public class PeerConnection : IDisposable
     public PeerConnection(PeerInfo remotePeer)
     {
         RemotePeer = remotePeer;
+    }
+
+    /// <summary>Directly set the remote endpoint without parsing SDP.</summary>
+    public void SetRemoteEndPoint(string ip, int port)
+    {
+        _remoteEndPoint = new IPEndPoint(IPAddress.Parse(ip), port);
+    }
+
+    /// <summary>Directly set the remote endpoint from an IPEndPoint.</summary>
+    public void SetRemoteEndPoint(IPEndPoint endpoint)
+    {
+        _remoteEndPoint = endpoint;
     }
 
     /// <summary>Generate an SDP offer to initiate a media stream.</summary>
@@ -47,7 +61,7 @@ public class PeerConnection : IDisposable
         sb.AppendLine($"m=video {_localRtpPort} RTP/AVP 96");
         sb.AppendLine("a=rtpmap:96 H264/90000");
         sb.AppendLine("a=fmtp:96 profile-level-id=640028; packetization-mode=1");
-        sb.AppendLine("a=sendonly");
+        sb.AppendLine("a=recvonly");
         sb.AppendLine($"a=rtcp:{_localRtcpPort}");
         return sb.ToString();
     }
@@ -68,7 +82,7 @@ public class PeerConnection : IDisposable
         sb.AppendLine($"m=video {_localRtpPort} RTP/AVP 96");
         sb.AppendLine("a=rtpmap:96 H264/90000");
         sb.AppendLine("a=fmtp:96 profile-level-id=640028; packetization-mode=1");
-        sb.AppendLine("a=recvonly");
+        sb.AppendLine("a=sendonly");
         sb.AppendLine($"a=rtcp:{_localRtcpPort}");
         return sb.ToString();
     }

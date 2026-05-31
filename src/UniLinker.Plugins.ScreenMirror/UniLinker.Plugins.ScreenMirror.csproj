@@ -10,4 +10,7 @@
     <ProjectReference Include="..\UniLinker.Plugin.Sdk\UniLinker.Plugin.Sdk.csproj" />
     <FrameworkReference Include="Microsoft.Windows.SDK.NET.Ref" />
   </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="System.Drawing.Common" Version="10.0.8" />
+  </ItemGroup>
 </Project>

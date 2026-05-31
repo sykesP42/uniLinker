@@ -43,27 +43,109 @@ public class WebBridge
     }
 
     // Called from JS: StartSharing(configJson)
-    public void StartSharing(string configJson)
+    public async void StartSharing(string configJson)
     {
-        System.Diagnostics.Debug.WriteLine($"StartSharing: {configJson}");
+        try
+        {
+            var opts = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(configJson);
+            // Update screen-mirror config so the plugin picks it up on next channel request
+            _platform.Context.Config.Set("screen-mirror", new
+            {
+                CaptureWidth = opts?.GetValueOrDefault("width", default).GetInt32() ?? 1920,
+                CaptureHeight = opts?.GetValueOrDefault("height", default).GetInt32() ?? 1080,
+                CaptureFps = opts?.GetValueOrDefault("fps", default).GetInt32() ?? 30,
+                BitrateKbps = opts?.GetValueOrDefault("bitrate", default).GetInt32() ?? 15000,
+            });
+            await _platform.Context.Config.SaveAsync();
+            System.Diagnostics.Debug.WriteLine($"StartSharing: configured {configJson}");
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"StartSharing error: {ex.Message}");
+        }
     }
 
     // Called from JS: StopSharing()
-    public void StopSharing()
+    public async void StopSharing()
     {
-        System.Diagnostics.Debug.WriteLine("StopSharing called");
+        try
+        {
+            if (_platform.PeerMesh != null)
+            {
+                var peers = _platform.PeerMesh.ConnectedPeers;
+                foreach (var peer in peers)
+                {
+                    await _platform.PeerMesh.DisconnectPeer(peer);
+                }
+            }
+            System.Diagnostics.Debug.WriteLine("StopSharing: disconnected all peers");
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"StopSharing error: {ex.Message}");
+        }
     }
 
     // Called from JS: WatchDevice(peerId)
-    public void WatchDevice(string peerId)
+    public async void WatchDevice(string peerId)
     {
-        System.Diagnostics.Debug.WriteLine($"WatchDevice: {peerId}");
+        try
+        {
+            var peer = _platform.Discovery?.KnownDevices
+                .FirstOrDefault(p => p.Id == peerId);
+            if (peer == null)
+            {
+                System.Diagnostics.Debug.WriteLine($"WatchDevice: peer {peerId} not found");
+                return;
+            }
+
+            // Request screen-capture from peer — triggers their ChannelRequested handler
+            var channel = await (_platform.PeerMesh?.CreateChannel(peer, "screen-capture") ?? Task.FromResult<IChannel?>(null));
+
+            if (channel != null)
+            {
+                // Subscribe to received packets (depacketized NAL units from RTP)
+                var frameCount = 0;
+                var keyFrameCount = 0;
+                channel.PacketReceived += packet =>
+                {
+                    frameCount++;
+                    if (packet.IsKeyFrame) keyFrameCount++;
+                    if (frameCount % 60 == 0)
+                    {
+                        System.Diagnostics.Debug.WriteLine(
+                            $"[Watch] Received {frameCount} frames ({keyFrameCount} keyframes) " +
+                            $"from {peer.Name}, last packet {packet.Data.Length} bytes");
+                    }
+                };
+
+                System.Diagnostics.Debug.WriteLine(
+                    $"WatchDevice: channel opened to {peer.Name}, receiving on local port");
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"WatchDevice error: {ex.Message}");
+        }
     }
 
     // Called from JS: StopWatching(peerId)
-    public void StopWatching(string peerId)
+    public async void StopWatching(string peerId)
     {
-        System.Diagnostics.Debug.WriteLine($"StopWatching: {peerId}");
+        try
+        {
+            var peers = _platform.PeerMesh?.ConnectedPeers ?? [];
+            var peer = peers.FirstOrDefault(p => p.Id == peerId);
+            if (peer != null)
+            {
+                await (_platform.PeerMesh?.DisconnectPeer(peer) ?? Task.CompletedTask);
+                System.Diagnostics.Debug.WriteLine($"StopWatching: disconnected from {peer.Name}");
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"StopWatching error: {ex.Message}");
+        }
     }
 
     // Called from JS: GetConfig()
