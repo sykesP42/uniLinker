@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">UniLinker</string>
+    <string name="tab_devices">设备</string>
+    <string name="tab_stream">投屏</string>
+    <string name="btn_connect">连接</string>
+    <string name="btn_disconnect">断开</string>
+    <string name="status_searching">搜索设备中…</string>
+    <string name="status_no_devices">未发现设备</string>
+    <string name="status_connecting">连接中…</string>
+    <string name="status_connected">已连接</string>
+    <string name="status_disconnected">已断开</string>
+    <string name="error_network">网络连接失败</string>
+    <string name="error_signaling">信令交换失败</string>
+</resources>
