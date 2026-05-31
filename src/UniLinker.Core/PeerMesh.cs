@@ -1,5 +1,3 @@
-using System.Net;
-using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
 using UniLinker.Plugin.Sdk;
@@ -29,7 +27,6 @@ public class PeerMesh : IPeerMesh, IDisposable
 
     /// <summary>
     /// Raise ChannelRequested from external code (e.g. SignalingServer).
-    /// C# events can only be invoked from the declaring class.
     /// </summary>
     public async Task<IChannel?> RaiseChannelRequestedAsync(PeerInfo peer, string capability)
     {
@@ -46,11 +43,12 @@ public class PeerMesh : IPeerMesh, IDisposable
     }
 
     /// <summary>
-    /// Register a PeerConnection for an incoming SDP offer.
-    /// The remote endpoint (IP:port from the offer) is already set on the connection.
+    /// Register a PeerConnection for an incoming SDP offer (from a browser or another device).
     /// Called by SignalingServer when it receives an offer.
+    /// The caller should have already called InitializeAsync and SetRemoteDescriptionAsync
+    /// on this PeerConnection before registering.
     /// </summary>
-    public PeerConnection RegisterIncomingConnection(PeerInfo peer, string remoteIp, int remotePort)
+    public PeerConnection RegisterIncomingConnection(PeerInfo peer)
     {
         lock (_lock)
         {
@@ -59,13 +57,10 @@ public class PeerMesh : IPeerMesh, IDisposable
 
             if (_connections.TryGetValue(peer.Id, out var existing))
             {
-                // Update remote endpoint on existing connection
-                existing.SetRemoteEndPoint(remoteIp, remotePort);
                 return existing;
             }
 
             var pc = new PeerConnection(peer);
-            pc.SetRemoteEndPoint(remoteIp, remotePort);
             WireConnectionEvents(pc, peer);
             _connections[peer.Id] = pc;
             return pc;
@@ -73,33 +68,31 @@ public class PeerMesh : IPeerMesh, IDisposable
     }
 
     /// <summary>
-    /// Create a channel to a remote peer.
+    /// Create a channel to a remote peer for a given capability.
     ///
-    /// Two scenarios:
-    /// 1. OUTGOING (watcher): No existing connection — creates offer, HTTP POSTs to peer's
-    ///    signaling server, gets answer, sets remote endpoint, starts receiving.
-    /// 2. INCOMING (sender): Connection was already registered by SignalingServer with
-    ///    remote endpoint set — just creates the channel wrapper and starts sending.
+    /// INCOMING path (sender/host): Connection was pre-registered by SignalingServer
+    ///   with SDP offer already handled. We just create the channel wrapper.
+    ///
+    /// OUTGOING path (watcher): Create new PeerConnection, perform SDP exchange
+    ///   via HTTP to the remote peer's signaling server.
     /// </summary>
     public async Task<IChannel?> CreateChannel(
         PeerInfo peer, string capability, ChannelOptions? options = null)
     {
         PeerConnection pc;
-        bool isSender; // true = we send media (screen capture host), false = we receive (watcher)
+        bool isSender;
 
         lock (_lock)
         {
             if (_connections.TryGetValue(peer.Id, out var existing))
             {
                 // INCOMING path: connection was pre-registered by SignalingServer.
-                // We are the SENDER (host sharing screen).
                 pc = existing;
                 isSender = true;
             }
             else
             {
                 // OUTGOING path: create a new connection, will do SDP exchange.
-                // We are the RECEIVER (watcher).
                 pc = new PeerConnection(peer);
                 WireConnectionEvents(pc, peer);
                 _connections[peer.Id] = pc;
@@ -108,17 +101,21 @@ public class PeerMesh : IPeerMesh, IDisposable
             }
         }
 
-        // OUTGOING (watcher) path: perform SDP exchange via HTTP
+        // OUTGOING (watcher) path: perform WebRTC SDP exchange via HTTP
         if (!isSender)
         {
-            var success = await PerformSdpExchangeAsync(pc, peer, capability);
+            var initialized = await pc.InitializeAsync();
+            if (!initialized)
+            {
+                RemoveConnection(peer.Id);
+                pc.Dispose();
+                return null;
+            }
+
+            var success = await PerformWebRtcExchangeAsync(pc, peer, capability);
             if (!success)
             {
-                lock (_lock)
-                {
-                    _connections.Remove(peer.Id);
-                    _peers.Remove(peer.Id);
-                }
+                RemoveConnection(peer.Id);
                 pc.Dispose();
                 return null;
             }
@@ -130,22 +127,22 @@ public class PeerMesh : IPeerMesh, IDisposable
     }
 
     /// <summary>
-    /// Send an SDP offer to the remote peer's signaling server,
-    /// receive the answer, and parse the remote endpoint.
+    /// Perform WebRTC SDP exchange: create offer, POST to remote signaling,
+    /// receive answer, set remote description.
     /// </summary>
-    private async Task<bool> PerformSdpExchangeAsync(
+    private async Task<bool> PerformWebRtcExchangeAsync(
         PeerConnection pc, PeerInfo peer, string capability)
     {
         try
         {
-            // Generate SDP offer with our local RTP port
-            var offer = pc.CreateOffer();
+            // Generate SDP offer
+            var offerSdp = await pc.CreateOfferAsync();
 
             // Build signaling message
             var msg = new SignalingMessage
             {
                 Type = "offer",
-                Sdp = offer,
+                Sdp = offerSdp,
                 FromPeerId = GetLocalDeviceId(),
                 Capability = capability,
             };
@@ -167,7 +164,7 @@ public class PeerMesh : IPeerMesh, IDisposable
             if (!response.IsSuccessStatusCode)
             {
                 System.Diagnostics.Debug.WriteLine(
-                    $"[PeerMesh] SDP exchange failed: HTTP {(int)response.StatusCode}");
+                    $"[PeerMesh] WebRTC exchange failed: HTTP {(int)response.StatusCode}");
                 return false;
             }
 
@@ -179,29 +176,31 @@ public class PeerMesh : IPeerMesh, IDisposable
 
             if (answer == null || string.IsNullOrEmpty(answer.Sdp))
             {
-                System.Diagnostics.Debug.WriteLine("[PeerMesh] SDP exchange failed: empty answer");
+                System.Diagnostics.Debug.WriteLine("[PeerMesh] WebRTC exchange failed: empty answer");
                 return false;
             }
 
-            // Parse the answer to extract remote RTP port
-            pc.ParseRemoteSdp(answer.Sdp);
-
-            if (pc.RemoteEndPoint == null)
-            {
-                System.Diagnostics.Debug.WriteLine(
-                    "[PeerMesh] SDP exchange failed: could not parse remote endpoint from answer");
-                return false;
-            }
+            // Set remote SDP (answer)
+            await pc.SetRemoteDescriptionAsync(answer.Sdp, isOffer: false);
 
             System.Diagnostics.Debug.WriteLine(
-                $"[PeerMesh] SDP exchange complete: remote={pc.RemoteEndPoint}, localRtpPort={pc.LocalRtpPort}");
+                $"[PeerMesh] WebRTC exchange complete for peer {peer.Name}");
 
             return true;
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"[PeerMesh] SDP exchange error: {ex.Message}");
+            System.Diagnostics.Debug.WriteLine($"[PeerMesh] WebRTC exchange error: {ex.Message}");
             return false;
+        }
+    }
+
+    private void RemoveConnection(string peerId)
+    {
+        lock (_lock)
+        {
+            _connections.Remove(peerId);
+            _peers.Remove(peerId);
         }
     }
 
@@ -217,27 +216,24 @@ public class PeerMesh : IPeerMesh, IDisposable
             else if (state is PeerConnectionState.Closed or PeerConnectionState.Failed)
             {
                 peer.State = PeerState.Disconnected;
-                lock (_lock)
-                {
-                    _peers.Remove(peer.Id);
-                    _connections.Remove(peer.Id);
-                }
                 PeerDisconnected?.Invoke(peer);
+                RemoveConnection(peer.Id);
             }
         };
     }
 
     public async Task DisconnectPeer(PeerInfo peer)
     {
+        PeerConnection? pc;
         lock (_lock)
         {
-            if (_connections.TryGetValue(peer.Id, out var pc))
-            {
-                pc.Dispose();
-                _connections.Remove(peer.Id);
-                _peers.Remove(peer.Id);
-            }
+            _connections.TryGetValue(peer.Id, out pc);
         }
+        if (pc != null)
+        {
+            await pc.CloseAsync();
+        }
+        RemoveConnection(peer.Id);
         await Task.CompletedTask;
     }
 
@@ -266,13 +262,12 @@ public class PeerMesh : IPeerMesh, IDisposable
 }
 
 /// <summary>
-/// Wraps a PeerConnection as an IChannel for media streaming.
+/// Wraps a PeerConnection as an IChannel for WebRTC media streaming.
 /// </summary>
 internal class PeerChannel : IChannel
 {
     private readonly PeerConnection _pc;
     private readonly bool _isSender;
-    private readonly RtpDepacketizer? _depacketizer;
 
     public string Id { get; } = Guid.NewGuid().ToString("N")[..8];
     public ChannelType Type { get; }
@@ -297,42 +292,35 @@ internal class PeerChannel : IChannel
 
         if (!isSender)
         {
-            // Receiver side: set up depacketizer and forward decoded packets
-            _depacketizer = new RtpDepacketizer();
-            _pc.RtpPacketReceived += OnRtpPacketReceived;
+            // Receiver side: listen for incoming RTP packets
+            // In WebRTC mode, the browser handles decoding; we forward raw data
+            _pc.IceCandidatesGenerated += OnIceCandidates;
         }
     }
 
-    private void OnRtpPacketReceived(byte[] rtpPacket)
+    private void OnIceCandidates(List<SIPSorcery.Net.RTCIceCandidate> candidates)
     {
-        var nal = _depacketizer?.ProcessPacket(rtpPacket);
-        if (nal != null)
+        // ICE candidates are handled at the signaling level,
+        // but we can log them here for debugging.
+        foreach (var c in candidates)
         {
-            // Fire as an EncodedPacket for consumers
-            var packet = new EncodedPacket(nal, DateTimeOffset.UtcNow.Ticks, IsKeyFrame(nal));
-            PacketReceived?.Invoke(packet);
+            System.Diagnostics.Debug.WriteLine($"[Channel:{Id}] ICE candidate: {c}");
         }
-    }
-
-    private static bool IsKeyFrame(byte[] nal)
-    {
-        if (nal.Length == 0) return false;
-        var nalType = nal[0] & 0x1F;
-        // Type 5 = IDR slice (keyframe), Type 7 = SPS, Type 8 = PPS
-        return nalType == 5 || nalType == 7 || nalType == 8;
     }
 
     public async Task OpenAsync()
     {
-        if (_isSender)
+        if (!_isSender)
         {
-            await _pc.StartSendingAsync();
+            // Receiver side: initialize and wait for connection
+            var ok = await _pc.InitializeAsync();
+            if (!ok)
+            {
+                State = ChannelState.Closed;
+                return;
+            }
         }
-        else
-        {
-            // Start receiving on the local RTP port chosen during CreateOffer
-            _pc.StartReceiving(_pc.LocalRtpPort);
-        }
+        // For sender, the connection was already initialized by SignalingServer.
         State = ChannelState.Open;
     }
 
@@ -342,13 +330,18 @@ internal class PeerChannel : IChannel
     public async Task SendPacketAsync(EncodedPacket packet)
     {
         if (State == ChannelState.Open && _isSender)
-            await _pc.SendEncodedPacketAsync(packet);
+        {
+            // Convert timestamp from microseconds to RTP timestamp units (90kHz clock)
+            var rtpTimestamp = (uint)(packet.TimestampUs * 90 / 1000);
+            _pc.SendVideoFrame(rtpTimestamp, packet.Data);
+        }
+        await Task.CompletedTask;
     }
 
     public void Dispose()
     {
         if (!_isSender)
-            _pc.RtpPacketReceived -= OnRtpPacketReceived;
+            _pc.IceCandidatesGenerated -= OnIceCandidates;
         State = ChannelState.Closed;
         OnClose?.Invoke();
     }

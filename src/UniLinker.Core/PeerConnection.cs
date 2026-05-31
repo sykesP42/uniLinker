@@ -1,192 +1,203 @@
 using System.Net;
-using System.Net.Sockets;
-using System.Text;
+using SIPSorcery.Net;
+using SIPSorceryMedia.Abstractions;
 using UniLinker.Plugin.Sdk;
 
 namespace UniLinker.Core;
 
 /// <summary>
-/// Minimal LAN peer connection: SDP exchange + RTP over UDP.
-/// No ICE/STUN/TURN — direct UDP on known IP:port.
+/// Wraps SIPSorcery's RTCPeerConnection for standard WebRTC.
+/// Handles SDP exchange, ICE candidates, and H.264 video sending.
+/// Any browser (Chrome, Firefox, Safari) can connect via standard WebRTC.
+///
+/// SIPSorcery v8 API notes:
+/// - createOffer/createAnswer return SDP objects (not RTCSessionDescriptionInit)
+/// - setLocalDescription/setRemoteDescription are synchronous
+/// - localDescription is an SDP? (use .ToString() for the SDP text)
 /// </summary>
 public class PeerConnection : IDisposable
 {
-    private UdpClient? _rtpClient;
-    private IPEndPoint? _remoteEndPoint;
-    private RtpPacketizer? _packetizer;
-    private UdpClient? _rtpListener;
-    private int _localRtpPort;
-    private int _localRtcpPort;
-    private CancellationTokenSource? _listenCts;
+    private RTCPeerConnection? _pc;
+    private readonly string _id = Guid.NewGuid().ToString("N")[..8];
+    private bool _isInitialized;
 
-    public string Id { get; } = Guid.NewGuid().ToString("N")[..8];
+    public string Id => _id;
     public PeerInfo RemotePeer { get; }
     public PeerConnectionState State { get; private set; } = PeerConnectionState.New;
-    public int LocalRtpPort => _localRtpPort;
-    public IPEndPoint? RemoteEndPoint => _remoteEndPoint;
 
-    public event Action<byte[]>? RtpPacketReceived;
     public event Action<PeerConnectionState>? StateChanged;
+    public event Action<List<RTCIceCandidate>>? IceCandidatesGenerated;
 
     public PeerConnection(PeerInfo remotePeer)
     {
         RemotePeer = remotePeer;
     }
 
-    /// <summary>Directly set the remote endpoint without parsing SDP.</summary>
-    public void SetRemoteEndPoint(string ip, int port)
+    /// <summary>Initialize the RTCPeerConnection with a send-only H.264 video track.</summary>
+    public Task<bool> InitializeAsync()
     {
-        _remoteEndPoint = new IPEndPoint(IPAddress.Parse(ip), port);
-    }
+        if (_isInitialized) return Task.FromResult(true);
+        if (_pc != null) return Task.FromResult(true);
 
-    /// <summary>Directly set the remote endpoint from an IPEndPoint.</summary>
-    public void SetRemoteEndPoint(IPEndPoint endpoint)
-    {
-        _remoteEndPoint = endpoint;
-    }
-
-    /// <summary>Generate an SDP offer to initiate a media stream.</summary>
-    public string CreateOffer()
-    {
-        _localRtpPort = GetRandomPort();
-        _localRtcpPort = _localRtpPort + 1;
-        var localIp = GetLocalIP();
-
-        var sb = new StringBuilder();
-        sb.AppendLine("v=0");
-        sb.AppendLine($"o=- {DateTimeOffset.UtcNow.ToUnixTimeSeconds()} 1 IN IP4 {localIp}");
-        sb.AppendLine("s=UniLinker Stream");
-        sb.AppendLine($"c=IN IP4 {localIp}");
-        sb.AppendLine("t=0 0");
-        sb.AppendLine($"m=video {_localRtpPort} RTP/AVP 96");
-        sb.AppendLine("a=rtpmap:96 H264/90000");
-        sb.AppendLine("a=fmtp:96 profile-level-id=640028; packetization-mode=1");
-        sb.AppendLine("a=recvonly");
-        sb.AppendLine($"a=rtcp:{_localRtcpPort}");
-        return sb.ToString();
-    }
-
-    /// <summary>Create an SDP answer in response to an offer.</summary>
-    public string CreateAnswer()
-    {
-        _localRtpPort = GetRandomPort();
-        _localRtcpPort = _localRtpPort + 1;
-        var localIp = GetLocalIP();
-
-        var sb = new StringBuilder();
-        sb.AppendLine("v=0");
-        sb.AppendLine($"o=- {DateTimeOffset.UtcNow.ToUnixTimeSeconds()} 1 IN IP4 {localIp}");
-        sb.AppendLine("s=UniLinker Stream");
-        sb.AppendLine($"c=IN IP4 {localIp}");
-        sb.AppendLine("t=0 0");
-        sb.AppendLine($"m=video {_localRtpPort} RTP/AVP 96");
-        sb.AppendLine("a=rtpmap:96 H264/90000");
-        sb.AppendLine("a=fmtp:96 profile-level-id=640028; packetization-mode=1");
-        sb.AppendLine("a=sendonly");
-        sb.AppendLine($"a=rtcp:{_localRtcpPort}");
-        return sb.ToString();
-    }
-
-    /// <summary>Parse remote SDP and extract connection info.</summary>
-    public void ParseRemoteSdp(string sdp)
-    {
-        string? remoteIp = null;
-        int? remotePort = null;
-
-        foreach (var line in sdp.Split('\n', StringSplitOptions.RemoveEmptyEntries))
+        try
         {
-            var trimmed = line.Trim();
-            if (trimmed.StartsWith("c=IN IP4 "))
-                remoteIp = trimmed["c=IN IP4 ".Length..];
-            else if (trimmed.StartsWith("m=video "))
+            var config = new RTCConfiguration
             {
-                var parts = trimmed.Split(' ');
-                if (parts.Length > 1 && int.TryParse(parts[1], out var port))
-                    remotePort = port;
+                iceServers = new List<RTCIceServer>() // LAN only, no STUN needed initially
+            };
+
+            _pc = new RTCPeerConnection(config);
+
+            // Add H.264 video track (send only)
+            var videoFormat = new VideoFormat(VideoCodecsEnum.H264, 96, 90000);
+            var videoTrack = new MediaStreamTrack(videoFormat, MediaStreamStatusEnum.SendOnly);
+            _pc.addTrack(videoTrack);
+
+            _pc.onconnectionstatechange += state =>
+            {
+                State = state switch
+                {
+                    RTCPeerConnectionState.connected => PeerConnectionState.Connected,
+                    RTCPeerConnectionState.disconnected => PeerConnectionState.Disconnected,
+                    RTCPeerConnectionState.failed => PeerConnectionState.Failed,
+                    RTCPeerConnectionState.closed => PeerConnectionState.Closed,
+                    _ => PeerConnectionState.Connecting,
+                };
+                System.Diagnostics.Debug.WriteLine($"[PC:{_id}] Connection state: {State}");
+                StateChanged?.Invoke(State);
+            };
+
+            _pc.onicecandidate += candidate =>
+            {
+                if (candidate != null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[PC:{_id}] ICE candidate: {candidate}");
+                    IceCandidatesGenerated?.Invoke(new List<RTCIceCandidate> { candidate });
+                }
+            };
+
+            _isInitialized = true;
+            return Task.FromResult(true);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[PC:{_id}] Init failed: {ex.Message}");
+            return Task.FromResult(false);
+        }
+    }
+
+    /// <summary>
+    /// Create an SDP offer for initiating a stream.
+    /// Used by the watcher (video receiver) side.
+    /// </summary>
+    public Task<string> CreateOfferAsync()
+    {
+        if (_pc == null) throw new InvalidOperationException("Not initialized");
+
+        var offer = _pc.createOffer(new RTCOfferOptions());
+        _pc.setLocalDescription(new RTCSessionDescriptionInit
+        {
+            type = RTCSdpType.offer,
+            sdp = offer.ToString()
+        });
+
+        // Wait for ICE gathering to complete (with timeout)
+        var tcs = new TaskCompletionSource<string>();
+        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+
+        _pc.onicegatheringstatechange += state =>
+        {
+            if (state == RTCIceGatheringState.complete && _pc.localDescription != null)
+            {
+                tcs.TrySetResult(_pc.localDescription.ToString());
             }
-        }
+        };
 
-        if (remoteIp != null && remotePort.HasValue)
-        {
-            _remoteEndPoint = new IPEndPoint(IPAddress.Parse(remoteIp), remotePort.Value);
-        }
-    }
-
-    /// <summary>Start the sender side: create UDP socket and RTP packetizer.</summary>
-    public async Task StartSendingAsync()
-    {
-        _packetizer = new RtpPacketizer();
-        _rtpClient = new UdpClient();
-        SetState(PeerConnectionState.Connected);
-        await Task.CompletedTask;
-    }
-
-    /// <summary>Send an encoded H.264 packet as RTP over UDP.</summary>
-    public async Task SendEncodedPacketAsync(EncodedPacket packet)
-    {
-        if (_rtpClient == null || _remoteEndPoint == null || _packetizer == null)
-            return;
-
-        var rtpPackets = _packetizer.Packetize(packet.Data, packet.TimestampUs);
-        foreach (var rtp in rtpPackets)
-        {
-            await _rtpClient.SendAsync(rtp, rtp.Length, _remoteEndPoint);
-        }
-    }
-
-    /// <summary>Start receiving RTP on a local port.</summary>
-    public void StartReceiving(int localPort)
-    {
-        _listenCts = new CancellationTokenSource();
-        _rtpListener = new UdpClient(localPort);
-
+        // Fallback after timeout
         _ = Task.Run(async () =>
         {
-            try
-            {
-                while (!_listenCts.IsCancellationRequested)
-                {
-                    var result = await _rtpListener.ReceiveAsync(_listenCts.Token);
-                    RtpPacketReceived?.Invoke(result.Buffer);
-                }
-            }
-            catch (OperationCanceledException) { }
-            catch (SocketException) { }
-        });
+            await Task.Delay(3000, cts.Token);
+            var sdpText = _pc?.localDescription?.ToString() ?? "";
+            tcs.TrySetResult(sdpText);
+        }, cts.Token);
+
+        return tcs.Task;
     }
 
-    public void StopReceiving()
+    /// <summary>
+    /// Set the remote SDP from the other peer.
+    /// If isOffer is true, also creates and sets a local answer.
+    /// </summary>
+    public Task SetRemoteDescriptionAsync(string sdp, bool isOffer)
     {
-        _listenCts?.Cancel();
-        _rtpListener?.Dispose();
-        _rtpListener = null;
+        if (_pc == null) return Task.CompletedTask;
+
+        _pc.setRemoteDescription(new RTCSessionDescriptionInit
+        {
+            type = isOffer ? RTCSdpType.offer : RTCSdpType.answer,
+            sdp = sdp
+        });
+
+        if (isOffer)
+        {
+            var answer = _pc.createAnswer(new RTCAnswerOptions());
+            _pc.setLocalDescription(new RTCSessionDescriptionInit
+            {
+                type = RTCSdpType.answer,
+                sdp = answer.ToString()
+            });
+
+            var localSdp = _pc.localDescription?.ToString() ?? "";
+            System.Diagnostics.Debug.WriteLine($"[PC:{_id}] Answer created:\n{localSdp}");
+        }
+
+        return Task.CompletedTask;
+    }
+
+    /// <summary>Get local SDP as a string, after setting remote description.</summary>
+    public string? GetLocalSdp()
+    {
+        return _pc?.localDescription?.ToString();
+    }
+
+    /// <summary>Add a remote ICE candidate.</summary>
+    public void AddIceCandidate(RTCIceCandidateInit candidate)
+    {
+        _pc?.addIceCandidate(candidate);
+    }
+
+    /// <summary>
+    /// Send an encoded H.264 NAL unit via WebRTC.
+    /// The buffer should be a single H.264 NAL unit (no start code prefix).
+    /// Timestamp is in microseconds.
+    /// </summary>
+    public void SendVideoFrame(uint timestamp, byte[] h264Nal)
+    {
+        if (_pc == null || State != PeerConnectionState.Connected) return;
+
+        try
+        {
+            _pc.SendVideo(timestamp, h264Nal);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[PC:{_id}] SendVideo error: {ex.Message}");
+        }
+    }
+
+    public Task CloseAsync()
+    {
+        _pc?.close();
+        _isInitialized = false;
+        return Task.CompletedTask;
     }
 
     public void Dispose()
     {
-        StopReceiving();
-        _rtpClient?.Dispose();
-        SetState(PeerConnectionState.Closed);
-    }
-
-    private void SetState(PeerConnectionState state)
-    {
-        State = state;
-        StateChanged?.Invoke(state);
-    }
-
-    private static int GetRandomPort() => Random.Shared.Next(20000, 50000);
-
-    private static string GetLocalIP()
-    {
-        var host = Dns.GetHostEntry(Dns.GetHostName());
-        foreach (var ip in host.AddressList)
-        {
-            if (ip.AddressFamily == AddressFamily.InterNetwork
-                && !IPAddress.IsLoopback(ip))
-                return ip.ToString();
-        }
-        return "127.0.0.1";
+        _pc?.close();
+        _pc?.Dispose();
+        _pc = null;
+        _isInitialized = false;
     }
 }
 
