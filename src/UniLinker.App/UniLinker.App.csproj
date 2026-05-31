@@ -4,11 +4,19 @@
     <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <PublishAot>true</PublishAot>
+    <UseWindowsForms>true</UseWindowsForms>
+    <PublishAot>false</PublishAot>
     <_SuppressWinRTTrimError>true</_SuppressWinRTTrimError>
     <RootNamespace>UniLinker.App</RootNamespace>
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="..\UniLinker.Core\UniLinker.Core.csproj" />
+    <ProjectReference Include="..\UniLinker.UI\UniLinker.UI.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <Content Include="..\..\web\**\*">
+      <Link>web\%(RecursiveDir)%(Filename)%(Extension)</Link>
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </Content>
   </ItemGroup>
 </Project>

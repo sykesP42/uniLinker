@@ -1,0 +1,45 @@
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body {
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  background: #0d0d0d; color: #e0e0e0; height: 100vh; overflow: hidden;
+}
+.app { display: flex; flex-direction: column; height: 100vh; }
+.titlebar {
+  display: flex; align-items: center; gap: 12px;
+  padding: 8px 16px; background: #1a1a1a; border-bottom: 1px solid #2a2a2a; flex-shrink: 0;
+}
+.logo { font-size: 16px; font-weight: 700; color: #4fc3f7; letter-spacing: 1px; }
+.tabs { display: flex; gap: 4px; flex: 1; }
+.tab-btn {
+  padding: 6px 14px; border: none; background: transparent; color: #888;
+  font-size: 13px; cursor: pointer; border-radius: 6px; transition: all 0.2s;
+}
+.tab-btn:hover { background: #2a2a2a; color: #ccc; }
+.tab-btn.active { background: #2a2a2a; color: #fff; }
+.info-text { font-size: 11px; color: #666; }
+.content { flex: 1; overflow: auto; padding: 16px; }
+.tab-panel { display: none; }
+.tab-panel.active { display: block; }
+.statusbar {
+  padding: 4px 16px; background: #1a1a1a; border-top: 1px solid #2a2a2a;
+  font-size: 12px; color: #666; flex-shrink: 0;
+}
+.device-list { display: flex; flex-direction: column; gap: 8px; }
+.device-list h2 { font-size: 15px; margin-bottom: 12px; color: #999; }
+.device-card {
+  display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+  background: #1a1a1a; border-radius: 8px; border: 1px solid #2a2a2a; font-size: 14px;
+}
+.device-state { color: #888; font-size: 12px; }
+.device-card button {
+  margin-left: auto; padding: 4px 12px; border-radius: 4px;
+  border: 1px solid #444; background: #2a2a2a; color: #e0e0e0; cursor: pointer; font-size: 13px;
+}
+.device-card button:hover { background: #3a3a3a; }
+.btn { padding: 6px 14px; border-radius: 6px; border: 1px solid #444; background: #2a2a2a; color: #e0e0e0; font-size: 13px; cursor: pointer; }
+.btn.primary { background: #1565c0; border-color: #1976d2; color: white; }
+.btn:hover { background: #3a3a3a; }
+.btn.primary:hover { background: #1976d2; }
+.btn:disabled { opacity: 0.5; cursor: default; }
+.mirror-controls { margin-bottom: 16px; display: flex; gap: 8px; }
+.placeholder { color: #555; font-size: 14px; }
