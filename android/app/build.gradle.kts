@@ -53,7 +53,7 @@ dependencies {
     implementation("androidx.navigation:navigation-compose:2.8.5")
 
     // WebRTC (Google official)
-    implementation("io.getstream:stream-webrtc-android:1.1.1")
+    implementation("org.webrtc:google-webrtc:1.0.32006")
 
     // JSON
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")

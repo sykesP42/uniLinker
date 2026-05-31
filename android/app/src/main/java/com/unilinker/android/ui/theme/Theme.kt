@@ -6,7 +6,6 @@ import androidx.compose.material3.Typography
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
@@ -16,7 +15,6 @@ private val DarkColors = darkColorScheme(
     primaryContainer = Color(0xFF004D64),
     onPrimaryContainer = Color(0xFFB3E5FC),
     secondary = Color(0xFF80CBC4),
-    onSecondary = Color(0xFF003733),
     surface = Color(0xFF1A1A1A),
     onSurface = Color(0xFFE0E0E0),
     background = Color(0xFF0D0D0D),
@@ -28,27 +26,11 @@ private val DarkColors = darkColorScheme(
 )
 
 private val UniLinkerTypography = Typography(
-    headlineLarge = TextStyle(
-        fontWeight = FontWeight.Bold,
-        fontSize = 28.sp,
-        letterSpacing = 0.sp,
-    ),
-    headlineMedium = TextStyle(
-        fontWeight = FontWeight.SemiBold,
-        fontSize = 20.sp,
-    ),
-    titleMedium = TextStyle(
-        fontWeight = FontWeight.Medium,
-        fontSize = 16.sp,
-    ),
-    bodyMedium = TextStyle(
-        fontSize = 14.sp,
-        lineHeight = 20.sp,
-    ),
-    labelSmall = TextStyle(
-        fontSize = 11.sp,
-        color = Color(0xFF666666),
-    ),
+    headlineLarge = TextStyle(fontWeight = FontWeight.Bold, fontSize = 28.sp),
+    headlineMedium = TextStyle(fontWeight = FontWeight.SemiBold, fontSize = 20.sp),
+    titleMedium = TextStyle(fontWeight = FontWeight.Medium, fontSize = 16.sp),
+    bodyMedium = TextStyle(fontSize = 14.sp, lineHeight = 20.sp),
+    labelSmall = TextStyle(fontSize = 11.sp, color = Color(0xFF666666)),
 )
 
 @Composable

@@ -1,34 +1,35 @@
-package com.unilinker.android.discovery
+package com.unilinker.android.core
 
 import android.content.Context
 import android.net.nsd.NsdManager
 import android.net.nsd.NsdServiceInfo
 import android.util.Log
+import com.unilinker.android.sdk.IDeviceDiscovery
+import com.unilinker.android.sdk.models.PeerDevice
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.callbackFlow
 
-data class PeerDevice(
-    val id: String,
-    val name: String,
-    val ipAddress: String,
-    val port: Int,
-    val capabilities: List<String> = emptyList(),
-)
-
-class DeviceDiscovery(private val context: Context) {
+class DiscoveryService(context: Context) : IDeviceDiscovery {
 
     private val nsdManager: NsdManager =
         context.getSystemService(Context.NSD_SERVICE) as NsdManager
+
+    private val _isScanning = MutableStateFlow(false)
+    override val isScanning: StateFlow<Boolean> = _isScanning
+
+    private var discoveryListener: NsdManager.DiscoveryListener? = null
 
     companion object {
         private const val SERVICE_TYPE = "_unilinker._tcp.local."
         private const val TAG = "UniLinkerDiscovery"
     }
 
-    fun discover(): Flow<List<PeerDevice>> = callbackFlow {
+    override fun discover(): Flow<List<PeerDevice>> = callbackFlow {
         val discoveredDevices = mutableMapOf<String, PeerDevice>()
-        var discoveryListener: NsdManager.DiscoveryListener? = null
+        _isScanning.value = true
 
         val resolveListener = object : NsdManager.ResolveListener {
             override fun onResolveFailed(serviceInfo: NsdServiceInfo, errorCode: Int) {
@@ -49,48 +50,49 @@ class DeviceDiscovery(private val context: Context) {
 
                 discoveredDevices[deviceId] = device
                 trySend(discoveredDevices.values.toList())
-                Log.d(TAG, "Device resolved: $device")
             }
         }
 
         discoveryListener = object : NsdManager.DiscoveryListener {
             override fun onDiscoveryStarted(serviceType: String) {
-                Log.d(TAG, "Discovery started: $serviceType")
+                Log.d(TAG, "Discovery started")
             }
 
             override fun onDiscoveryStopped(serviceType: String) {
-                Log.d(TAG, "Discovery stopped: $serviceType")
+                Log.d(TAG, "Discovery stopped")
             }
 
             override fun onServiceFound(serviceInfo: NsdServiceInfo) {
-                Log.d(TAG, "Service found: ${serviceInfo.serviceName}")
                 nsdManager.resolveService(serviceInfo, resolveListener)
             }
 
             override fun onServiceLost(serviceInfo: NsdServiceInfo) {
                 discoveredDevices.remove(serviceInfo.serviceName)
                 trySend(discoveredDevices.values.toList())
-                Log.d(TAG, "Service lost: ${serviceInfo.serviceName}")
             }
 
             override fun onStartDiscoveryFailed(serviceType: String, errorCode: Int) {
-                Log.e(TAG, "Discovery start failed: $serviceType, code=$errorCode")
-                nsdManager.stopServiceDiscovery(this)
+                Log.e(TAG, "Discovery start failed, code=$errorCode")
+                _isScanning.value = false
             }
 
             override fun onStopDiscoveryFailed(serviceType: String, errorCode: Int) {
-                Log.e(TAG, "Discovery stop failed: code=$errorCode")
+                Log.e(TAG, "Discovery stop failed, code=$errorCode")
             }
         }
 
         nsdManager.discoverServices(
-            SERVICE_TYPE,
-            NsdManager.PROTOCOL_DNS_SD,
-            discoveryListener,
+            SERVICE_TYPE, NsdManager.PROTOCOL_DNS_SD, discoveryListener,
         )
 
         awaitClose {
             discoveryListener?.let { nsdManager.stopServiceDiscovery(it) }
+            _isScanning.value = false
         }
+    }
+
+    override fun stop() {
+        discoveryListener?.let { nsdManager.stopServiceDiscovery(it) }
+        _isScanning.value = false
     }
 }

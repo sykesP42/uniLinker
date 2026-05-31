@@ -1,10 +1,12 @@
-package com.unilinker.android.webrtc
+package com.unilinker.android.core
 
 import android.util.Log
+import com.unilinker.android.sdk.IPeerMesh
+import com.unilinker.android.sdk.PeerConnectionState
+import com.unilinker.android.sdk.models.PeerDevice
+import com.unilinker.android.sdk.models.StreamStats
 import kotlinx.coroutines.*
-import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.SharedFlow
 import kotlinx.coroutines.flow.StateFlow
 import okhttp3.*
 import okhttp3.MediaType.Companion.toMediaType
@@ -13,24 +15,9 @@ import org.json.JSONObject
 import org.webrtc.*
 import java.util.concurrent.Executors
 
-enum class ConnectionState {
-    IDLE, DISCOVERING, CONNECTING, CONNECTED, DISCONNECTED, ERROR
-}
-
-data class StreamStats(
-    val width: Int = 0,
-    val height: Int = 0,
-    val fps: Int = 0,
-    val bitrateKbps: Int = 0,
-    val decodeMs: Float = 0f,
-)
-
-class WebRTCClient(
+class WebRTCService(
     private val signalingUrl: String,
-) {
-    companion object {
-        private const val TAG = "UniLinkerWebRTC"
-    }
+) : IPeerMesh {
 
     private val executor = Executors.newSingleThreadExecutor()
     private val eglBase = EglBase.create()
@@ -43,26 +30,27 @@ class WebRTCClient(
         .readTimeout(30, java.util.concurrent.TimeUnit.SECONDS)
         .build()
 
-    private val _connectionState = MutableStateFlow(ConnectionState.IDLE)
-    val connectionState: StateFlow<ConnectionState> = _connectionState
-
-    private val _stats = MutableStateFlow(StreamStats())
-    val stats: StateFlow<StreamStats> = _stats
-
-    private val _remoteVideoTrack = MutableSharedFlow<VideoTrack>(replay = 1)
-    val remoteVideoTrack: SharedFlow<VideoTrack> = _remoteVideoTrack
+    override val connectedPeers = MutableStateFlow<List<PeerDevice>>(emptyList())
+    override val connectionState = MutableStateFlow(PeerConnectionState.IDLE)
+    override val stats = MutableStateFlow(StreamStats())
 
     private var statsCollectorJob: Job? = null
+    private val scope = CoroutineScope(Dispatchers.Default + SupervisorJob())
+
+    fun onVideoTrackReady(callback: (VideoTrack) -> Unit) {
+        this.videoTrackCallback = callback
+    }
+
+    private var videoTrackCallback: ((VideoTrack) -> Unit)? = null
 
     fun initialize() {
-        val options = PeerConnectionFactory.InitializationOptions.builder(context)
+        val options = PeerConnectionFactory.InitializationOptions
+            .builder(context)
             .setFieldTrials("WebRTC-H264HighProfile/Enabled/")
             .createInitializationOptions()
         PeerConnectionFactory.initialize(options)
 
-        val encoderFactory = DefaultVideoEncoderFactory(
-            eglBase.eglBaseContext, true, true
-        )
+        val encoderFactory = DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true)
         val decoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
 
         peerConnectionFactory = PeerConnectionFactory.builder()
@@ -75,8 +63,8 @@ class WebRTCClient(
             .createPeerConnectionFactory()
     }
 
-    fun connect() {
-        _connectionState.value = ConnectionState.CONNECTING
+    override fun connect(peer: PeerDevice) {
+        connectionState.value = PeerConnectionState.CONNECTING
         createPeerConnection()
         createOffer()
     }
@@ -88,7 +76,6 @@ class WebRTCClient(
             )
         ).apply {
             tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.DISABLED
-            continualGatheringPolicy = PeerConnection.ContinualGatheringPolicy.GATHER_ONCE
         }
 
         val observer = object : PeerConnection.Observer {
@@ -98,14 +85,13 @@ class WebRTCClient(
 
             override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
             override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
-                Log.d(TAG, "ICE state: $state")
                 when (state) {
                     PeerConnection.IceConnectionState.CONNECTED ->
-                        _connectionState.value = ConnectionState.CONNECTED
+                        connectionState.value = PeerConnectionState.CONNECTED
                     PeerConnection.IceConnectionState.DISCONNECTED ->
-                        _connectionState.value = ConnectionState.DISCONNECTED
+                        connectionState.value = PeerConnectionState.DISCONNECTED
                     PeerConnection.IceConnectionState.FAILED ->
-                        _connectionState.value = ConnectionState.ERROR
+                        connectionState.value = PeerConnectionState.ERROR
                     else -> {}
                 }
             }
@@ -114,53 +100,43 @@ class WebRTCClient(
             override fun onRemoveStream(stream: MediaStream?) {}
             override fun onDataChannel(channel: DataChannel?) {}
             override fun onRenegotiationNeeded() {}
+
             override fun onAddTrack(receiver: RtpReceiver?, streams: Array<out MediaStream>?) {
-                Log.d(TAG, "Track received: ${receiver?.track()?.kind()}")
                 val track = receiver?.track()
                 if (track is VideoTrack) {
                     videoTrack = track
-                    _remoteVideoTrack.tryEmit(track)
+                    videoTrackCallback?.invoke(track)
                     startStatsCollection()
                 }
             }
+
             override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
             override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
             override fun onIceConnectionReceivingChange(receiving: Boolean) {}
         }
 
         peerConnection = peerConnectionFactory?.createPeerConnection(rtcConfig, observer)
-        Log.d(TAG, "PeerConnection created")
     }
 
     private fun createOffer() {
         val pc = peerConnection ?: return
-
-        // Request H.264 video
         val constraints = MediaConstraints().apply {
             mandatory.add(MediaConstraints.KeyValuePair("OfferToReceiveVideo", "true"))
         }
 
         pc.createOffer(object : SdpObserver {
-            override fun onCreateSuccess(sessionDescription: SessionDescription) {
-                pc.setLocalDescription(object : SdpObserver {
-                    override fun onSetSuccess() {
-                        sendSdp(sessionDescription)
-                    }
-                    override fun onSetFailure(error: String) {
-                        Log.e(TAG, "setLocalDescription failed: $error")
-                        _connectionState.value = ConnectionState.ERROR
-                    }
-                    override fun onCreateSuccess(p0: SessionDescription?) {}
-                    override fun onCreateFailure(p0: String?) {}
-                }, sessionDescription)
+            override fun onCreateSuccess(sdp: SessionDescription) {
+                pc.setLocalDescription(SimpleSdpObserver(), sdp)
             }
-
-            override fun onSetSuccess() {}
+            override fun onSetSuccess() {
+                // Wait for ICE gathering, then send
+                scope.launch { delay(2000) }
+                pc.localDescription?.let { sendSdp(it) }
+            }
             override fun onCreateFailure(error: String) {
                 Log.e(TAG, "createOffer failed: $error")
-                _connectionState.value = ConnectionState.ERROR
+                connectionState.value = PeerConnectionState.ERROR
             }
-
             override fun onSetFailure(error: String) {}
         }, constraints)
     }
@@ -170,25 +146,12 @@ class WebRTCClient(
             put("type", sdp.type.canonicalForm())
             put("sdp", sdp.description)
         }
-
         postJson("/signaling", json) { answerJson ->
-            val answerType = answerJson.getString("type")
-            val answerSdp = answerJson.getString("sdp")
             val remoteSdp = SessionDescription(
-                SessionDescription.Type.fromCanonicalForm(answerType),
-                answerSdp,
+                SessionDescription.Type.fromCanonicalForm(answerJson.getString("type")),
+                answerJson.getString("sdp"),
             )
-
-            peerConnection?.setRemoteDescription(object : SdpObserver {
-                override fun onSetSuccess() {
-                    Log.d(TAG, "Remote description set")
-                }
-                override fun onSetFailure(error: String) {
-                    Log.e(TAG, "setRemoteDescription failed: $error")
-                }
-                override fun onCreateSuccess(p0: SessionDescription?) {}
-                override fun onCreateFailure(p0: String?) {}
-            }, remoteSdp)
+            peerConnection?.setRemoteDescription(SimpleSdpObserver(), remoteSdp)
         }
     }
 
@@ -199,62 +162,43 @@ class WebRTCClient(
             put("sdpMid", candidate.sdpMid)
             put("sdpMLineIndex", candidate.sdpMLineIndex)
         }
-
-        postJson("/ice", json) { /* no response needed */ }
+        postJson("/ice", json) {}
     }
 
     private fun postJson(path: String, json: JSONObject, onResponse: (JSONObject) -> Unit) {
         val url = "$signalingUrl$path"
         val body = json.toString().toRequestBody("application/json".toMediaType())
 
-        val request = Request.Builder()
-            .url(url)
-            .post(body)
-            .build()
-
-        okHttpClient.newCall(request).enqueue(object : Callback {
-            override fun onFailure(call: Call, e: java.io.IOException) {
-                Log.e(TAG, "POST $path failed: ${e.message}")
-                if (_connectionState.value == ConnectionState.CONNECTING) {
-                    _connectionState.value = ConnectionState.ERROR
+        okHttpClient.newCall(Request.Builder().url(url).post(body).build())
+            .enqueue(object : Callback {
+                override fun onFailure(call: Call, e: java.io.IOException) {
+                    Log.e(TAG, "POST $path failed: ${e.message}")
                 }
-            }
-
-            override fun onResponse(call: Call, response: Response) {
-                val body = response.body?.string()
-                if (body != null && body.isNotEmpty()) {
-                    try {
-                        val json = JSONObject(body)
-                        onResponse(json)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "Invalid JSON response: $body")
+                override fun onResponse(call: Call, response: Response) {
+                    response.body?.string()?.let { body ->
+                        if (body.isNotEmpty()) {
+                            try { onResponse(JSONObject(body)) }
+                            catch (_: Exception) {}
+                        }
                     }
                 }
-            }
-        })
+            })
     }
 
     private fun startStatsCollection() {
         statsCollectorJob?.cancel()
-        statsCollectorJob = CoroutineScope(Dispatchers.Default).launch {
-            delay(2000) // Wait for connection to stabilize
-            while (isActive && _connectionState.value == ConnectionState.CONNECTED) {
+        statsCollectorJob = scope.launch {
+            delay(2000)
+            while (isActive && connectionState.value == PeerConnectionState.CONNECTED) {
                 peerConnection?.getStats { reports ->
                     for (report in reports) {
                         if (report.type == "inbound-rtp" && report.members["kind"] == "video") {
-                            val width = (report.members["frameWidth"] as? String)?.toIntOrNull() ?: 0
-                            val height = (report.members["frameHeight"] as? String)?.toIntOrNull() ?: 0
+                            val w = (report.members["frameWidth"] as? String)?.toIntOrNull() ?: 0
+                            val h = (report.members["frameHeight"] as? String)?.toIntOrNull() ?: 0
                             val fps = (report.members["framesPerSecond"] as? String)?.toIntOrNull() ?: 0
-                            val decodeMs = (report.members["totalDecodeTime"] as? String)
+                            val dMs = (report.members["totalDecodeTime"] as? String)
                                 ?.toFloatOrNull()?.div(1000f) ?: 0f
-                            val br = (report.members["bytesReceived"] as? String)?.toLongOrNull() ?: 0L
-
-                            _stats.value = StreamStats(
-                                width = width,
-                                height = height,
-                                fps = fps,
-                                decodeMs = decodeMs,
-                            )
+                            stats.value = StreamStats(width = w, height = h, fps = fps, decodeMs = dMs)
                         }
                     }
                 }
@@ -263,19 +207,29 @@ class WebRTCClient(
         }
     }
 
-    fun disconnect() {
+    override fun disconnect() {
         statsCollectorJob?.cancel()
         peerConnection?.close()
         peerConnection = null
-        _connectionState.value = ConnectionState.DISCONNECTED
+        connectionState.value = PeerConnectionState.IDLE
     }
 
-    fun dispose() {
+    override fun dispose() {
         disconnect()
         peerConnectionFactory?.dispose()
     }
 
-    // Required by WebRTC initialization
+    private class SimpleSdpObserver : SdpObserver {
+        override fun onCreateSuccess(p0: SessionDescription?) {}
+        override fun onSetSuccess() {}
+        override fun onCreateFailure(p0: String?) {}
+        override fun onSetFailure(p0: String?) {}
+    }
+
+    companion object {
+        private const val TAG = "UniLinkerWebRTC"
+    }
+
     private val context: android.content.Context
         get() = org.webrtc.ContextUtils.getApplicationContext()
 }
