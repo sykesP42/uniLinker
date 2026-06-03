@@ -125,6 +125,39 @@ public class PeerConnection : IDisposable
     }
 
     /// <summary>
+    /// Wait for ICE gathering to complete (or timeout).
+    /// Used by the signaling server to ensure the answer SDP
+    /// includes all ICE candidates before responding to a remote offer.
+    /// </summary>
+    public Task WaitForIceGatheringAsync(TimeSpan timeout)
+    {
+        if (_pc == null) return Task.CompletedTask;
+
+        var tcs = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        void OnStateChange(RTCIceGatheringState state)
+        {
+            if (state == RTCIceGatheringState.complete)
+            {
+                _pc.onicegatheringstatechange -= OnStateChange;
+                tcs.TrySetResult();
+            }
+        }
+
+        _pc.onicegatheringstatechange += OnStateChange;
+
+        // Fallback timeout — if ICE never completes, proceed anyway
+        _ = Task.Run(async () =>
+        {
+            await Task.Delay(timeout);
+            _pc.onicegatheringstatechange -= OnStateChange;
+            tcs.TrySetResult();
+        });
+
+        return tcs.Task;
+    }
+
+    /// <summary>
     /// Set the remote SDP from the other peer.
     /// If isOffer is true, also creates and sets a local answer.
     /// </summary>

@@ -28,7 +28,7 @@ fun ScreenMirrorTab(plugin: ScreenMirrorPlugin) {
     val connectionState by plugin.connectionState.collectAsState()
     val videoTrack by plugin.videoTrack.collectAsState()
     val stats by plugin.stats.collectAsState()
-    val isConnected by plugin.isConnected.collectAsState()
+    val isConnected = connectionState == PeerConnectionState.CONNECTED
     var connectedDeviceId by remember { mutableStateOf<String?>(null) }
 
     // Discovery (from platform)

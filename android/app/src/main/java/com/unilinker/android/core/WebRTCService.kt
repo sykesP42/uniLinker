@@ -17,6 +17,7 @@ import java.util.concurrent.Executors
 
 class WebRTCService(
     private val signalingUrl: String,
+    private val peerId: String = "android-client"
 ) : IPeerMesh {
 
     private val executor = Executors.newSingleThreadExecutor()
@@ -145,6 +146,7 @@ class WebRTCService(
         val json = JSONObject().apply {
             put("type", sdp.type.canonicalForm())
             put("sdp", sdp.description)
+            put("peerId", peerId)
         }
         postJson("/signaling", json) { answerJson ->
             val remoteSdp = SessionDescription(
@@ -161,6 +163,7 @@ class WebRTCService(
             put("candidate", candidate.sdp)
             put("sdpMid", candidate.sdpMid)
             put("sdpMLineIndex", candidate.sdpMLineIndex)
+            put("peerId", peerId)
         }
         postJson("/ice", json) {}
     }

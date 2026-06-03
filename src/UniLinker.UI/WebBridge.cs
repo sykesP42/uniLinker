@@ -7,11 +7,30 @@ namespace UniLinker.UI;
 
 public class WebBridge
 {
+    public Platform Platform { get; }
     private readonly Platform _platform;
 
     public WebBridge(Platform platform)
     {
         _platform = platform;
+        Platform = platform;
+    }
+
+    // Get discovered devices for native UI
+    public IReadOnlyList<PeerInfo> GetDiscoveredDevices()
+    {
+        return _platform.Discovery?.KnownDevices ?? Array.Empty<PeerInfo>().AsReadOnly();
+    }
+
+    // Get status info for native UI
+    public (string DeviceName, int Port, int Peers) GetStatusInfo()
+    {
+        var config = _platform.Context.Config.Get<PlatformConfig>("platform");
+        return (
+            config.DeviceName ?? Environment.MachineName,
+            config.HttpPort > 0 ? config.HttpPort : 9527,
+            _platform.PeerMesh?.ConnectedPeers.Count ?? 0
+        );
     }
 
     // Called from JS: GetDevices()

@@ -6,7 +6,7 @@ public class ScreenMirrorPlugin : IPlugin
 {
     private IPluginContext? _ctx;
     private WgcCapture? _capture;
-    private FfmpegEncoder? _encoder;
+    private IEncoder? _encoder;
     private bool _isSharing;
 
     public string Id => "com.unilinker.screen-mirror";
@@ -19,7 +19,19 @@ public class ScreenMirrorPlugin : IPlugin
     {
         _ctx = context;
         _capture = new WgcCapture();
-        _encoder = new FfmpegEncoder();
+
+        // TODO: MfEncoder causes COM threading conflict with WebView2 (RPC_E_CHANGED_MODE).
+        // For now, always use FfmpegEncoder until this is resolved.
+        // if (MfEncoder.IsAvailable())
+        // {
+        //     _encoder = new MfEncoder();
+        //     context.Logger.Info("Using MfEncoder (native Windows Media Foundation) ✓");
+        // }
+        // else
+        {
+            _encoder = new FfmpegEncoder();
+            context.Logger.Info("Using FfmpegEncoder (requires ffmpeg.exe in PATH)");
+        }
 
         _ctx.UI.RegisterPanel(Id, new PanelInfo
         {

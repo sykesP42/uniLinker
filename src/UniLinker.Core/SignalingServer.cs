@@ -23,6 +23,8 @@ public class SignalingServer : IDisposable
     private readonly string[] _capabilities;
     private readonly string _webRoot;
     private readonly Dictionary<string, PeerConnection> _pendingIceConnections = new();
+    private readonly Dictionary<string, List<IceCandidateMessage>> _pendingOutgoingIce = new();
+    private readonly object _iceLock = new();
     private CancellationTokenSource? _cts;
 
     public event Action<string, string>? OfferReceived; // sdp, fromPeerId
@@ -47,16 +49,34 @@ public class SignalingServer : IDisposable
 
         try
         {
+            Console.WriteLine($"[SignalingServer] Starting on port {_port}...");
             _listener.Start();
+            Console.WriteLine($"[SignalingServer] Started successfully on http://+:{_port}/");
         }
         catch (HttpListenerException ex) when (ex.ErrorCode == 5)
         {
             // Access denied -- try with localhost only
+            Console.WriteLine($"[SignalingServer] Access denied, trying localhost only...");
             _listener.Prefixes.Clear();
             _listener.Prefixes.Add($"http://localhost:{_port}/");
-            _listener.Prefixes.Add($"http://127.0.0.1:{_port}/");
-            _listener.Start();
+            try
+            {
+                _listener.Start();
+                Console.WriteLine($"[SignalingServer] Started on localhost:{_port}");
+            }
+            catch (Exception ex2)
+            {
+                Console.WriteLine($"[SignalingServer] Failed to start on localhost: {ex2.Message}");
+                throw;
+            }
         }
+        catch (Exception ex)
+        {
+            Console.WriteLine($"[SignalingServer] Error starting: {ex.Message}");
+            throw;
+        }
+
+        Console.WriteLine($"[SignalingServer] Listening for connections...");
 
         try
         {
@@ -108,12 +128,27 @@ public class SignalingServer : IDisposable
                     });
                     break;
 
+                case "/api/status":
+                    await SendJson(ctx, new
+                    {
+                        deviceName = Environment.MachineName,
+                        version = "3.0.0",
+                        port = _port,
+                        peers = _peerMesh.ConnectedPeers.Count,
+                        status = "running",
+                    });
+                    break;
+
                 case "/signaling" when ctx.Request.HttpMethod == "POST":
                     await HandleSignaling(ctx);
                     break;
 
                 case "/ice" when ctx.Request.HttpMethod == "POST":
                     await HandleIceCandidate(ctx);
+                    break;
+
+                case "/ice-pending" when ctx.Request.HttpMethod == "GET":
+                    await HandleIcePending(ctx);
                     break;
 
                 default:
@@ -199,11 +234,43 @@ public class SignalingServer : IDisposable
         // Register in PeerMesh so plugins can send to it
         _peerMesh.RegisterIncomingConnection(peerInfo);
 
-        // Store for ICE candidate forwarding
+        // Store for ICE candidate forwarding and collect outgoing candidates
         lock (_pendingIceConnections)
         {
             _pendingIceConnections[msg.FromPeerId] = pc;
         }
+
+        // Subscribe to outgoing ICE candidates for browser polling
+        lock (_iceLock)
+        {
+            _pendingOutgoingIce[msg.FromPeerId] = new List<IceCandidateMessage>();
+        }
+        Action<List<SIPSorcery.Net.RTCIceCandidate>>? onCandidate = null;
+        onCandidate = candidates =>
+        {
+            lock (_iceLock)
+            {
+                if (_pendingOutgoingIce.TryGetValue(msg.FromPeerId, out var list))
+                {
+                    foreach (var c in candidates)
+                    {
+                        list.Add(new IceCandidateMessage
+                        {
+                            PeerId = msg.FromPeerId,
+                            Candidate = c.candidate ?? "",
+                            SdpMid = c.sdpMid ?? "0",
+                            SdpMLineIndex = c.sdpMLineIndex,
+                        });
+                    }
+                }
+            }
+        };
+        pc.IceCandidatesGenerated += onCandidate;
+
+        // Wait for ICE gathering to complete so the answer SDP includes candidates
+        await pc.WaitForIceGatheringAsync(TimeSpan.FromSeconds(3));
+
+        pc.IceCandidatesGenerated -= onCandidate;
 
         // Fire ChannelRequested on PeerMesh so plugins can respond
         if (!string.IsNullOrEmpty(msg.Capability))
@@ -262,6 +329,40 @@ public class SignalingServer : IDisposable
 
         ctx.Response.StatusCode = 200;
         ctx.Response.Close();
+    }
+
+    private async Task HandleIcePending(HttpListenerContext ctx)
+    {
+        var peerId = ctx.Request.QueryString["peerId"];
+        if (string.IsNullOrEmpty(peerId))
+        {
+            ctx.Response.StatusCode = 400;
+            ctx.Response.Close();
+            return;
+        }
+
+        List<IceCandidateMessage>? candidates;
+        lock (_iceLock)
+        {
+            if (_pendingOutgoingIce.TryGetValue(peerId, out var list))
+            {
+                candidates = new List<IceCandidateMessage>(list);
+                list.Clear();
+            }
+            else
+            {
+                candidates = null;
+            }
+        }
+
+        if (candidates == null)
+        {
+            ctx.Response.StatusCode = 404;
+            ctx.Response.Close();
+            return;
+        }
+
+        await SendJson(ctx, new { candidates });
     }
 
     private async Task ServeStaticFile(HttpListenerContext ctx, string path)

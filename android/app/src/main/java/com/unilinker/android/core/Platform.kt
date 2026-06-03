@@ -4,6 +4,7 @@ import android.content.Context
 import com.unilinker.android.core.strategies.ConnectionCodeStrategy
 import com.unilinker.android.core.strategies.LanMdnsStrategy
 import com.unilinker.android.core.strategies.ManualIpStrategy
+import com.unilinker.android.core.strategies.WifiP2pStrategy
 import com.unilinker.android.sdk.*
 import com.unilinker.android.sdk.models.PluginInfo
 import kotlinx.coroutines.runBlocking
@@ -15,9 +16,13 @@ class Platform(
     val lanStrategy = LanMdnsStrategy(context)
     val manualIpStrategy = ManualIpStrategy()
     val codeStrategy = ConnectionCodeStrategy()
+    val wifiP2pStrategy = WifiP2pStrategy(context) { peerId ->
+        WebRTCService("http://localhost:9527", peerId)
+    }
 
     val strategies: List<IConnectionStrategy> = listOf(
         lanStrategy,
+        wifiP2pStrategy,
         manualIpStrategy,
         codeStrategy,
     )

@@ -10,8 +10,8 @@ public class Platform : IDisposable
     private readonly string _pluginsDir;
 
     public IPluginContext Context { get; }
-    public PeerMesh? PeerMesh { get; private set; }
-    public DiscoveryService? Discovery { get; private set; }
+    public PeerMesh PeerMesh { get; } = new();
+    public DiscoveryService Discovery { get; } = new();
 
     public Platform(string pluginsDir, string configPath)
     {
@@ -21,6 +21,8 @@ public class Platform : IDisposable
 
         Context = new PlatformContext
         {
+            Peers = PeerMesh,
+            Discovery = Discovery,
             Config = _configStore,
             Logger = new ConsoleLogger(),
             UI = new NullUIProvider(),
@@ -34,11 +36,6 @@ public class Platform : IDisposable
         await _configStore.LoadAsync();
 
         var config = _configStore.Get<PlatformConfig>("platform");
-
-        PeerMesh = new PeerMesh();
-        Discovery = new DiscoveryService();
-        ((PlatformContext)Context).Peers = PeerMesh;
-        ((PlatformContext)Context).Discovery = Discovery;
 
         _pluginLoader.DiscoverAndLoad(_pluginsDir);
         await _pluginHost.InitializeAllAsync();

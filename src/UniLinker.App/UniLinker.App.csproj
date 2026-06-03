@@ -1,21 +1,25 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
     <OutputType>WinExe</OutputType>
-    <TargetFramework>net9.0-windows10.0.19041.0</TargetFramework>
+    <TargetFramework>net9.0</TargetFramework>
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
-    <UseWindowsForms>true</UseWindowsForms>
-    <PublishAot>false</PublishAot>
-    <_SuppressWinRTTrimError>true</_SuppressWinRTTrimError>
     <RootNamespace>UniLinker.App</RootNamespace>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Avalonia" Version="11.2.3" />
+    <PackageReference Include="Avalonia.Desktop" Version="11.2.3" />
+    <PackageReference Include="Avalonia.Themes.Fluent" Version="11.2.3" />
+  </ItemGroup>
+
   <ItemGroup>
     <ProjectReference Include="..\UniLinker.Core\UniLinker.Core.csproj" />
     <ProjectReference Include="..\UniLinker.UI\UniLinker.UI.csproj" />
   </ItemGroup>
+
   <ItemGroup>
-    <Content Include="..\..\web\**\*">
-      <Link>web\%(RecursiveDir)%(Filename)%(Extension)</Link>
+    <Content Include="web\**\*">
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>
   </ItemGroup>
