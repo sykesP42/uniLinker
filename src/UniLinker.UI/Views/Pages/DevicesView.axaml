@@ -1,0 +1,83 @@
+<UserControl xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             xmlns:vm="clr-namespace:UniLinker.UI.ViewModels"
+             xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+             xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+             mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="600"
+             x:Class="UniLinker.UI.Views.Pages.DevicesView"
+             x:DataType="vm:DevicesViewModel">
+
+  <Grid RowDefinitions="Auto,*">
+    <!-- Header -->
+    <Border Grid.Row="0" Classes="card" Margin="0,0,0,16">
+      <Grid ColumnDefinitions="*,Auto">
+        <StackPanel Grid.Column="0" Spacing="4">
+          <TextBlock Text="设备发现" FontSize="20" FontWeight="SemiBold"/>
+          <TextBlock Text="{Binding StatusMessage}" FontSize="13"
+                     Foreground="{DynamicResource TextTertiaryBrush}"/>
+        </StackPanel>
+        <Button Grid.Column="1" Classes="primary" CornerRadius="8" Padding="16,10"
+                Command="{Binding StartScanCommand}"
+                IsEnabled="{Binding !IsScanning}">
+          <StackPanel Orientation="Horizontal" Spacing="8">
+            <TextBlock Text="🔄" FontSize="16"/>
+            <TextBlock Text="扫描"/>
+          </StackPanel>
+        </Button>
+      </Grid>
+    </Border>
+
+    <!-- Device List -->
+    <ScrollViewer Grid.Row="1">
+      <StackPanel Spacing="16">
+        <!-- Search Box -->
+        <TextBox Text="{Binding SearchText}" Watermark="搜索设备名称或地址..."/>
+
+        <!-- Device Grid -->
+        <ItemsControl ItemsSource="{Binding Devices}">
+          <ItemsControl.ItemsPanel>
+            <ItemsPanelTemplate>
+              <WrapPanel Orientation="Horizontal"/>
+            </ItemsPanelTemplate>
+          </ItemsControl.ItemsPanel>
+          <ItemsControl.ItemTemplate>
+            <DataTemplate>
+              <Border Classes="card" Margin="0,0,12,12"
+                      Width="300" Cursor="Hand"
+                      PointerPressed="OnDeviceClick">
+                <Grid ColumnDefinitions="Auto,*">
+                  <Border Grid.Column="0" Width="52" Height="52" CornerRadius="12"
+                          Background="{DynamicResource AccentBrush}" Margin="0,0,16,0">
+                    <TextBlock Text="💻" FontSize="24" Foreground="White"
+                               HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                  </Border>
+                  <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+                    <TextBlock Text="{Binding Name}" FontWeight="SemiBold" FontSize="15"/>
+                    <TextBlock Text="{Binding IpAddress}" FontSize="12"
+                               Foreground="{DynamicResource TextTertiaryBrush}"/>
+                    <Border Background="{DynamicResource SuccessMutedBrush}" CornerRadius="4" Padding="8,4"
+                            HorizontalAlignment="Left" Margin="0,4,0,0">
+                      <TextBlock Text="在线" FontSize="11" Foreground="{DynamicResource SuccessBrush}"/>
+                    </Border>
+                  </StackPanel>
+                </Grid>
+              </Border>
+            </DataTemplate>
+          </ItemsControl.ItemTemplate>
+        </ItemsControl>
+
+        <!-- Empty State -->
+        <Border Classes="card" Padding="48">
+          <StackPanel Spacing="16" HorizontalAlignment="Center">
+            <TextBlock Text="📡" FontSize="56" Opacity="0.4" HorizontalAlignment="Center"/>
+            <TextBlock Text="暂无发现设备" FontSize="18" HorizontalAlignment="Center"/>
+            <TextBlock Text="点击扫描按钮搜索局域网中的 UniLinker 设备"
+                       FontSize="13" Foreground="{DynamicResource TextTertiaryBrush}"
+                       HorizontalAlignment="Center"/>
+          </StackPanel>
+        </Border>
+      </StackPanel>
+    </ScrollViewer>
+  </Grid>
+
+</UserControl>

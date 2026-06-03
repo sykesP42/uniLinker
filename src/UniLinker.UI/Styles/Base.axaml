@@ -1,0 +1,192 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       基础样式 - 不包含颜色，所有页面共享
+       ═══════════════════════════════════════════════════════════════════════ -->
+
+  <Styles.Resources>
+    <!-- 圆角 -->
+    <CornerRadius x:Key="CornerRadiusSmall">4</CornerRadius>
+    <CornerRadius x:Key="CornerRadiusMedium">8</CornerRadius>
+    <CornerRadius x:Key="CornerRadiusLarge">12</CornerRadius>
+    <CornerRadius x:Key="CornerRadiusXL">16</CornerRadius>
+
+    <!-- 间距 -->
+    <x:Double x:Key="SpacingSmall">8</x:Double>
+    <x:Double x:Key="SpacingMedium">16</x:Double>
+    <x:Double x:Key="SpacingLarge">24</x:Double>
+
+    <!-- 字体大小 -->
+    <x:Double x:Key="FontSizeCaption">11</x:Double>
+    <x:Double x:Key="FontSizeSmall">12</x:Double>
+    <x:Double x:Key="FontSizeNormal">14</x:Double>
+    <x:Double x:Key="FontSizeMedium">16</x:Double>
+    <x:Double x:Key="FontSizeLarge">20</x:Double>
+    <x:Double x:Key="FontSizeTitle">26</x:Double>
+  </Styles.Resources>
+
+  <!-- 窗口基础样式 -->
+  <Style Selector="Window">
+    <Setter Property="FontFamily" Value="Segoe UI, Microsoft YaHei, sans-serif"/>
+    <Setter Property="FontSize" Value="{StaticResource FontSizeNormal}"/>
+    <Setter Property="TransparencyLevelHint" Value="AcrylicBlur"/>
+  </Style>
+
+  <!-- 标题栏样式 -->
+  <Style Selector="Border.titlebar">
+    <Setter Property="Height" Value="48"/>
+    <Setter Property="BorderThickness" Value="0,0,0,1"/>
+  </Style>
+
+  <!-- 窗口控制按钮 -->
+  <Style Selector="Button.window-control">
+    <Setter Property="Width" Value="46"/>
+    <Setter Property="Height" Value="48"/>
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="BorderThickness" Value="0"/>
+    <Setter Property="Padding" Value="0"/>
+    <Setter Property="Cursor" Value="Hand"/>
+  </Style>
+
+  <!-- 侧边栏样式 -->
+  <Style Selector="Border.sidebar">
+    <Setter Property="Width" Value="240"/>
+    <Setter Property="BorderThickness" Value="0,0,1,0"/>
+  </Style>
+
+  <!-- 导航项基础样式 -->
+  <Style Selector="ListBoxItem.nav-item">
+    <Setter Property="Padding" Value="14,12"/>
+    <Setter Property="Margin" Value="0,0,0,4"/>
+    <Setter Property="CornerRadius" Value="{StaticResource CornerRadiusMedium}"/>
+    <Setter Property="Cursor" Value="Hand"/>
+  </Style>
+
+  <!-- 卡片样式 -->
+  <Style Selector="Border.card">
+    <Setter Property="CornerRadius" Value="{StaticResource CornerRadiusLarge}"/>
+    <Setter Property="Padding" Value="20"/>
+    <Setter Property="BorderThickness" Value="1"/>
+  </Style>
+
+  <!-- 文本样式 -->
+  <Style Selector="TextBlock.title">
+    <Setter Property="FontSize" Value="{StaticResource FontSizeTitle}"/>
+    <Setter Property="FontWeight" Value="Bold"/>
+  </Style>
+
+  <Style Selector="TextBlock.header">
+    <Setter Property="FontSize" Value="{StaticResource FontSizeLarge}"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+  </Style>
+
+  <Style Selector="TextBlock.subtitle">
+    <Setter Property="FontSize" Value="{StaticResource FontSizeMedium}"/>
+    <Setter Property="FontWeight" Value="SemiBold"/>
+  </Style>
+
+  <Style Selector="TextBlock.caption">
+    <Setter Property="FontSize" Value="{StaticResource FontSizeCaption}"/>
+  </Style>
+
+  <!-- 输入控件 -->
+  <Style Selector="TextBox">
+    <Setter Property="CornerRadius" Value="{StaticResource CornerRadiusMedium}"/>
+    <Setter Property="Padding" Value="12,10"/>
+    <Setter Property="FontSize" Value="{StaticResource FontSizeNormal}"/>
+  </Style>
+
+  <Style Selector="ComboBox">
+    <Setter Property="CornerRadius" Value="{StaticResource CornerRadiusMedium}"/>
+    <Setter Property="FontSize" Value="{StaticResource FontSizeNormal}"/>
+  </Style>
+
+  <!-- 开关控件 -->
+  <Style Selector="ToggleSwitch">
+    <Setter Property="OnContent" Value=""/>
+    <Setter Property="OffContent" Value=""/>
+  </Style>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       微交互动画样式 (简化版本)
+       ═══════════════════════════════════════════════════════════════════════ -->
+
+  <!-- 按钮悬停效果 - 使用透明度变化代替缩放 -->
+  <Style Selector="Button:not(.window-control):pointerover">
+    <Setter Property="Opacity" Value="0.9"/>
+  </Style>
+
+  <!-- 按钮按下效果 -->
+  <Style Selector="Button:not(.window-control):pressed">
+    <Setter Property="Opacity" Value="0.8"/>
+  </Style>
+
+  <!-- 卡片悬停效果 -->
+  <Style Selector="Border.card:pointerover">
+    <Setter Property="BorderBrush" Value="#6366F1"/>
+  </Style>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       焦点指示器样式 (键盘导航支持)
+       ═══════════════════════════════════════════════════════════════════════ -->
+
+  <!-- 按钮焦点样式 -->
+  <Style Selector="Button:focus /template/ Border#PART_BorderElement">
+    <Setter Property="BorderBrush" Value="#6366F1"/>
+    <Setter Property="BorderThickness" Value="2"/>
+  </Style>
+
+  <!-- 输入框焦点样式 -->
+  <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
+    <Setter Property="BorderBrush" Value="#6366F1"/>
+    <Setter Property="BorderThickness" Value="2"/>
+  </Style>
+
+  <!-- ComboBox 焦点样式 -->
+  <Style Selector="ComboBox:focus /template/ Border#Background">
+    <Setter Property="BorderBrush" Value="#6366F1"/>
+    <Setter Property="BorderThickness" Value="2"/>
+  </Style>
+
+  <!-- ListBoxItem 焦点样式 -->
+  <Style Selector="ListBoxItem:focus">
+    <Setter Property="BorderBrush" Value="#6366F1"/>
+    <Setter Property="BorderThickness" Value="2"/>
+  </Style>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       信号强度指示器样式
+       ═══════════════════════════════════════════════════════════════════════ -->
+
+  <!-- 信号条样式 -->
+  <Style Selector="Border.signal-bar">
+    <Setter Property="Width" Value="3"/>
+    <Setter Property="CornerRadius" Value="1"/>
+    <Setter Property="Background" Value="#374151"/>
+  </Style>
+
+  <!-- 信号条激活状态 -->
+  <Style Selector="Border.signal-bar.excellent">
+    <Setter Property="Background" Value="#22C55E"/>
+  </Style>
+  <Style Selector="Border.signal-bar.good">
+    <Setter Property="Background" Value="#84CC16"/>
+  </Style>
+  <Style Selector="Border.signal-bar.fair">
+    <Setter Property="Background" Value="#F59E0B"/>
+  </Style>
+  <Style Selector="Border.signal-bar.poor">
+    <Setter Property="Background" Value="#EF4444"/>
+  </Style>
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       骨架屏 Shimmer 动画
+       ═══════════════════════════════════════════════════════════════════════ -->
+
+  <Style Selector="Border.skeleton">
+    <Setter Property="Background" Value="#1AFFFFFF"/>
+    <Setter Property="CornerRadius" Value="8"/>
+  </Style>
+
+</Styles>

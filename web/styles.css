@@ -8,7 +8,7 @@ body {
   display: flex; align-items: center; gap: 12px;
   padding: 8px 16px; background: #1a1a1a; border-bottom: 1px solid #2a2a2a; flex-shrink: 0;
 }
-.logo { font-size: 16px; font-weight: 700; color: #4fc3f7; letter-spacing: 1px; }
+.logo { font-size: 16px; font-weight: 700; color: #6366F1; letter-spacing: 1px; }
 .tabs { display: flex; gap: 4px; flex: 1; }
 .tab-btn {
   padding: 6px 14px; border: none; background: transparent; color: #888;
@@ -29,17 +29,137 @@ body {
 .device-card {
   display: flex; align-items: center; gap: 12px; padding: 10px 14px;
   background: #1a1a1a; border-radius: 8px; border: 1px solid #2a2a2a; font-size: 14px;
+  transition: transform 0.15s, box-shadow 0.15s;
+}
+.device-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
 }
 .device-state { color: #888; font-size: 12px; }
 .device-card button {
   margin-left: auto; padding: 4px 12px; border-radius: 4px;
   border: 1px solid #444; background: #2a2a2a; color: #e0e0e0; cursor: pointer; font-size: 13px;
+  transition: transform 0.1s;
 }
+.device-card button:active { transform: scale(0.98); }
 .device-card button:hover { background: #3a3a3a; }
 .btn { padding: 6px 14px; border-radius: 6px; border: 1px solid #444; background: #2a2a2a; color: #e0e0e0; font-size: 13px; cursor: pointer; }
-.btn.primary { background: #1565c0; border-color: #1976d2; color: white; }
+.btn.primary { background: #6366F1; border-color: #818CF8; color: white; }
 .btn:hover { background: #3a3a3a; }
-.btn.primary:hover { background: #1976d2; }
+.btn.primary:hover { background: #4F46E5; }
 .btn:disabled { opacity: 0.5; cursor: default; }
 .mirror-controls { margin-bottom: 16px; display: flex; gap: 8px; }
 .placeholder { color: #555; font-size: 14px; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   信号强度指示器
+   ═══════════════════════════════════════════════════════════════════════ */
+.signal-indicator {
+  display: flex; align-items: flex-end; gap: 2px; margin-left: 8px;
+}
+.signal-bar {
+  width: 3px; border-radius: 1px; background: #374151; transition: background 0.3s;
+}
+.signal-bar:nth-child(1) { height: 6px; }
+.signal-bar:nth-child(2) { height: 9px; }
+.signal-bar:nth-child(3) { height: 12px; }
+.signal-bar:nth-child(4) { height: 15px; }
+
+/* 信号质量等级 */
+.signal-indicator.excellent .signal-bar.active { background: #22C55E; }
+.signal-indicator.good .signal-bar.active { background: #84CC16; }
+.signal-indicator.fair .signal-bar.active { background: #F59E0B; }
+.signal-indicator.poor .signal-bar.active { background: #EF4444; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   错误横幅
+   ═══════════════════════════════════════════════════════════════════════ */
+.error-banner {
+  display: flex; align-items: center; gap: 12px;
+  padding: 12px 16px; margin: 8px 16px; border-radius: 8px; border: 1px solid;
+  animation: slideIn 0.3s ease-out;
+}
+@keyframes slideIn {
+  from { transform: translateY(-100%); opacity: 0; }
+  to { transform: translateY(0); opacity: 1; }
+}
+.error-banner.info { background: rgba(59, 130, 246, 0.1); border-color: #3B82F6; }
+.error-banner.warning { background: rgba(245, 158, 11, 0.1); border-color: #F59E0B; }
+.error-banner.error { background: rgba(239, 68, 68, 0.1); border-color: #EF4444; }
+.error-banner.critical { background: rgba(239, 68, 68, 0.2); border-color: #EF4444; }
+.error-banner .icon { font-size: 16px; }
+.error-banner .message { flex: 1; font-size: 14px; }
+.error-banner.info .icon, .error-banner.info .message { color: #3B82F6; }
+.error-banner.warning .icon, .error-banner.warning .message { color: #F59E0B; }
+.error-banner.error .icon, .error-banner.error .message { color: #EF4444; }
+.error-banner.critical .icon, .error-banner.critical .message { color: #EF4444; }
+.error-banner .close-btn {
+  background: transparent; border: none; color: #737373; cursor: pointer;
+  font-size: 16px; padding: 4px;
+}
+.error-banner .close-btn:hover { color: #A3A3A3; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   骨架屏加载
+   ═══════════════════════════════════════════════════════════════════════ */
+.skeleton {
+  background: linear-gradient(90deg, #1AFFFFFF 25%, #2AFFFFFF 50%, #1AFFFFFF 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.5s infinite;
+  border-radius: 8px;
+}
+@keyframes shimmer {
+  0% { background-position: 200% 0; }
+  100% { background-position: -200% 0; }
+}
+.skeleton-device {
+  display: flex; align-items: center; gap: 12px; padding: 10px 14px;
+  background: #1a1a1a; border-radius: 8px; margin-bottom: 8px;
+}
+.skeleton-icon { width: 40px; height: 40px; border-radius: 8px; }
+.skeleton-text { flex: 1; }
+.skeleton-line { height: 14px; margin-bottom: 6px; }
+.skeleton-line.short { width: 60%; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   Toast 通知
+   ═══════════════════════════════════════════════════════════════════════ */
+.toast-container {
+  position: fixed; bottom: 20px; right: 20px; display: flex;
+  flex-direction: column; gap: 8px; z-index: 1000;
+}
+.toast {
+  padding: 12px 16px; border-radius: 8px; border: 1px solid;
+  animation: toastIn 0.3s ease-out; min-width: 280px; max-width: 400px;
+  display: flex; align-items: center; gap: 10px;
+}
+@keyframes toastIn {
+  from { transform: translateX(100%); opacity: 0; }
+  to { transform: translateX(0); opacity: 1; }
+}
+.toast.success { background: rgba(34, 197, 94, 0.1); border-color: #22C55E; }
+.toast.info { background: rgba(59, 130, 246, 0.1); border-color: #3B82F6; }
+.toast.warning { background: rgba(245, 158, 11, 0.1); border-color: #F59E0B; }
+.toast.error { background: rgba(239, 68, 68, 0.1); border-color: #EF4444; }
+.toast .message { flex: 1; font-size: 13px; color: #E5E5E5; }
+.toast .close-btn {
+  background: transparent; border: none; color: #737373; cursor: pointer;
+  font-size: 12px; padding: 2px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   焦点指示器 (键盘导航)
+   ═══════════════════════════════════════════════════════════════════════ */
+:focus-visible {
+  outline: 2px solid #6366F1;
+  outline-offset: 2px;
+}
+
+/* ═══════════════════════════════════════════════════════════════════════
+   减弱动画模式 (无障碍)
+   ═══════════════════════════════════════════════════════════════════════ */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton { animation: none; background: #1AFFFFFF; }
+  .error-banner, .toast { animation: none; }
+  .device-card { transition: none; }
+}

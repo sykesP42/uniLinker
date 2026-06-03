@@ -24,20 +24,43 @@
             border-bottom: 1px solid #2a2a4e;
             gap: 12px;
         }
-        .logo { font-weight: bold; font-size: 16px; color: #7c7cf8; }
+        .logo { font-weight: bold; font-size: 16px; color: #6366F1; }
         .status-dot {
             width: 8px; height: 8px;
             border-radius: 50%;
             background: #555;
         }
-        .status-dot.connected { background: #4caf50; }
-        .status-dot.connecting { background: #ff9800; animation: pulse 1s infinite; }
-        .status-dot.error { background: #f44336; }
+        .status-dot.connected { background: #22C55E; }
+        .status-dot.connecting { background: #F59E0B; animation: pulse 1s infinite; }
+        .status-dot.error { background: #EF4444; }
         @keyframes pulse {
             0%, 100% { opacity: 1; }
             50% { opacity: 0.3; }
         }
         .status-text { font-size: 13px; color: #999; }
+
+        /* 信号强度指示器 */
+        .signal-indicator {
+            display: flex;
+            align-items: flex-end;
+            gap: 2px;
+            margin-left: 8px;
+        }
+        .signal-bar {
+            width: 3px;
+            border-radius: 1px;
+            background: #374151;
+            transition: background 0.3s;
+        }
+        .signal-bar:nth-child(1) { height: 6px; }
+        .signal-bar:nth-child(2) { height: 9px; }
+        .signal-bar:nth-child(3) { height: 12px; }
+        .signal-bar:nth-child(4) { height: 15px; }
+        .signal-bar.active.excellent { background: #22C55E; }
+        .signal-bar.active.good { background: #84CC16; }
+        .signal-bar.active.fair { background: #F59E0B; }
+        .signal-bar.active.poor { background: #EF4444; }
+
         .info-text { font-size: 12px; color: #666; margin-left: auto; }
         button {
             padding: 6px 16px;
@@ -47,10 +70,12 @@
             font-size: 13px;
             background: #2a2a4e;
             color: #ccc;
+            transition: transform 0.1s;
         }
         button:hover { background: #3a3a6e; }
-        button.primary { background: #5c5cf0; color: #fff; }
-        button.primary:hover { background: #4a4ad0; }
+        button:active { transform: scale(0.98); }
+        button.primary { background: #6366F1; color: #fff; }
+        button.primary:hover { background: #4F46E5; }
         button:disabled { opacity: 0.4; cursor: not-allowed; }
         .main-area {
             flex: 1;
@@ -101,29 +126,94 @@
             font-size: 13px;
             width: 200px;
         }
-        .connect-row input:focus { outline: none; border-color: #5c5cf0; }
+        .connect-row input:focus { outline: none; border-color: #6366F1; }
+
+        /* Toast 通知容器 */
+        .toast-container {
+            position: fixed;
+            bottom: 20px;
+            right: 20px;
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            z-index: 1000;
+        }
+        .toast {
+            padding: 12px 16px;
+            border-radius: 8px;
+            border: 1px solid;
+            min-width: 280px;
+            max-width: 400px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            animation: toastIn 0.3s ease-out;
+        }
+        @keyframes toastIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        .toast.success { background: rgba(34, 197, 94, 0.1); border-color: #22C55E; }
+        .toast.info { background: rgba(59, 130, 246, 0.1); border-color: #3B82F6; }
+        .toast.warning { background: rgba(245, 158, 11, 0.1); border-color: #F59E0B; }
+        .toast.error { background: rgba(239, 68, 68, 0.1); border-color: #EF4444; }
+        .toast .message { flex: 1; font-size: 13px; color: #E5E5E5; }
+        .toast .close-btn {
+            background: transparent;
+            border: none;
+            color: #737373;
+            cursor: pointer;
+            font-size: 12px;
+            padding: 2px;
+        }
+
+        /* 焦点指示器 */
+        :focus-visible {
+            outline: 2px solid #6366F1;
+            outline-offset: 2px;
+        }
     </style>
 </head>
 <body>
-    <div class="toolbar">
-        <span class="logo">UniLinker</span>
-        <span class="status-dot" id="statusDot"></span>
-        <span class="status-text" id="statusText">Disconnected</span>
+    <div class="toolbar" role="toolbar" aria-label="主工具栏">
+        <span class="logo" aria-label="UniLinker Logo">UniLinker</span>
+
+        <!-- 状态指示器 -->
+        <span class="status-dot" id="statusDot" aria-hidden="true"></span>
+        <span class="status-text" id="statusText" aria-live="polite">已断开</span>
+
+        <!-- 信号强度指示器 -->
+        <div class="signal-indicator" id="signalIndicator" title="连接质量" aria-label="连接质量">
+            <span class="signal-bar"></span>
+            <span class="signal-bar"></span>
+            <span class="signal-bar"></span>
+            <span class="signal-bar"></span>
+        </div>
+
         <span class="info-text" id="infoText"></span>
+
         <div class="connect-row" style="margin-left: auto;">
-            <input type="text" id="hostInput" placeholder="Host (e.g. 192.168.1.5)" />
-            <button class="primary" id="btnConnect" onclick="connect()">Connect</button>
-            <button id="btnFullscreen" onclick="toggleFullscreen()" disabled>Full</button>
+            <input type="text" id="hostInput" placeholder="Host (e.g. 192.168.1.5)"
+                   aria-label="主机地址" tabindex="0">
+            <button class="primary" id="btnConnect" onclick="connect()"
+                    aria-label="连接" tabindex="0">Connect</button>
+            <button id="btnFullscreen" onclick="toggleFullscreen()" disabled
+                    aria-label="全屏" tabindex="0">Full</button>
         </div>
     </div>
-    <div class="main-area">
+
+    <div class="main-area" role="main">
         <div class="placeholder" id="placeholder">
-            <span class="icon">&#x1F4FA;</span>
-            <span>Enter host address and click Connect</span>
+            <span class="icon" aria-hidden="true">📺</span>
+            <span>输入主机地址并点击连接</span>
         </div>
         <video id="remoteVideo" autoplay playsinline muted></video>
-        <div class="overlay-info" id="overlayInfo"></div>
+        <div class="overlay-info" id="overlayInfo" aria-live="off"></div>
     </div>
+
+    <!-- Toast 通知容器 -->
+    <div class="toast-container" id="toastContainer" aria-live="polite"></div>
+
     <script src="app.js"></script>
 </body>
 </html>

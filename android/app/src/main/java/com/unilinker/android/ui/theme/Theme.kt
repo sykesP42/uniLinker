@@ -10,19 +10,20 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 
 private val DarkColors = darkColorScheme(
-    primary = Color(0xFF4FC3F7),
-    onPrimary = Color(0xFF003544),
-    primaryContainer = Color(0xFF004D64),
-    onPrimaryContainer = Color(0xFFB3E5FC),
-    secondary = Color(0xFF80CBC4),
+    // 统一为 Indigo 主色，与 Desktop 保持一致
+    primary = Color(0xFF6366F1),
+    onPrimary = Color(0xFFFFFFFF),
+    primaryContainer = Color(0xFF4F46E5),
+    onPrimaryContainer = Color(0xFFE0E7FF),
+    secondary = Color(0xFF818CF8),
     surface = Color(0xFF1A1A1A),
-    onSurface = Color(0xFFE0E0E0),
-    background = Color(0xFF0D0D0D),
-    onBackground = Color(0xFFE0E0E0),
-    surfaceVariant = Color(0xFF2A2A2A),
-    onSurfaceVariant = Color(0xFF888888),
-    error = Color(0xFFEF5350),
-    outline = Color(0xFF444444),
+    onSurface = Color(0xFFE5E5E5),
+    background = Color(0xFF0A0A0A),
+    onBackground = Color(0xFFE5E5E5),
+    surfaceVariant = Color(0xFF262626),
+    onSurfaceVariant = Color(0xFFA3A3A3),
+    error = Color(0xFFEF4444),
+    outline = Color(0xFF525252),
 )
 
 private val UniLinkerTypography = Typography(

@@ -1,0 +1,136 @@
+<Styles xmlns="https://github.com/avaloniaui"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+  <!-- ═══════════════════════════════════════════════════════════════════════
+       动态主题样式 - 使用 DynamicResource 引用颜色
+       ═══════════════════════════════════════════════════════════════════════ -->
+
+  <!-- 窗口样式 -->
+  <Style Selector="Window">
+    <Setter Property="Background" Value="{DynamicResource BackgroundBrush}"/>
+    <Setter Property="Transitions">
+      <Transitions>
+        <BrushTransition Property="Background" Duration="0:0:0.3"/>
+      </Transitions>
+    </Setter>
+  </Style>
+
+  <!-- 标题栏 -->
+  <Style Selector="Border.titlebar">
+    <Setter Property="Background" Value="{DynamicResource BackgroundMediumBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+  </Style>
+
+  <Style Selector="Button.window-control:pointerover">
+    <Setter Property="Background" Value="#1AFFFFFF"/>
+  </Style>
+
+  <Style Selector="Button.window-control.close:pointerover">
+    <Setter Property="Background" Value="#E81123"/>
+  </Style>
+
+  <!-- 侧边栏 - 使用深色背景 -->
+  <Style Selector="Border.sidebar">
+    <Setter Property="Background" Value="#0D0D0D"/>
+    <Setter Property="BorderBrush" Value="#1A1A1A"/>
+  </Style>
+
+  <!-- 导航项 - 平滑动效 -->
+  <Style Selector="ListBoxItem.nav-item">
+    <Setter Property="Background" Value="Transparent"/>
+    <Setter Property="Foreground" Value="{DynamicResource TextTertiaryBrush}"/>
+    <Setter Property="Transitions">
+      <Transitions>
+        <DoubleTransition Property="Opacity" Duration="0:0:0.15"/>
+      </Transitions>
+    </Setter>
+  </Style>
+
+  <Style Selector="ListBoxItem.nav-item:pointerover">
+    <Setter Property="Background" Value="#1AFFFFFF"/>
+    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+    <Setter Property="Opacity" Value="0.9"/>
+  </Style>
+
+  <Style Selector="ListBoxItem.nav-item:selected">
+    <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
+    <Setter Property="Foreground" Value="White"/>
+    <Setter Property="Opacity" Value="1"/>
+  </Style>
+
+  <!-- 卡片 - 悬停动效 -->
+  <Style Selector="Border.card">
+    <Setter Property="Background" Value="{DynamicResource SurfaceBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+    <Setter Property="Transitions">
+      <Transitions>
+        <DoubleTransition Property="Opacity" Duration="0:0:0.15"/>
+        <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.2"/>
+      </Transitions>
+    </Setter>
+  </Style>
+
+  <Style Selector="Border.card:pointerover">
+    <Setter Property="Opacity" Value="0.95"/>
+    <Setter Property="RenderTransform" Value="scale(1.01)"/>
+  </Style>
+
+  <!-- 文本 -->
+  <Style Selector="TextBlock">
+    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+  </Style>
+
+  <!-- 输入控件 -->
+  <Style Selector="TextBox">
+    <Setter Property="Background" Value="{DynamicResource SurfaceHigherBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+  </Style>
+
+  <Style Selector="TextBox:focus /template/ Border#PART_BorderElement">
+    <Setter Property="BorderBrush" Value="{DynamicResource AccentBrush}"/>
+    <Setter Property="BorderThickness" Value="2"/>
+  </Style>
+
+  <Style Selector="ComboBox">
+    <Setter Property="Background" Value="{DynamicResource SurfaceHigherBrush}"/>
+    <Setter Property="Foreground" Value="{DynamicResource TextPrimaryBrush}"/>
+    <Setter Property="BorderBrush" Value="{DynamicResource BorderBrush}"/>
+  </Style>
+
+  <!-- 按钮 -->
+  <Style Selector="Button">
+    <Setter Property="Transitions">
+      <Transitions>
+        <DoubleTransition Property="Opacity" Duration="0:0:0.1"/>
+        <TransformOperationsTransition Property="RenderTransform" Duration="0:0:0.15"/>
+      </Transitions>
+    </Setter>
+  </Style>
+
+  <Style Selector="Button:pointerover">
+    <Setter Property="Opacity" Value="0.9"/>
+    <Setter Property="RenderTransform" Value="scale(1.02)"/>
+  </Style>
+
+  <Style Selector="Button:pressed">
+    <Setter Property="Opacity" Value="0.8"/>
+    <Setter Property="RenderTransform" Value="scale(0.98)"/>
+  </Style>
+
+  <Style Selector="Button.primary">
+    <Setter Property="Background" Value="{DynamicResource AccentBrush}"/>
+    <Setter Property="Foreground" Value="White"/>
+  </Style>
+
+  <Style Selector="Button.success">
+    <Setter Property="Background" Value="{DynamicResource SuccessBrush}"/>
+    <Setter Property="Foreground" Value="White"/>
+  </Style>
+
+  <Style Selector="Button.danger">
+    <Setter Property="Background" Value="{DynamicResource ErrorBrush}"/>
+    <Setter Property="Foreground" Value="White"/>
+  </Style>
+
+</Styles>

@@ -1,0 +1,15 @@
+<Application xmlns="https://github.com/avaloniaui"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+             x:Class="UniLinker.UI.App">
+
+  <Application.Styles>
+    <FluentTheme />
+
+    <!-- Base styles -->
+    <StyleInclude Source="avares://UniLinker.UI/Styles/Base.axaml"/>
+
+    <!-- Theme styles (uses DynamicResource) -->
+    <StyleInclude Source="avares://UniLinker.UI/Styles/ThemeStyles.axaml"/>
+  </Application.Styles>
+
+</Application>
