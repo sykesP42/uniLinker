@@ -2,17 +2,14 @@ package com.unilinker.android.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.unilinker.android.ui.theme.*
 
 /**
  * 流统计信息数据类
@@ -35,10 +32,11 @@ data class StreamStats(
 }
 
 /**
- * 实时统计信息覆盖层
+ * 工业风统计信息覆盖层
  *
- * @param stats 流统计信息
- * @param modifier 修饰符
+ * - 无圆角
+ * - 暖灰背景
+ * - 单色系文字
  */
 @Composable
 fun StatsOverlay(
@@ -47,61 +45,61 @@ fun StatsOverlay(
 ) {
     Row(
         modifier = modifier
-            .clip(RoundedCornerShape(8.dp))
-            .background(Color.Black.copy(alpha = 0.6f))
-            .padding(horizontal = 12.dp, vertical = 8.dp),
-        horizontalArrangement = Arrangement.spacedBy(16.dp),
+            .background(BackgroundSurface.copy(alpha = 0.9f))
+            .padding(horizontal = 16.dp, vertical = 8.dp),
+        horizontalArrangement = Arrangement.spacedBy(20.dp),
         verticalAlignment = Alignment.CenterVertically
     ) {
-        StatItem(
+        IndustrialStatItem(
             label = "分辨率",
             value = stats.resolution,
-            valueColor = Color.White
+            valueColor = TextPrimary
         )
-        StatItem(
+        IndustrialStatItem(
             label = "FPS",
             value = stats.fps.toString(),
             valueColor = when {
-                stats.fps >= 30 -> Color(0xFF22C55E)
-                stats.fps >= 20 -> Color(0xFFF59E0B)
-                else -> Color(0xFFEF4444)
+                stats.fps >= 30 -> StatusSuccess
+                stats.fps >= 20 -> StatusWarning
+                else -> StatusError
             }
         )
-        StatItem(
+        IndustrialStatItem(
             label = "码率",
             value = stats.bitrateDisplay,
-            valueColor = Color.White
+            valueColor = TextPrimary
         )
-        StatItem(
+        IndustrialStatItem(
             label = "延迟",
             value = "${stats.latencyMs}ms",
             valueColor = when {
-                stats.latencyMs < 50 -> Color(0xFF22C55E)
-                stats.latencyMs < 100 -> Color(0xFFF59E0B)
-                else -> Color(0xFFEF4444)
+                stats.latencyMs < 50 -> StatusSuccess
+                stats.latencyMs < 100 -> StatusWarning
+                else -> StatusError
             }
         )
     }
 }
 
 @Composable
-private fun StatItem(
+private fun IndustrialStatItem(
     label: String,
     value: String,
-    valueColor: Color
+    valueColor: androidx.compose.ui.graphics.Color
 ) {
     Column(horizontalAlignment = Alignment.Start) {
         Text(
             text = value,
             fontSize = 13.sp,
-            fontWeight = FontWeight.Medium,
+            fontWeight = FontWeight.Bold,
             color = valueColor,
             fontFamily = androidx.compose.ui.text.font.FontFamily.Monospace
         )
+        Spacer(modifier = Modifier.height(2.dp))
         Text(
             text = label,
             fontSize = 10.sp,
-            color = Color(0xFF9CA3AF)
+            color = TextTertiary
         )
     }
 }

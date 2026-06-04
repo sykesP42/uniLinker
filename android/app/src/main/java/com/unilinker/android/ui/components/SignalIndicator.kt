@@ -2,13 +2,11 @@ package com.unilinker.android.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.unilinker.android.ui.theme.*
 
 /**
  * 连接质量等级
@@ -21,10 +19,10 @@ enum class ConnectionQuality {
 }
 
 /**
- * 信号强度指示器 - 四格信号条
+ * 工业风信号强度指示器
  *
- * @param quality 连接质量等级
- * @param modifier 修饰符
+ * - 无圆角
+ * - 单色系（铜金色）
  */
 @Composable
 fun SignalIndicator(
@@ -32,17 +30,17 @@ fun SignalIndicator(
     modifier: Modifier = Modifier
 ) {
     val activeColor = when (quality) {
-        ConnectionQuality.Excellent -> Color(0xFF22C55E)  // Green
-        ConnectionQuality.Good -> Color(0xFF84CC16)       // Lime
-        ConnectionQuality.Fair -> Color(0xFFF59E0B)       // Amber
-        ConnectionQuality.Poor -> Color(0xFFEF4444)       // Red
+        ConnectionQuality.Excellent -> Copper
+        ConnectionQuality.Good -> Copper.copy(alpha = 0.8f)
+        ConnectionQuality.Fair -> StatusWarning
+        ConnectionQuality.Poor -> StatusError
     }
 
-    val inactiveColor = Color(0xFF374151)  // Gray-700
+    val inactiveColor = BorderStrong
 
     Row(
         modifier = modifier,
-        verticalAlignment = Alignment.CenterVertically,
+        verticalAlignment = Alignment.Bottom,
         horizontalArrangement = Arrangement.spacedBy(2.dp)
     ) {
         // 四格信号条，高度递增
@@ -59,7 +57,6 @@ fun SignalIndicator(
                 modifier = Modifier
                     .width(3.dp)
                     .height(height)
-                    .clip(RoundedCornerShape(1.dp))
                     .background(
                         if (index < activeCount) activeColor else inactiveColor
                     )
