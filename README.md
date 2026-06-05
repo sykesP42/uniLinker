@@ -10,11 +10,11 @@ MIT 协议，完全免费。
 
 ## 当前版本 (v3.0)
 
-**技术栈**：C# .NET 9 + Windows.Graphics.Capture + Media Foundation + WebRTC + Jetpack Compose
+**技术栈**：C# .NET 9 + WinUI 3 + Windows.Graphics.Capture + Media Foundation + WebRTC + Jetpack Compose
 
 | 平台 | 状态 | 功能 |
 |------|------|------|
-| Windows (C#) | ✅ 可构建 | 投屏发送 + 接收 + GUI + 插件系统 |
+| Windows (C#) | ✅ 可构建 | 投屏发送 + 接收 + WinUI3 GUI + 插件系统 |
 | Android (Kotlin) | ✅ 可构建 | 设备发现 + 投屏接收 + 原生 UI |
 | 浏览器 | ✅ 兼容 | 任何支持 WebRTC 的浏览器均可观看 |
 
@@ -24,13 +24,17 @@ MIT 协议，完全免费。
 - 📱 **全平台** — Windows 发送，Android/iOS/浏览器观看
 - 🔌 **插件系统** — SDK 接口，投屏、文件传输、远程输入作为独立 Plugin
 - 🔗 **多连接方式** — 局域网自动发现 / 手动 IP / 6 位连接码
-- 🎨 **暗色主题** — Windows (WebView2) 和 Android (Material 3) 统一设计
+- 🎨 **Fluent Design** — Windows (WinUI 3) 和 Android (Material 3) 原生设计
 
 ## 运行
 
-**Windows:**
+**Windows (需要 Visual Studio 2022 with Windows App SDK):**
 ```bash
-dotnet run --project src/UniLinker.App
+# 使用 MSBuild 构建
+"C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" src/UniLinker.WinUI/UniLinker.WinUI.csproj -p:Configuration=Debug
+
+# 运行
+./src/UniLinker.WinUI/bin/Debug/net9.0-windows10.0.19041.0/UniLinker.WinUI.exe
 ```
 
 **Android:**
@@ -53,7 +57,7 @@ dotnet run --project src/UniLinker.App
 │   ├── Strategies (局域网/手动IP/连接码)        │
 │   └── Signaling (HTTP 信令)                   │
 │                                              │
-│   GUI Shell (WebView2 / Compose)              │
+│   GUI Shell (WinUI 3 / Compose)               │
 └──────────────────────────────────────────────┘
 ```
 
@@ -65,8 +69,7 @@ uniLinker/
 │   ├── UniLinker.Plugin.Sdk/        # 插件 SDK（纯接口）
 │   ├── UniLinker.Core/              # 平台引擎
 │   ├── UniLinker.Plugins.ScreenMirror/  # 投屏插件
-│   ├── UniLinker.App/               # Windows 主程序
-│   └── UniLinker.UI/                # WebView2 GUI
+│   └── UniLinker.WinUI/             # Windows 主程序 (WinUI 3)
 ├── android/                         # Android App
 │   ├── sdk/                         # 插件 SDK (Kotlin)
 │   ├── core/                        # 平台引擎
@@ -75,3 +78,15 @@ uniLinker/
 ├── web/                             # 浏览器前端
 └── docs/superpowers/                # 设计文档
 ```
+
+## 开发要求
+
+**Windows 开发:**
+- Visual Studio 2022 with "Windows App SDK" workload
+- .NET 9 SDK
+- Windows 10 1809+ 或 Windows 11
+
+**Android 开发:**
+- Android Studio Hedgehog+
+- JDK 17+
+- Android SDK 34
