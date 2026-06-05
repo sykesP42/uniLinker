@@ -1,0 +1,94 @@
+<Page
+    x:Class="UniLinker.WinUI.Views.DevicesPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+
+    <Grid Padding="24">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="Auto"/>
+            <RowDefinition Height="*"/>
+            <RowDefinition Height="Auto"/>
+        </Grid.RowDefinitions>
+
+        <!-- Header -->
+        <Grid Grid.Row="0" ColumnSpacing="12" Margin="0,0,0,16">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*"/>
+                <ColumnDefinition Width="Auto"/>
+            </Grid.ColumnDefinitions>
+
+            <TextBlock Grid.Column="0" Text="Devices" Style="{StaticResource TitleTextBlockStyle}"/>
+            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
+                <TextBox x:Name="SearchBox"
+                         PlaceholderText="Search devices..."
+                         Text="{Binding Devices.SearchText, Mode=TwoWay}"
+                         Width="200"/>
+                <Button Command="{Binding Devices.StartScanCommand}">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE721;" FontSize="14"/>
+                        <TextBlock Text="Scan"/>
+                    </StackPanel>
+                </Button>
+            </StackPanel>
+        </Grid>
+
+        <!-- Discovery Mode -->
+        <StackPanel Grid.Row="1" Margin="0,0,0,16" Orientation="Horizontal" Spacing="16">
+            <RadioButton Content="Auto-discover" GroupName="DiscoveryMode" Tag="0" Click="DiscoveryModeRadioButton_Click"/>
+            <RadioButton Content="LAN" GroupName="DiscoveryMode" Tag="1" Click="DiscoveryModeRadioButton_Click"/>
+            <RadioButton Content="Manual IP" GroupName="DiscoveryMode" Tag="2" Click="DiscoveryModeRadioButton_Click"/>
+        </StackPanel>
+
+        <!-- Device Grid -->
+        <GridView Grid.Row="2"
+                  x:Name="DeviceGridView"
+                  ItemsSource="{Binding Devices.Devices, Mode=OneWay}"
+                  SelectionMode="None">
+            <GridView.ItemTemplate>
+                <DataTemplate>
+                    <Grid Width="200" Height="140" Padding="12"
+                          Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                          CornerRadius="8">
+                        <Grid.RowDefinitions>
+                            <RowDefinition Height="Auto"/>
+                            <RowDefinition Height="*"/>
+                            <RowDefinition Height="Auto"/>
+                        </Grid.RowDefinitions>
+
+                        <FontIcon Grid.Row="0" Glyph="&#xE970;" FontSize="32" HorizontalAlignment="Left"/>
+                        <StackPanel Grid.Row="1" VerticalAlignment="Center">
+                            <TextBlock Text="{Binding Name}" FontWeight="Medium" TextTrimming="CharacterEllipsis"/>
+                            <TextBlock Text="{Binding IpAddress}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="11"/>
+                        </StackPanel>
+                        <Button Grid.Row="2" Content="Connect" HorizontalAlignment="Stretch"/>
+                    </Grid>
+                </DataTemplate>
+            </GridView.ItemTemplate>
+        </GridView>
+
+        <!-- Manual IP Expander -->
+        <Expander Grid.Row="3" Header="Manual Connection" HorizontalAlignment="Stretch">
+            <Grid ColumnSpacing="12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBox Grid.Column="0"
+                         PlaceholderText="IP Address"
+                         Text="{Binding Devices.ManualIp, Mode=TwoWay}"/>
+                <TextBox Grid.Column="1"
+                         PlaceholderText="Port"
+                         Text="{Binding Devices.ManualPort, Mode=TwoWay}"
+                         Width="100"/>
+                <Button Grid.Column="2" Content="Connect" Command="{Binding Devices.ConnectManualCommand}"/>
+            </Grid>
+        </Expander>
+    </Grid>
+</Page>
