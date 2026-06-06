@@ -20,6 +20,7 @@
     <!-- Skip PRI generation -->
     <EnableMrtTargets>false</EnableMrtTargets>
     <GeneratePri>false</GeneratePri>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
   </PropertyGroup>
 
   <!-- Disable MRT PRI generation target -->

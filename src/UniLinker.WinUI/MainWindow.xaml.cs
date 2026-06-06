@@ -9,9 +9,13 @@ namespace UniLinker.WinUI;
 public sealed partial class MainWindow : Window
 {
     public MainViewModel ViewModel { get; }
+    private TrayIcon? _trayIcon;
     private bool _isClosing;
     private bool _minimizeToTray = true;
     private ContentDialog? _closeDialog;
+
+    // Window message for menu commands
+    private const int WM_COMMAND = 0x0111;
 
     public MainWindow()
     {
@@ -32,11 +36,20 @@ public sealed partial class MainWindow : Window
         ContentFrame.Navigate(typeof(DashboardPage), ViewModel);
     }
 
+    private nint _hwnd;
+
     private void SetDefaultSize(int width, int height)
     {
         var appWindow = this.AppWindow;
         var size = new Windows.Graphics.SizeInt32(width, height);
         appWindow.Resize(size);
+
+        // Get window handle for tray icon (WinUI 3 way)
+        var windowId = this.AppWindow.Id;
+        _hwnd = Microsoft.UI.Win32Interop.GetWindowFromWindowId(windowId);
+
+        // Initialize tray icon
+        InitializeTray();
 
         // Center window on screen
         var displayArea = Microsoft.UI.Windowing.DisplayArea.GetFromWindowId(appWindow.Id, Microsoft.UI.Windowing.DisplayAreaFallback.Primary);
@@ -46,6 +59,30 @@ public sealed partial class MainWindow : Window
             var centerY = (displayArea.WorkArea.Height - height) / 2;
             appWindow.Move(new Windows.Graphics.PointInt32(centerX, centerY));
         }
+    }
+
+    private void InitializeTray()
+    {
+        _trayIcon = new TrayIcon();
+        _trayIcon.Initialize(_hwnd, "UniLinker - Running");
+
+        _trayIcon.ShowClicked += () =>
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                this.AppWindow.Show();
+                this.Activate();
+            });
+        };
+
+        _trayIcon.ExitClicked += () =>
+        {
+            DispatcherQueue.TryEnqueue(() =>
+            {
+                _isClosing = true;
+                this.Close();
+            });
+        };
     }
 
     private void NavView_ItemInvoked(NavigationView sender, NavigationViewItemInvokedEventArgs args)
@@ -77,10 +114,11 @@ public sealed partial class MainWindow : Window
 
     private async void Window_Closed(object sender, WindowEventArgs args)
     {
-        // If we're truly closing, just cleanup
+        // If we're truly closing (from tray exit), just cleanup
         if (_isClosing)
         {
             ViewModel.Cleanup();
+            _trayIcon?.Dispose();
             return;
         }
 
@@ -92,7 +130,7 @@ public sealed partial class MainWindow : Window
             _closeDialog = new ContentDialog
             {
                 Title = "Close UniLinker?",
-                Content = "Do you want to minimize to tray (background) or exit completely?",
+                Content = "Do you want to minimize to system tray (background) or exit completely?",
                 PrimaryButtonText = "Minimize to tray",
                 SecondaryButtonText = "Exit",
                 CloseButtonText = "Cancel",
@@ -106,16 +144,16 @@ public sealed partial class MainWindow : Window
 
             if (result == ContentDialogResult.Primary)
             {
-                // Minimize to tray (hide window)
-                // Note: Full tray support requires additional implementation
-                // For now, just hide the window
+                // Minimize to tray
                 this.AppWindow.Hide();
+                _trayIcon?.ShowNotification("UniLinker", "Running in background. Click to restore.");
             }
             else if (result == ContentDialogResult.Secondary)
             {
                 // Exit completely
                 _isClosing = true;
                 ViewModel.Cleanup();
+                _trayIcon?.Dispose();
                 this.Close();
             }
             // Cancel - do nothing, window stays open
