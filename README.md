@@ -14,7 +14,7 @@ MIT 协议，完全免费。
 
 | 平台 | 状态 | 功能 |
 |------|------|------|
-| Windows (C#) | ✅ 可构建 | 投屏发送 + 接收 + WinUI3 GUI + 插件系统 |
+| Windows (C#) | ✅ 可运行 | 投屏发送 + 接收 + WinUI3 GUI + 插件系统 |
 | Android (Kotlin) | ✅ 可构建 | 设备发现 + 投屏接收 + 原生 UI |
 | 浏览器 | ✅ 兼容 | 任何支持 WebRTC 的浏览器均可观看 |
 
@@ -31,11 +31,16 @@ MIT 协议，完全免费。
 **Windows (需要 Visual Studio 2022 with Windows App SDK):**
 ```bash
 # 使用 MSBuild 构建
-"C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" src/UniLinker.WinUI/UniLinker.WinUI.csproj -p:Configuration=Debug
+"C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" UniLinker.sln -p:Configuration=Debug
 
 # 运行
 ./src/UniLinker.WinUI/bin/Debug/net9.0-windows10.0.19041.0/UniLinker.WinUI.exe
 ```
+
+**或使用 Visual Studio:**
+1. 打开 `UniLinker.sln`
+2. 右键 `UniLinker.WinUI` → 设为启动项目
+3. 按 F5 运行
 
 **Android:**
 用 Android Studio 打开 `android/` 目录，Sync → Run
