@@ -40,8 +40,9 @@ public partial class MainViewModel : ObservableObject
         _bridge = bridge;
         _discovery = discovery;
 
-        // Create DevicesViewModel with real discovery service
+        // Create ViewModels with real services
         Devices = new DevicesViewModel(discovery);
+        Share = new ShareViewModel(bridge);
 
         // Subscribe to discovery events for dashboard stats
         _discovery.DeviceFound += OnDeviceFound;
@@ -140,5 +141,6 @@ public partial class MainViewModel : ObservableObject
             _discovery.DeviceLost -= OnDeviceLost;
         }
         Devices.Cleanup();
+        Share.Cleanup();
     }
 }
