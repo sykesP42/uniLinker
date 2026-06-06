@@ -12,6 +12,14 @@
             <!-- Header -->
             <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}"/>
 
+            <!-- Status Message -->
+            <InfoBar
+                x:Name="StatusInfoBar"
+                Severity="Success"
+                IsOpen="{Binding Settings.HasUnsavedChanges, Mode=OneWay}"
+                IsClosable="False"
+                Title="{Binding Settings.StatusMessage, Mode=OneWay}"/>
+
             <!-- General Settings -->
             <Expander Header="General" HorizontalAlignment="Stretch" IsExpanded="True">
                 <StackPanel Spacing="12">
@@ -22,8 +30,9 @@
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="Device Name" VerticalAlignment="Center"/>
                         <TextBox Grid.Column="1"
-                                 Text="{Binding Settings.DeviceName, Mode=TwoWay}"
-                                 Width="200"/>
+                                 Text="{Binding Settings.DeviceName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                 Width="200"
+                                 PlaceholderText="Enter device name"/>
                     </Grid>
 
                     <Grid ColumnSpacing="12">
@@ -33,34 +42,83 @@
                         </Grid.ColumnDefinitions>
                         <TextBlock Grid.Column="0" Text="HTTP Port" VerticalAlignment="Center"/>
                         <NumberBox Grid.Column="1"
-                                   Value="{Binding Settings.HttpPort, Mode=TwoWay}"
+                                   Value="{Binding Settings.HttpPort, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
                                    Width="100"
                                    Minimum="1024"
-                                   Maximum="65535"/>
+                                   Maximum="65535"
+                                   SpinButtonPlacementMode="Inline"/>
                     </Grid>
 
                     <ToggleSwitch Header="Auto-start on login"
                                   IsOn="{Binding Settings.AutoStart, Mode=TwoWay}"/>
-                    <ToggleSwitch Header="Minimize to tray"
+
+                    <ToggleSwitch Header="Minimize to tray on close"
                                   IsOn="{Binding Settings.MinimizeToTray, Mode=TwoWay}"/>
                 </StackPanel>
             </Expander>
 
             <!-- Appearance -->
-            <Expander Header="Appearance" HorizontalAlignment="Stretch">
+            <Expander Header="Appearance" HorizontalAlignment="Stretch" IsExpanded="True">
                 <StackPanel Spacing="12">
                     <TextBlock Text="Theme"/>
                     <RadioButtons SelectedIndex="{Binding Settings.ThemeIndex, Mode=TwoWay}">
                         <RadioButton Content="Dark"/>
                         <RadioButton Content="Light"/>
-                        <RadioButton Content="System"/>
+                        <RadioButton Content="System (Recommended)"/>
                     </RadioButtons>
                 </StackPanel>
             </Expander>
 
+            <!-- Screen Mirror Defaults -->
+            <Expander Header="Screen Mirror Defaults" HorizontalAlignment="Stretch">
+                <Grid ColumnSpacing="16" RowSpacing="12">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="*"/>
+                    </Grid.ColumnDefinitions>
+                    <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="Auto"/>
+                    </Grid.RowDefinitions>
+
+                    <!-- Resolution -->
+                    <StackPanel Grid.Row="0" Grid.Column="0">
+                        <TextBlock Text="Default Resolution" Margin="0,0,0,8"/>
+                        <ComboBox SelectedIndex="{Binding Settings.DefaultResolution, Mode=TwoWay}"
+                                  HorizontalAlignment="Stretch">
+                            <x:String>1080p (1920x1080)</x:String>
+                            <x:String>2K (2560x1440)</x:String>
+                            <x:String>4K (3840x2160)</x:String>
+                        </ComboBox>
+                    </StackPanel>
+
+                    <!-- Frame Rate -->
+                    <StackPanel Grid.Row="0" Grid.Column="1">
+                        <TextBlock Text="Default Frame Rate" Margin="0,0,0,8"/>
+                        <ComboBox SelectedIndex="{Binding Settings.DefaultFps, Mode=TwoWay}"
+                                  HorizontalAlignment="Stretch">
+                            <x:String>30 fps</x:String>
+                            <x:String>60 fps</x:String>
+                        </ComboBox>
+                    </StackPanel>
+
+                    <!-- Bitrate -->
+                    <StackPanel Grid.Row="0" Grid.Column="2">
+                        <TextBlock Text="Default Bitrate" Margin="0,0,0,8"/>
+                        <ComboBox SelectedIndex="{Binding Settings.DefaultBitrate, Mode=TwoWay}"
+                                  HorizontalAlignment="Stretch">
+                            <x:String>10 Mbps</x:String>
+                            <x:String>15 Mbps</x:String>
+                            <x:String>20 Mbps</x:String>
+                        </ComboBox>
+                    </StackPanel>
+                </Grid>
+            </Expander>
+
             <!-- Plugins -->
             <Expander Header="Plugins" HorizontalAlignment="Stretch">
-                <ListView SelectionMode="None">
+                <ListView SelectionMode="None" IsItemClickEnabled="False">
                     <ListViewItem>
                         <Grid ColumnSpacing="12" Padding="8">
                             <Grid.ColumnDefinitions>
@@ -68,22 +126,84 @@
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <FontIcon Grid.Column="0" Glyph="&#xE8B2;" FontSize="24"/>
-                            <StackPanel Grid.Column="1">
+                            <FontIcon Grid.Column="0" Glyph="&#xE8B2;" FontSize="24" Foreground="{ThemeResource AccentFillColorDefaultBrush}"/>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
                                 <TextBlock Text="Screen Mirror" FontWeight="Medium"/>
-                                <TextBlock Text="v1.0.0" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="11"/>
+                                <TextBlock Text="Low-latency screen capture and streaming"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="12"/>
                             </StackPanel>
-                            <ToggleSwitch Grid.Column="2" IsOn="True"/>
+                            <ToggleSwitch Grid.Column="2" IsOn="True" IsEnabled="False"/>
+                        </Grid>
+                    </ListViewItem>
+                    <ListViewItem>
+                        <Grid ColumnSpacing="12" Padding="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <FontIcon Grid.Column="0" Glyph="&#xE88E;" FontSize="24" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="File Transfer" FontWeight="Medium" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock Text="Coming soon — drag and drop file sharing"
+                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}" FontSize="12"/>
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="2" IsOn="False" IsEnabled="False"/>
+                        </Grid>
+                    </ListViewItem>
+                    <ListViewItem>
+                        <Grid ColumnSpacing="12" Padding="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+                            <FontIcon Grid.Column="0" Glyph="&#xE765;" FontSize="24" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                <TextBlock Text="Remote Input" FontWeight="Medium" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock Text="Coming soon — control device remotely"
+                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}" FontSize="12"/>
+                            </StackPanel>
+                            <ToggleSwitch Grid.Column="2" IsOn="False" IsEnabled="False"/>
                         </Grid>
                     </ListViewItem>
                 </ListView>
             </Expander>
 
+            <!-- About -->
+            <Expander Header="About" HorizontalAlignment="Stretch">
+                <StackPanel Spacing="8">
+                    <TextBlock Text="UniLinker v3.0.0-alpha" FontWeight="Medium"/>
+                    <TextBlock Text="Cross-device low-latency screen sharing platform"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    <HyperlinkButton Content="GitHub Repository" NavigateUri="https://github.com/sykesP42/uniLinker"/>
+                    <TextBlock Text="MIT License" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="11"/>
+                </StackPanel>
+            </Expander>
+
             <!-- Actions -->
-            <StackPanel Orientation="Horizontal" Spacing="12" HorizontalAlignment="Right" Margin="0,16,0,0">
-                <Button Content="Reset to Defaults" Command="{Binding Settings.ResetSettingsCommand}"/>
-                <Button Content="Save" Style="{StaticResource AccentButtonStyle}" Command="{Binding Settings.SaveSettingsCommand}"/>
-            </StackPanel>
+            <Grid ColumnSpacing="12" Margin="0,16,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <TextBlock Grid.Column="0"
+                           Text="{Binding Settings.StatusMessage, Mode=OneWay}"
+                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                           VerticalAlignment="Center"/>
+
+                <Button Grid.Column="1"
+                        Content="Reset to Defaults"
+                        Command="{Binding Settings.ResetSettingsCommand}"/>
+
+                <Button Grid.Column="2"
+                        Content="Save"
+                        Style="{StaticResource AccentButtonStyle}"
+                        Command="{Binding Settings.SaveSettingsCommand}"
+                        IsEnabled="{Binding Settings.HasUnsavedChanges, Mode=OneWay}"/>
+            </Grid>
         </StackPanel>
     </ScrollViewer>
 </Page>

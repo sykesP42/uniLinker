@@ -43,6 +43,7 @@ public partial class MainViewModel : ObservableObject
         // Create ViewModels with real services
         Devices = new DevicesViewModel(discovery);
         Share = new ShareViewModel(bridge);
+        Settings = new SettingsViewModel(bridge);
 
         // Subscribe to discovery events for dashboard stats
         _discovery.DeviceFound += OnDeviceFound;
