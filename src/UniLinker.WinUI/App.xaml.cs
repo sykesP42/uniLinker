@@ -1,5 +1,4 @@
 using Microsoft.UI.Xaml;
-using Microsoft.Windows.ApplicationModel;
 using UniLinker.Core;
 using UniLinker.WinUI.Services;
 
@@ -16,6 +15,9 @@ public partial class App : Application
 
     public App()
     {
+        // Initialize the Windows App SDK for unpackaged apps
+        // Note: For unpackaged apps, the runtime must be installed or deployed
+        // See: https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/deploy-unpackaged-apps
         InitializeComponent();
     }
 
