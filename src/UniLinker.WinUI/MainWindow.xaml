@@ -14,7 +14,10 @@
             IsBackButtonVisible="Collapsed"
             IsSettingsVisible="False"
             ItemInvoked="NavView_ItemInvoked"
-            PaneDisplayMode="Left">
+            PaneDisplayMode="Left"
+            CompactModeThresholdWidth="600"
+            ExpandedModeThresholdWidth="800"
+            OpenPaneLength="200">
 
             <NavigationView.MenuItems>
                 <NavigationViewItem Content="Dashboard" Tag="Dashboard">
@@ -39,18 +42,49 @@
                 </NavigationViewItem>
             </NavigationView.MenuItems>
 
+            <!-- Status indicator for expanded mode -->
             <NavigationView.PaneFooter>
-                <StackPanel Spacing="8" Margin="12">
-                    <InfoBar
-                        Severity="Success"
-                        IsOpen="True"
-                        IsClosable="False"
-                        Title="Server Online"/>
-                    <TextBlock
-                        Text="{Binding ConnectAddress, Mode=OneWay}"
-                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                        FontSize="11"/>
-                </StackPanel>
+                <Grid x:Name="StatusPanel" Margin="8,0,8,8">
+                    <!-- Expanded status (visible when pane is open) -->
+                    <StackPanel x:Name="ExpandedStatus" Spacing="4">
+                        <Grid ColumnSpacing="8">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="Auto"/>
+                                <ColumnDefinition Width="*"/>
+                            </Grid.ColumnDefinitions>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
+
+                            <!-- Status icon -->
+                            <FontIcon Grid.Row="0" Grid.Column="0"
+                                      Glyph="&#xE73E;"
+                                      FontSize="14"
+                                      Foreground="{ThemeResource SystemFillColorSuccessBrush}"/>
+
+                            <!-- Status text -->
+                            <TextBlock Grid.Row="0" Grid.Column="1"
+                                       Text="Server Online"
+                                       FontSize="12"
+                                       FontWeight="Medium"/>
+
+                            <!-- Connection address -->
+                            <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
+                                       Text="{Binding ConnectAddress, Mode=OneWay}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       FontSize="11"/>
+                        </Grid>
+                    </StackPanel>
+
+                    <!-- Compact status (visible when pane is collapsed) -->
+                    <Grid x:Name="CompactStatus" Visibility="Collapsed">
+                        <FontIcon Glyph="&#xE73E;"
+                                  FontSize="16"
+                                  Foreground="{ThemeResource SystemFillColorSuccessBrush}"
+                                  ToolTipService.ToolTip="Server Online"/>
+                    </Grid>
+                </Grid>
             </NavigationView.PaneFooter>
 
             <Frame x:Name="ContentFrame"/>

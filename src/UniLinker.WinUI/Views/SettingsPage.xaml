@@ -60,7 +60,23 @@
             <!-- Appearance -->
             <Expander Header="Appearance" HorizontalAlignment="Stretch" IsExpanded="True">
                 <StackPanel Spacing="12">
-                    <TextBlock Text="Theme"/>
+                    <!-- Language -->
+                    <Grid ColumnSpacing="12">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+                        <TextBlock Grid.Column="0" Text="Language" VerticalAlignment="Center"/>
+                        <ComboBox Grid.Column="1"
+                                  SelectedIndex="{Binding Settings.LanguageIndex, Mode=TwoWay}"
+                                  Width="150">
+                            <x:String>English</x:String>
+                            <x:String>中文</x:String>
+                        </ComboBox>
+                    </Grid>
+
+                    <!-- Theme -->
+                    <TextBlock Text="Theme" Margin="0,8,0,0"/>
                     <RadioButtons SelectedIndex="{Binding Settings.ThemeIndex, Mode=TwoWay}">
                         <RadioButton Content="Dark"/>
                         <RadioButton Content="Light"/>

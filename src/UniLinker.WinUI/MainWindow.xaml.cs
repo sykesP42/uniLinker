@@ -34,6 +34,21 @@ public sealed partial class MainWindow : Window
 
         // Navigate to Dashboard on load
         ContentFrame.Navigate(typeof(DashboardPage), ViewModel);
+
+        // Handle pane open/close for status display
+        NavView.RegisterPropertyChangedCallback(NavigationView.IsPaneOpenProperty, OnPaneStateChanged);
+    }
+
+    private void OnPaneStateChanged(DependencyObject sender, DependencyProperty dp)
+    {
+        var isPaneOpen = NavView.IsPaneOpen;
+
+        // Toggle status visibility
+        if (ExpandedStatus != null)
+            ExpandedStatus.Visibility = isPaneOpen ? Visibility.Visible : Visibility.Collapsed;
+
+        if (CompactStatus != null)
+            CompactStatus.Visibility = isPaneOpen ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private nint _hwnd;

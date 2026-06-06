@@ -17,6 +17,8 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private int _defaultFps = 0;        // 0: 30fps, 1: 60fps
     [ObservableProperty] private int _defaultBitrate = 1;    // 0: 10M, 1: 15M, 2: 20M
 
+    [ObservableProperty] private int _languageIndex = 0; // 0: English, 1: 中文
+
     private int _themeIndex = 2; // Default to System
     public int ThemeIndex
     {
@@ -29,6 +31,9 @@ public partial class SettingsViewModel : ObservableObject
             }
         }
     }
+
+    // Language display names for UI
+    public string[] Languages => ["English", "中文"];
 
     private readonly WebBridge? _bridge;
     private readonly string _configPath;
@@ -50,13 +55,6 @@ public partial class SettingsViewModel : ObservableObject
     {
         try
         {
-            // Load from config store via bridge
-            if (_bridge != null)
-            {
-                var platformConfig = _bridge.GetStatusInfo();
-                // DeviceName and HttpPort are in PlatformConfig
-            }
-
             // Load local settings
             if (File.Exists(_configPath))
             {
@@ -72,6 +70,7 @@ public partial class SettingsViewModel : ObservableObject
                     DefaultResolution = settings.DefaultResolution;
                     DefaultFps = settings.DefaultFps;
                     DefaultBitrate = settings.DefaultBitrate;
+                    LanguageIndex = settings.LanguageIndex;
                 }
             }
         }
@@ -110,7 +109,8 @@ public partial class SettingsViewModel : ObservableObject
                 ThemeIndex = ThemeIndex,
                 DefaultResolution = DefaultResolution,
                 DefaultFps = DefaultFps,
-                DefaultBitrate = DefaultBitrate
+                DefaultBitrate = DefaultBitrate,
+                LanguageIndex = LanguageIndex
             };
 
             // Save local settings
@@ -127,12 +127,12 @@ public partial class SettingsViewModel : ObservableObject
             });
             _bridge?.SaveConfig(platformConfig);
 
-            StatusMessage = "Settings saved successfully";
+            StatusMessage = LanguageIndex == 0 ? "Settings saved successfully" : "设置已保存";
             HasUnsavedChanges = false;
         }
         catch (Exception ex)
         {
-            StatusMessage = $"Failed to save: {ex.Message}";
+            StatusMessage = LanguageIndex == 0 ? $"Failed to save: {ex.Message}" : $"保存失败: {ex.Message}";
         }
     }
 
@@ -147,7 +147,8 @@ public partial class SettingsViewModel : ObservableObject
         DefaultResolution = 0;
         DefaultFps = 0;
         DefaultBitrate = 1;
-        StatusMessage = "Settings reset to defaults";
+        LanguageIndex = 0;
+        StatusMessage = LanguageIndex == 0 ? "Settings reset to defaults" : "设置已重置为默认值";
         HasUnsavedChanges = true;
     }
 
@@ -162,6 +163,12 @@ public partial class SettingsViewModel : ObservableObject
     partial void OnDefaultResolutionChanged(int value) => HasUnsavedChanges = true;
     partial void OnDefaultFpsChanged(int value) => HasUnsavedChanges = true;
     partial void OnDefaultBitrateChanged(int value) => HasUnsavedChanges = true;
+    partial void OnLanguageIndexChanged(int value)
+    {
+        HasUnsavedChanges = true;
+        // Update status message to new language
+        StatusMessage = "";
+    }
 }
 
 internal class AppSettings
@@ -174,4 +181,5 @@ internal class AppSettings
     public int DefaultResolution { get; set; } = 0;
     public int DefaultFps { get; set; } = 0;
     public int DefaultBitrate { get; set; } = 1;
+    public int LanguageIndex { get; set; } = 0;
 }
