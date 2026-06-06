@@ -13,7 +13,13 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        ViewModel = new MainViewModel(App.Services.Bridge);
+
+        // Initialize ViewModel with real services
+        var services = App.Services;
+        ViewModel = new MainViewModel(
+            services.Bridge,
+            services.Platform.Context.Discovery);
+
         App.Services.Navigation.Initialize(ContentFrame);
 
         // Navigate to Dashboard on load
@@ -45,5 +51,10 @@ public sealed partial class MainWindow : Window
 
         ContentFrame.Navigate(pageType, ViewModel);
         NavView.SelectedItem = args.InvokedItemContainer;
+    }
+
+    private void Window_Closed(object sender, WindowEventArgs args)
+    {
+        ViewModel.Cleanup();
     }
 }

@@ -19,9 +19,5 @@ public sealed partial class SettingsPage : Page
         {
             DataContext = viewModel;
         }
-        else if (App.Services != null)
-        {
-            DataContext = new MainViewModel(App.Services.Bridge);
-        }
     }
 }

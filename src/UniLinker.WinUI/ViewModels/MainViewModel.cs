@@ -11,6 +11,7 @@ namespace UniLinker.WinUI.ViewModels;
 public partial class MainViewModel : ObservableObject
 {
     private readonly WebBridge? _bridge;
+    private readonly IDeviceDiscovery? _discovery;
     private readonly DispatcherQueue _dispatcherQueue;
 
     [ObservableProperty] private int _currentNavIndex = 0;
@@ -34,49 +35,66 @@ public partial class MainViewModel : ObservableObject
         Settings = new();
     }
 
-    public MainViewModel(WebBridge bridge) : this()
+    public MainViewModel(WebBridge bridge, IDeviceDiscovery discovery) : this()
     {
         _bridge = bridge;
+        _discovery = discovery;
+
+        // Create DevicesViewModel with real discovery service
+        Devices = new DevicesViewModel(discovery);
+
+        // Subscribe to discovery events for dashboard stats
+        _discovery.DeviceFound += OnDeviceFound;
+        _discovery.DeviceLost += OnDeviceLost;
+
         StartRefreshTimer();
+    }
+
+    private void OnDeviceFound(PeerInfo peer)
+    {
+        _dispatcherQueue.TryEnqueue(() =>
+        {
+            DeviceCount = _discovery?.KnownDevices.Count ?? 0;
+            Dashboard.DiscoveredDevices = DeviceCount;
+            UpdateConnectionQuality();
+        });
+    }
+
+    private void OnDeviceLost(PeerInfo peer)
+    {
+        _dispatcherQueue.TryEnqueue(() =>
+        {
+            DeviceCount = _discovery?.KnownDevices.Count ?? 0;
+            Dashboard.DiscoveredDevices = DeviceCount;
+            UpdateConnectionQuality();
+        });
+    }
+
+    private void UpdateConnectionQuality()
+    {
+        ConnectionQuality = DeviceCount switch
+        {
+            > 2 => ConnectionQuality.Excellent,
+            > 0 => ConnectionQuality.Good,
+            _ => ConnectionQuality.Poor
+        };
     }
 
     private void StartRefreshTimer()
     {
         var timer = new System.Timers.Timer(3000);
-        timer.Elapsed += (s, e) => _dispatcherQueue.TryEnqueue(RefreshDevices);
+        timer.Elapsed += (s, e) => _dispatcherQueue.TryEnqueue(UpdateStatus);
         timer.Start();
-        RefreshDevices();
+        UpdateStatus();
     }
 
     [RelayCommand]
     private void RefreshDevices()
     {
-        Devices.Devices.Clear();
-
-        var discovered = _bridge?.GetDiscoveredDevices();
-        if (discovered == null || discovered.Count == 0)
-        {
-            StatusText = "Searching...";
-            DeviceCount = 0;
-            Dashboard.DiscoveredDevices = 0;
-            ConnectionQuality = ConnectionQuality.Poor;
-        }
-        else
-        {
-            foreach (var device in discovered)
-            {
-                Devices.Devices.Add(device);
-            }
-            DeviceCount = discovered.Count;
-            Dashboard.DiscoveredDevices = discovered.Count;
-            StatusText = "Ready";
-            ConnectionQuality = DeviceCount > 0 ? ConnectionQuality.Excellent : ConnectionQuality.Fair;
-        }
-
-        UpdateDeviceInfo();
+        UpdateStatus();
     }
 
-    private void UpdateDeviceInfo()
+    private void UpdateStatus()
     {
         if (_bridge == null) return;
 
@@ -87,10 +105,17 @@ public partial class MainViewModel : ObservableObject
             ConnectAddress = $"Listening: 0.0.0.0:{port}";
             Dashboard.ActiveConnections = peers;
             Dashboard.ServerStatus = peers > 0 ? "Active" : "Running";
+            Dashboard.IsServerRunning = true;
+
+            DeviceCount = _discovery?.KnownDevices.Count ?? 0;
+            Dashboard.DiscoveredDevices = DeviceCount;
+            UpdateConnectionQuality();
         }
         catch
         {
             DeviceInfo = "UniLinker";
+            Dashboard.ServerStatus = "Error";
+            Dashboard.IsServerRunning = false;
         }
     }
 
@@ -105,5 +130,15 @@ public partial class MainViewModel : ObservableObject
             3 => "Settings",
             _ => "Ready"
         };
+    }
+
+    public void Cleanup()
+    {
+        if (_discovery != null)
+        {
+            _discovery.DeviceFound -= OnDeviceFound;
+            _discovery.DeviceLost -= OnDeviceLost;
+        }
+        Devices.Cleanup();
     }
 }

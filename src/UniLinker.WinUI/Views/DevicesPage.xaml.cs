@@ -20,10 +20,6 @@ public sealed partial class DevicesPage : Page
         {
             DataContext = viewModel;
         }
-        else if (App.Services != null)
-        {
-            DataContext = new MainViewModel(App.Services.Bridge);
-        }
     }
 
     private void DiscoveryModeRadioButton_Click(object sender, RoutedEventArgs e)

@@ -19,10 +19,61 @@ public partial class DevicesViewModel : ObservableObject
     public ObservableCollection<PeerInfo> Devices { get; } = new();
 
     private readonly DispatcherQueue _dispatcherQueue;
+    private readonly IDeviceDiscovery? _discovery;
 
     public DevicesViewModel()
     {
         _dispatcherQueue = DispatcherQueue.GetForCurrentThread();
+    }
+
+    public DevicesViewModel(IDeviceDiscovery discovery) : this()
+    {
+        _discovery = discovery;
+
+        // Subscribe to discovery events
+        _discovery.DeviceFound += OnDeviceFound;
+        _discovery.DeviceLost += OnDeviceLost;
+
+        // Load existing devices
+        foreach (var device in _discovery.KnownDevices)
+        {
+            Devices.Add(device);
+        }
+
+        UpdateStatus();
+    }
+
+    private void OnDeviceFound(PeerInfo peer)
+    {
+        _dispatcherQueue.TryEnqueue(() =>
+        {
+            // Avoid duplicates
+            if (!Devices.Any(d => d.Id == peer.Id))
+            {
+                Devices.Add(peer);
+                UpdateStatus();
+            }
+        });
+    }
+
+    private void OnDeviceLost(PeerInfo peer)
+    {
+        _dispatcherQueue.TryEnqueue(() =>
+        {
+            var existing = Devices.FirstOrDefault(d => d.Id == peer.Id);
+            if (existing != null)
+            {
+                Devices.Remove(existing);
+                UpdateStatus();
+            }
+        });
+    }
+
+    private void UpdateStatus()
+    {
+        StatusMessage = Devices.Count > 0
+            ? $"{Devices.Count} device(s) discovered"
+            : "Scanning for devices...";
     }
 
     [RelayCommand]
@@ -31,13 +82,15 @@ public partial class DevicesViewModel : ObservableObject
         IsScanning = true;
         StatusMessage = "Scanning LAN...";
 
+        // Discovery is already running in background via Platform.StartAsync()
+        // Just show scanning state briefly
         Task.Run(async () =>
         {
             await Task.Delay(2000);
             _dispatcherQueue.TryEnqueue(() =>
             {
                 IsScanning = false;
-                StatusMessage = $"Scan complete, found {Devices.Count} devices";
+                UpdateStatus();
             });
         });
     }
@@ -46,13 +99,33 @@ public partial class DevicesViewModel : ObservableObject
     private void ConnectToDevice(PeerInfo? device)
     {
         if (device == null) return;
-        StatusMessage = $"Connecting to {device.Name}...";
+
+        // Connection happens via SignalingServer HTTP endpoint
+        // User should open browser at http://device.IpAddress:device.Port
+        StatusMessage = $"Open browser at http://{device.IpAddress}:{device.Port} to connect";
     }
 
     [RelayCommand]
     private void ConnectManual()
     {
         if (string.IsNullOrEmpty(ManualIp)) return;
-        StatusMessage = $"Connecting to {ManualIp}:{ManualPort}...";
+
+        if (int.TryParse(ManualPort, out var port))
+        {
+            StatusMessage = $"Open browser at http://{ManualIp}:{port} to connect";
+        }
+        else
+        {
+            StatusMessage = "Invalid port number";
+        }
+    }
+
+    public void Cleanup()
+    {
+        if (_discovery != null)
+        {
+            _discovery.DeviceFound -= OnDeviceFound;
+            _discovery.DeviceLost -= OnDeviceLost;
+        }
     }
 }
