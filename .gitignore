@@ -484,3 +484,25 @@ $RECYCLE.BIN/
 
 # Vim temporary swap files
 *.swp
+
+# Android build cache
+android/.gradle/
+android/app/build/
+android/build/
+*.apk
+*.aab
+
+# Flutter
+src/flutter_app/.dart_tool/
+src/flutter_app/.packages
+src/flutter_app/pubspec.lock
+src/flutter_app/build/
+
+# Claude Code plugins cache (user-specific)
+.claude/plugins/cache/
+.claude/settings.local.json
+
+# Screenshots and temp files
+*.png
+!docs/**/*.png
+skills-lock.json
