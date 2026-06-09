@@ -7,26 +7,32 @@
     mc:Ignorable="d"
     Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
 
-    <ScrollViewer Padding="24">
-        <StackPanel Spacing="16">
-            <!-- Header -->
-            <TextBlock Text="Dashboard" Style="{StaticResource TitleTextBlockStyle}"/>
+    <ScrollViewer>
+        <StackPanel Padding="32,32,32,48" Spacing="24">
+            <!-- Header Section -->
+            <StackPanel Spacing="8">
+                <TextBlock Text="{Binding Loc.Dashboard}" Style="{StaticResource PageHeaderStyle}"/>
+                <TextBlock Text="Monitor your connections and system status"
+                           Style="{StaticResource DescriptionTextStyle}"
+                           FontSize="14"/>
+            </StackPanel>
 
-            <!-- Status Card -->
+            <!-- Status Banner -->
             <InfoBar
                 x:Name="SystemStatusInfoBar"
                 Severity="Success"
                 IsOpen="True"
                 IsClosable="False"
-                Title="System Ready">
+                Title="{Binding Loc.SystemReady}"
+                Margin="0,0,0,8">
                 <InfoBar.Content>
-                    <StackPanel>
-                        <TextBlock x:Name="SystemStatusText" Text="Device: UniLinker-PC | Connections: 0 active"/>
-                    </StackPanel>
+                    <TextBlock x:Name="SystemStatusText"
+                               Text="Device: UniLinker-PC | Connections: 0 active"
+                               Margin="0,4,0,0"/>
                 </InfoBar.Content>
             </InfoBar>
 
-            <!-- Stats Grid -->
+            <!-- Stats Cards Grid -->
             <Grid ColumnSpacing="16" RowSpacing="16">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
@@ -34,71 +40,140 @@
                     <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
 
-                <!-- Discovered Devices -->
-                <Border Grid.Column="0"
-                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        CornerRadius="8"
-                        Padding="16">
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="Discovered" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                        <TextBlock x:Name="DiscoveredCount" Text="0" Style="{StaticResource HeaderTextBlockStyle}"/>
-                        <TextBlock Text="devices" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                <!-- Discovered Devices Card -->
+                <Border Grid.Column="0" Style="{StaticResource StatCardStyle}">
+                    <StackPanel Spacing="12">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE970;" FontSize="20"
+                                      Foreground="{ThemeResource AccentFillColorDefaultBrush}"/>
+                            <TextBlock Text="{Binding Loc.Discovered}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       FontSize="13"/>
+                        </StackPanel>
+                        <TextBlock x:Name="DiscoveredCount"
+                                   Text="0"
+                                   Style="{StaticResource TitleLargeTextBlockStyle}"
+                                   FontWeight="Bold"/>
+                        <TextBlock Text="{Binding Loc.DevicesLower}"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                   FontSize="12"/>
                     </StackPanel>
                 </Border>
 
-                <!-- Active Connections -->
-                <Border Grid.Column="1"
-                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        CornerRadius="8"
-                        Padding="16">
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="Active" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                        <TextBlock x:Name="ActiveCount" Text="0" Style="{StaticResource HeaderTextBlockStyle}"/>
-                        <TextBlock Text="connections" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                <!-- Active Connections Card -->
+                <Border Grid.Column="1" Style="{StaticResource StatCardStyle}">
+                    <StackPanel Spacing="12">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE71B;" FontSize="20"
+                                      Foreground="{ThemeResource SystemFillColorSuccessBrush}"/>
+                            <TextBlock Text="{Binding Loc.Active}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       FontSize="13"/>
+                        </StackPanel>
+                        <TextBlock x:Name="ActiveCount"
+                                   Text="0"
+                                   Style="{StaticResource TitleLargeTextBlockStyle}"
+                                   FontWeight="Bold"/>
+                        <TextBlock Text="{Binding Loc.Connections}"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                   FontSize="12"/>
                     </StackPanel>
                 </Border>
 
-                <!-- Share Sessions -->
-                <Border Grid.Column="2"
-                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                        CornerRadius="8"
-                        Padding="16">
-                    <StackPanel Spacing="8">
-                        <TextBlock Text="Share" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                        <TextBlock x:Name="ShareCount" Text="0" Style="{StaticResource HeaderTextBlockStyle}"/>
-                        <TextBlock Text="session" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                <!-- Share Sessions Card -->
+                <Border Grid.Column="2" Style="{StaticResource StatCardStyle}">
+                    <StackPanel Spacing="12">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE72D;" FontSize="20"
+                                      Foreground="{ThemeResource AccentFillColorDefaultBrush}"/>
+                            <TextBlock Text="{Binding Loc.Share}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       FontSize="13"/>
+                        </StackPanel>
+                        <TextBlock x:Name="ShareCount"
+                                   Text="0"
+                                   Style="{StaticResource TitleLargeTextBlockStyle}"
+                                   FontWeight="Bold"/>
+                        <TextBlock Text="{Binding Loc.Session}"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                   FontSize="12"/>
                     </StackPanel>
                 </Border>
             </Grid>
 
-            <!-- Recent Devices -->
-            <TextBlock Text="Recent Devices" Style="{StaticResource SubtitleTextBlockStyle}" Margin="0,16,0,0"/>
-            <ListView x:Name="RecentDevicesList" ItemsSource="{Binding Devices.Devices, Mode=OneWay}">
-                <ListView.ItemTemplate>
-                    <DataTemplate>
-                        <Grid ColumnSpacing="12" Padding="8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
+            <!-- Recent Devices Section -->
+            <StackPanel Spacing="16">
+                <TextBlock Text="{Binding Loc.RecentDevices}"
+                           Style="{StaticResource SettingsSectionHeaderStyle}"
+                           Margin="0,8,0,0"/>
 
-                            <FontIcon Grid.Column="0" Glyph="&#xE970;" FontSize="24"/>
-                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                <TextBlock Text="{Binding Name}" FontWeight="Medium"/>
-                                <TextBlock Text="{Binding IpAddress}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="12"/>
-                            </StackPanel>
-                            <Border Grid.Column="2"
-                                    Background="{ThemeResource SystemFillColorSuccessBrush}"
-                                    CornerRadius="4" Padding="8,4">
-                                <TextBlock Text="Online" Foreground="White" FontSize="11"/>
+                <ListView x:Name="RecentDevicesList"
+                          ItemsSource="{Binding Devices.Devices, Mode=OneWay}"
+                          SelectionMode="None">
+                    <ListView.ItemContainerStyle>
+                        <Style TargetType="ListViewItem">
+                            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+                            <Setter Property="Padding" Value="0"/>
+                            <Setter Property="Margin" Value="0,0,0,8"/>
+                        </Style>
+                    </ListView.ItemContainerStyle>
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                    BorderThickness="1"
+                                    CornerRadius="{ThemeResource OverlayCornerRadius}"
+                                    Padding="16">
+                                <Grid ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="*"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                        <ColumnDefinition Width="Auto"/>
+                                    </Grid.ColumnDefinitions>
+
+                                    <!-- Device Icon -->
+                                    <Border Grid.Column="0"
+                                            Width="40" Height="40"
+                                            Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                            CornerRadius="20">
+                                        <FontIcon Glyph="&#xE970;" FontSize="18"
+                                                  HorizontalAlignment="Center"
+                                                  VerticalAlignment="Center"/>
+                                    </Border>
+
+                                    <!-- Device Info -->
+                                    <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
+                                        <TextBlock Text="{Binding Name}"
+                                                   FontWeight="SemiBold"
+                                                   FontSize="14"/>
+                                        <TextBlock Text="{Binding IpAddress}"
+                                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                   FontSize="12"/>
+                                    </StackPanel>
+
+                                    <!-- Status Badge -->
+                                    <Border Grid.Column="2"
+                                            Background="{ThemeResource SystemFillColorSuccessBrush}"
+                                            CornerRadius="4"
+                                            Padding="12,4"
+                                            VerticalAlignment="Center">
+                                        <TextBlock Text="Online"
+                                                   Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                                   FontSize="11"
+                                                   FontWeight="Medium"/>
+                                    </Border>
+
+                                    <!-- Action Button -->
+                                    <Button Grid.Column="3"
+                                            Content="View"
+                                            VerticalAlignment="Center"/>
+                                </Grid>
                             </Border>
-                            <Button Grid.Column="3" Content="View" Margin="8,0,0,0"/>
-                        </Grid>
-                    </DataTemplate>
-                </ListView.ItemTemplate>
-            </ListView>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
+            </StackPanel>
         </StackPanel>
     </ScrollViewer>
 </Page>

@@ -7,10 +7,15 @@
     mc:Ignorable="d"
     Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
 
-    <ScrollViewer Padding="24">
-        <StackPanel Spacing="16">
-            <!-- Header -->
-            <TextBlock Text="Settings" Style="{StaticResource TitleTextBlockStyle}"/>
+    <ScrollViewer>
+        <StackPanel Padding="32,32,32,48" Spacing="24">
+            <!-- Header Section -->
+            <StackPanel Spacing="8">
+                <TextBlock Text="{Binding Loc.Settings}" Style="{StaticResource PageHeaderStyle}"/>
+                <TextBlock Text="Configure your UniLinker preferences"
+                           Style="{StaticResource DescriptionTextStyle}"
+                           FontSize="14"/>
+            </StackPanel>
 
             <!-- Status Message -->
             <InfoBar
@@ -18,187 +23,401 @@
                 Severity="Success"
                 IsOpen="{Binding Settings.HasUnsavedChanges, Mode=OneWay}"
                 IsClosable="False"
-                Title="{Binding Settings.StatusMessage, Mode=OneWay}"/>
+                Title="{Binding Settings.StatusMessage, Mode=OneWay}"
+                Margin="0,0,0,8"/>
 
-            <!-- General Settings -->
-            <Expander Header="General" HorizontalAlignment="Stretch" IsExpanded="True">
-                <StackPanel Spacing="12">
-                    <Grid ColumnSpacing="12">
+            <!-- General Settings Section -->
+            <StackPanel Spacing="16">
+                <TextBlock Text="{Binding Loc.General}"
+                           Style="{StaticResource SettingsSectionHeaderStyle}"
+                           Margin="0,8,0,0"/>
+
+                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{ThemeResource OverlayCornerRadius}"
+                        Padding="20">
+                    <StackPanel Spacing="16">
+                        <!-- Device Name -->
+                        <Grid Style="{StaticResource SettingRowStyle}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="300"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <TextBlock Text="{Binding Loc.DeviceName}"
+                                           FontWeight="SemiBold"
+                                           FontSize="13"/>
+                                <TextBlock Text="{Binding Loc.DeviceNameDesc}"
+                                           Style="{StaticResource DescriptionTextStyle}"
+                                           FontSize="12"/>
+                            </StackPanel>
+
+                            <TextBox Grid.Column="1"
+                                     Text="{Binding Settings.DeviceName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                     PlaceholderText="Enter device name"
+                                     VerticalAlignment="Center"/>
+                        </Grid>
+
+                        <!-- HTTP Port -->
+                        <Grid Style="{StaticResource SettingRowStyle}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="150"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <TextBlock Text="{Binding Loc.HttpPort}"
+                                           FontWeight="SemiBold"
+                                           FontSize="13"/>
+                                <TextBlock Text="{Binding Loc.HttpPortDesc}"
+                                           Style="{StaticResource DescriptionTextStyle}"
+                                           FontSize="12"/>
+                            </StackPanel>
+
+                            <NumberBox Grid.Column="1"
+                                       Value="{Binding Settings.HttpPort, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
+                                       Minimum="1024"
+                                       Maximum="65535"
+                                       SpinButtonPlacementMode="Inline"
+                                       VerticalAlignment="Center"/>
+                        </Grid>
+
+                        <!-- Auto-start Toggle -->
+                        <Grid Style="{StaticResource SettingRowStyle}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <TextBlock Text="{Binding Loc.AutoStartOnLogin}"
+                                           FontWeight="SemiBold"
+                                           FontSize="13"/>
+                                <TextBlock Text="{Binding Loc.AutoStartDesc}"
+                                           Style="{StaticResource DescriptionTextStyle}"
+                                           FontSize="12"/>
+                            </StackPanel>
+
+                            <ToggleSwitch Grid.Column="1"
+                                          IsOn="{Binding Settings.AutoStart, Mode=TwoWay}"
+                                          VerticalAlignment="Center"/>
+                        </Grid>
+
+                        <!-- Minimize to Tray Toggle -->
+                        <Grid Style="{StaticResource SettingRowStyle}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <TextBlock Text="{Binding Loc.MinimizeToTray}"
+                                           FontWeight="SemiBold"
+                                           FontSize="13"/>
+                                <TextBlock Text="{Binding Loc.MinimizeToTrayDesc}"
+                                           Style="{StaticResource DescriptionTextStyle}"
+                                           FontSize="12"/>
+                            </StackPanel>
+
+                            <ToggleSwitch Grid.Column="1"
+                                          IsOn="{Binding Settings.MinimizeToTray, Mode=TwoWay}"
+                                          VerticalAlignment="Center"/>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <!-- Appearance Section -->
+            <StackPanel Spacing="16">
+                <TextBlock Text="{Binding Loc.Appearance}"
+                           Style="{StaticResource SettingsSectionHeaderStyle}"
+                           Margin="0,8,0,0"/>
+
+                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{ThemeResource OverlayCornerRadius}"
+                        Padding="20">
+                    <StackPanel Spacing="16">
+                        <!-- Language -->
+                        <Grid Style="{StaticResource SettingRowStyle}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="200"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <TextBlock Text="{Binding Loc.Language}"
+                                           FontWeight="SemiBold"
+                                           FontSize="13"/>
+                                <TextBlock Text="{Binding Loc.LanguageDesc}"
+                                           Style="{StaticResource DescriptionTextStyle}"
+                                           FontSize="12"/>
+                            </StackPanel>
+
+                            <ComboBox Grid.Column="1"
+                                      SelectedIndex="{Binding Settings.LanguageIndex, Mode=TwoWay}"
+                                      VerticalAlignment="Center"
+                                      MinHeight="36">
+                                <x:String>English</x:String>
+                                <x:String>中文</x:String>
+                            </ComboBox>
+                        </Grid>
+
+                        <!-- Theme -->
+                        <Grid Style="{StaticResource SettingRowStyle}">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*"/>
+                                <ColumnDefinition Width="Auto"/>
+                            </Grid.ColumnDefinitions>
+
+                            <StackPanel Grid.Column="0" Spacing="4">
+                                <TextBlock Text="{Binding Loc.Theme}"
+                                           FontWeight="SemiBold"
+                                           FontSize="13"/>
+                                <TextBlock Text="{Binding Loc.ThemeDesc}"
+                                           Style="{StaticResource DescriptionTextStyle}"
+                                           FontSize="12"/>
+                            </StackPanel>
+
+                            <StackPanel Grid.Column="1" Spacing="8" Orientation="Horizontal">
+                                <RadioButton Content="{Binding Loc.Dark}"
+                                             GroupName="ThemeGroup"
+                                             IsChecked="{Binding Settings.ThemeIndex, Converter={StaticResource ThemeIndexToBooleanConverter}, ConverterParameter=0, Mode=TwoWay}"
+                                             VerticalAlignment="Center"/>
+                                <RadioButton Content="{Binding Loc.Light}"
+                                             GroupName="ThemeGroup"
+                                             IsChecked="{Binding Settings.ThemeIndex, Converter={StaticResource ThemeIndexToBooleanConverter}, ConverterParameter=1, Mode=TwoWay}"
+                                             VerticalAlignment="Center"/>
+                                <RadioButton Content="{Binding Loc.SystemRecommended}"
+                                             GroupName="ThemeGroup"
+                                             IsChecked="{Binding Settings.ThemeIndex, Converter={StaticResource ThemeIndexToBooleanConverter}, ConverterParameter=2, Mode=TwoWay}"
+                                             VerticalAlignment="Center"/>
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <!-- Screen Mirror Defaults Section -->
+            <StackPanel Spacing="16">
+                <TextBlock Text="{Binding Loc.ScreenMirrorDefaults}"
+                           Style="{StaticResource SettingsSectionHeaderStyle}"
+                           Margin="0,8,0,0"/>
+
+                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{ThemeResource OverlayCornerRadius}"
+                        Padding="20">
+                    <Grid ColumnSpacing="24" RowSpacing="16">
                         <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Device Name" VerticalAlignment="Center"/>
-                        <TextBox Grid.Column="1"
-                                 Text="{Binding Settings.DeviceName, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                 Width="200"
-                                 PlaceholderText="Enter device name"/>
-                    </Grid>
-
-                    <Grid ColumnSpacing="12">
-                        <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
-                        </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="HTTP Port" VerticalAlignment="Center"/>
-                        <NumberBox Grid.Column="1"
-                                   Value="{Binding Settings.HttpPort, Mode=TwoWay, UpdateSourceTrigger=PropertyChanged}"
-                                   Width="100"
-                                   Minimum="1024"
-                                   Maximum="65535"
-                                   SpinButtonPlacementMode="Inline"/>
-                    </Grid>
-
-                    <ToggleSwitch Header="Auto-start on login"
-                                  IsOn="{Binding Settings.AutoStart, Mode=TwoWay}"/>
-
-                    <ToggleSwitch Header="Minimize to tray on close"
-                                  IsOn="{Binding Settings.MinimizeToTray, Mode=TwoWay}"/>
-                </StackPanel>
-            </Expander>
-
-            <!-- Appearance -->
-            <Expander Header="Appearance" HorizontalAlignment="Stretch" IsExpanded="True">
-                <StackPanel Spacing="12">
-                    <!-- Language -->
-                    <Grid ColumnSpacing="12">
-                        <Grid.ColumnDefinitions>
                             <ColumnDefinition Width="*"/>
-                            <ColumnDefinition Width="Auto"/>
                         </Grid.ColumnDefinitions>
-                        <TextBlock Grid.Column="0" Text="Language" VerticalAlignment="Center"/>
-                        <ComboBox Grid.Column="1"
-                                  SelectedIndex="{Binding Settings.LanguageIndex, Mode=TwoWay}"
-                                  Width="150">
-                            <x:String>English</x:String>
-                            <x:String>中文</x:String>
-                        </ComboBox>
+
+                        <!-- Resolution -->
+                        <StackPanel Grid.Column="0" Spacing="8">
+                            <TextBlock Text="{Binding Loc.DefaultResolution}"
+                                       FontWeight="SemiBold"
+                                       FontSize="13"/>
+                            <TextBlock Text="{Binding Loc.DefaultResolutionDesc}"
+                                       Style="{StaticResource DescriptionTextStyle}"
+                                       FontSize="12"/>
+                            <ComboBox SelectedIndex="{Binding Settings.DefaultResolution, Mode=TwoWay}"
+                                      HorizontalAlignment="Stretch"
+                                      MinHeight="36">
+                                <x:String>1080p (1920x1080)</x:String>
+                                <x:String>2K (2560x1440)</x:String>
+                                <x:String>4K (3840x2160)</x:String>
+                            </ComboBox>
+                        </StackPanel>
+
+                        <!-- Frame Rate -->
+                        <StackPanel Grid.Column="1" Spacing="8">
+                            <TextBlock Text="{Binding Loc.DefaultFrameRate}"
+                                       FontWeight="SemiBold"
+                                       FontSize="13"/>
+                            <TextBlock Text="{Binding Loc.DefaultFrameRateDesc}"
+                                       Style="{StaticResource DescriptionTextStyle}"
+                                       FontSize="12"/>
+                            <ComboBox SelectedIndex="{Binding Settings.DefaultFps, Mode=TwoWay}"
+                                      HorizontalAlignment="Stretch"
+                                      MinHeight="36">
+                                <x:String>30 fps</x:String>
+                                <x:String>60 fps</x:String>
+                            </ComboBox>
+                        </StackPanel>
+
+                        <!-- Bitrate -->
+                        <StackPanel Grid.Column="2" Spacing="8">
+                            <TextBlock Text="{Binding Loc.DefaultBitrate}"
+                                       FontWeight="SemiBold"
+                                       FontSize="13"/>
+                            <TextBlock Text="{Binding Loc.DefaultBitrateDesc}"
+                                       Style="{StaticResource DescriptionTextStyle}"
+                                       FontSize="12"/>
+                            <ComboBox SelectedIndex="{Binding Settings.DefaultBitrate, Mode=TwoWay}"
+                                      HorizontalAlignment="Stretch"
+                                      MinHeight="36">
+                                <x:String>10 Mbps</x:String>
+                                <x:String>15 Mbps</x:String>
+                                <x:String>20 Mbps</x:String>
+                            </ComboBox>
+                        </StackPanel>
                     </Grid>
+                </Border>
+            </StackPanel>
 
-                    <!-- Theme -->
-                    <TextBlock Text="Theme" Margin="0,8,0,0"/>
-                    <RadioButtons SelectedIndex="{Binding Settings.ThemeIndex, Mode=TwoWay}">
-                        <RadioButton Content="Dark"/>
-                        <RadioButton Content="Light"/>
-                        <RadioButton Content="System (Recommended)"/>
-                    </RadioButtons>
-                </StackPanel>
-            </Expander>
+            <!-- Plugins Section -->
+            <StackPanel Spacing="16">
+                <TextBlock Text="{Binding Loc.Plugins}"
+                           Style="{StaticResource SettingsSectionHeaderStyle}"
+                           Margin="0,8,0,0"/>
 
-            <!-- Screen Mirror Defaults -->
-            <Expander Header="Screen Mirror Defaults" HorizontalAlignment="Stretch">
-                <Grid ColumnSpacing="16" RowSpacing="12">
-                    <Grid.ColumnDefinitions>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="*"/>
-                        <ColumnDefinition Width="*"/>
-                    </Grid.ColumnDefinitions>
-                    <Grid.RowDefinitions>
-                        <RowDefinition Height="Auto"/>
-                        <RowDefinition Height="Auto"/>
-                    </Grid.RowDefinitions>
-
-                    <!-- Resolution -->
-                    <StackPanel Grid.Row="0" Grid.Column="0">
-                        <TextBlock Text="Default Resolution" Margin="0,0,0,8"/>
-                        <ComboBox SelectedIndex="{Binding Settings.DefaultResolution, Mode=TwoWay}"
-                                  HorizontalAlignment="Stretch">
-                            <x:String>1080p (1920x1080)</x:String>
-                            <x:String>2K (2560x1440)</x:String>
-                            <x:String>4K (3840x2160)</x:String>
-                        </ComboBox>
-                    </StackPanel>
-
-                    <!-- Frame Rate -->
-                    <StackPanel Grid.Row="0" Grid.Column="1">
-                        <TextBlock Text="Default Frame Rate" Margin="0,0,0,8"/>
-                        <ComboBox SelectedIndex="{Binding Settings.DefaultFps, Mode=TwoWay}"
-                                  HorizontalAlignment="Stretch">
-                            <x:String>30 fps</x:String>
-                            <x:String>60 fps</x:String>
-                        </ComboBox>
-                    </StackPanel>
-
-                    <!-- Bitrate -->
-                    <StackPanel Grid.Row="0" Grid.Column="2">
-                        <TextBlock Text="Default Bitrate" Margin="0,0,0,8"/>
-                        <ComboBox SelectedIndex="{Binding Settings.DefaultBitrate, Mode=TwoWay}"
-                                  HorizontalAlignment="Stretch">
-                            <x:String>10 Mbps</x:String>
-                            <x:String>15 Mbps</x:String>
-                            <x:String>20 Mbps</x:String>
-                        </ComboBox>
-                    </StackPanel>
-                </Grid>
-            </Expander>
-
-            <!-- Plugins -->
-            <Expander Header="Plugins" HorizontalAlignment="Stretch">
-                <ListView SelectionMode="None" IsItemClickEnabled="False">
-                    <ListViewItem>
-                        <Grid ColumnSpacing="12" Padding="8">
+                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{ThemeResource OverlayCornerRadius}"
+                        Padding="20">
+                    <StackPanel Spacing="12">
+                        <!-- Screen Mirror Plugin -->
+                        <Grid ColumnSpacing="16" Padding="12">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <FontIcon Grid.Column="0" Glyph="&#xE8B2;" FontSize="24" Foreground="{ThemeResource AccentFillColorDefaultBrush}"/>
-                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                <TextBlock Text="Screen Mirror" FontWeight="Medium"/>
-                                <TextBlock Text="Low-latency screen capture and streaming"
-                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="12"/>
+
+                            <Border Grid.Column="0"
+                                    Width="40" Height="40"
+                                    Background="{ThemeResource AccentFillColorDefaultBrush}"
+                                    CornerRadius="8">
+                                <FontIcon Glyph="&#xE8B2;" FontSize="18"
+                                          Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                          HorizontalAlignment="Center"
+                                          VerticalAlignment="Center"/>
+                            </Border>
+
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
+                                <TextBlock Text="{Binding Loc.ScreenMirror}" FontWeight="SemiBold" FontSize="14"/>
+                                <TextBlock Text="{Binding Loc.LowLatencyScreenCapture}"
+                                           Style="{StaticResource DescriptionTextStyle}"
+                                           FontSize="12"/>
                             </StackPanel>
-                            <ToggleSwitch Grid.Column="2" IsOn="True" IsEnabled="False"/>
+
+                            <ToggleSwitch Grid.Column="2" IsOn="True" IsEnabled="False" VerticalAlignment="Center"/>
                         </Grid>
-                    </ListViewItem>
-                    <ListViewItem>
-                        <Grid ColumnSpacing="12" Padding="8">
+
+                        <!-- Separator -->
+                        <Border Height="1"
+                                Background="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                Margin="0,4,0,4"/>
+
+                        <!-- File Transfer Plugin -->
+                        <Grid ColumnSpacing="16" Padding="12">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <FontIcon Grid.Column="0" Glyph="&#xE88E;" FontSize="24" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                <TextBlock Text="File Transfer" FontWeight="Medium" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                                <TextBlock Text="Coming soon — drag and drop file sharing"
-                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}" FontSize="12"/>
+
+                            <Border Grid.Column="0"
+                                    Width="40" Height="40"
+                                    Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                    CornerRadius="8">
+                                <FontIcon Glyph="&#xE88E;" FontSize="18"
+                                          HorizontalAlignment="Center"
+                                          VerticalAlignment="Center"/>
+                            </Border>
+
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
+                                <TextBlock Text="{Binding Loc.FileTransfer}"
+                                           FontWeight="SemiBold"
+                                           FontSize="14"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock Text="{Binding Loc.FileTransferDesc}"
+                                           Style="{StaticResource DescriptionTextStyle}"
+                                           FontSize="12"
+                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
                             </StackPanel>
-                            <ToggleSwitch Grid.Column="2" IsOn="False" IsEnabled="False"/>
+
+                            <ToggleSwitch Grid.Column="2" IsOn="False" IsEnabled="False" VerticalAlignment="Center"/>
                         </Grid>
-                    </ListViewItem>
-                    <ListViewItem>
-                        <Grid ColumnSpacing="12" Padding="8">
+
+                        <!-- Separator -->
+                        <Border Height="1"
+                                Background="{ThemeResource DividerStrokeColorDefaultBrush}"
+                                Margin="0,4,0,4"/>
+
+                        <!-- Remote Input Plugin -->
+                        <Grid ColumnSpacing="16" Padding="12">
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <FontIcon Grid.Column="0" Glyph="&#xE765;" FontSize="24" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                            <StackPanel Grid.Column="1" VerticalAlignment="Center">
-                                <TextBlock Text="Remote Input" FontWeight="Medium" Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                                <TextBlock Text="Coming soon — control device remotely"
-                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}" FontSize="12"/>
+
+                            <Border Grid.Column="0"
+                                    Width="40" Height="40"
+                                    Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                    CornerRadius="8">
+                                <FontIcon Glyph="&#xE765;" FontSize="18"
+                                          HorizontalAlignment="Center"
+                                          VerticalAlignment="Center"/>
+                            </Border>
+
+                            <StackPanel Grid.Column="1" VerticalAlignment="Center" Spacing="4">
+                                <TextBlock Text="{Binding Loc.RemoteInput}"
+                                           FontWeight="SemiBold"
+                                           FontSize="14"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock Text="{Binding Loc.RemoteInputDesc}"
+                                           Style="{StaticResource DescriptionTextStyle}"
+                                           FontSize="12"
+                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
                             </StackPanel>
-                            <ToggleSwitch Grid.Column="2" IsOn="False" IsEnabled="False"/>
+
+                            <ToggleSwitch Grid.Column="2" IsOn="False" IsEnabled="False" VerticalAlignment="Center"/>
                         </Grid>
-                    </ListViewItem>
-                </ListView>
-            </Expander>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
 
-            <!-- About -->
-            <Expander Header="About" HorizontalAlignment="Stretch">
-                <StackPanel Spacing="8">
-                    <TextBlock Text="UniLinker v3.0.0-alpha" FontWeight="Medium"/>
-                    <TextBlock Text="Cross-device low-latency screen sharing platform"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                    <HyperlinkButton Content="GitHub Repository" NavigateUri="https://github.com/sykesP42/uniLinker"/>
-                    <TextBlock Text="MIT License" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="11"/>
-                </StackPanel>
-            </Expander>
+            <!-- About Section -->
+            <StackPanel Spacing="16">
+                <TextBlock Text="{Binding Loc.About}"
+                           Style="{StaticResource SettingsSectionHeaderStyle}"
+                           Margin="0,8,0,0"/>
 
-            <!-- Actions -->
-            <Grid ColumnSpacing="12" Margin="0,16,0,0">
+                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{ThemeResource OverlayCornerRadius}"
+                        Padding="20">
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="UniLinker v3.0.0-alpha"
+                                   FontWeight="SemiBold"
+                                   FontSize="16"/>
+                        <TextBlock Text="{Binding Loc.Version}"
+                                   Style="{StaticResource DescriptionTextStyle}"
+                                   FontSize="13"/>
+                        <HyperlinkButton Content="{Binding Loc.GitHubRepository}"
+                                         NavigateUri="https://github.com/sykesP42/uniLinker"
+                                         Margin="0,8,0,0"/>
+                        <TextBlock Text="{Binding Loc.MitLicense}"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                   FontSize="11"
+                                   Margin="0,4,0,0"/>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <!-- Action Buttons -->
+            <Grid ColumnSpacing="12" Margin="0,24,0,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
@@ -208,17 +427,20 @@
                 <TextBlock Grid.Column="0"
                            Text="{Binding Settings.StatusMessage, Mode=OneWay}"
                            Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                           VerticalAlignment="Center"/>
+                           VerticalAlignment="Center"
+                           FontSize="13"/>
 
                 <Button Grid.Column="1"
-                        Content="Reset to Defaults"
-                        Command="{Binding Settings.ResetSettingsCommand}"/>
+                        Content="{Binding Loc.ResetToDefaults}"
+                        Command="{Binding Settings.ResetSettingsCommand}"
+                        MinWidth="120"/>
 
                 <Button Grid.Column="2"
-                        Content="Save"
+                        Content="{Binding Loc.Save}"
                         Style="{StaticResource AccentButtonStyle}"
                         Command="{Binding Settings.SaveSettingsCommand}"
-                        IsEnabled="{Binding Settings.HasUnsavedChanges, Mode=OneWay}"/>
+                        IsEnabled="{Binding Settings.HasUnsavedChanges, Mode=OneWay}"
+                        MinWidth="120"/>
             </Grid>
         </StackPanel>
     </ScrollViewer>

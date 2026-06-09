@@ -21,6 +21,9 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private int _deviceCount;
     [ObservableProperty] private ConnectionQuality _connectionQuality = ConnectionQuality.Good;
 
+    // Localization service for all pages to bind to
+    public LocalizationService Loc => LocalizationService.Instance;
+
     public DashboardViewModel Dashboard { get; }
     public DevicesViewModel Devices { get; }
     public ShareViewModel Share { get; }

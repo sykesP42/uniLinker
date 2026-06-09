@@ -17,9 +17,12 @@ public partial class ShareViewModel : ObservableObject
     [ObservableProperty] private int _frameRateIndex = 0; // 0: 30fps, 1: 60fps
     [ObservableProperty] private int _bitrateIndex = 1;   // 0: 10M, 1: 15M, 2: 20M
 
+    [ObservableProperty] private bool _notificationsEnabled = true;
+
     private readonly WebBridge? _bridge;
     private readonly DispatcherQueue _dispatcherQueue;
     private System.Timers.Timer? _statusTimer;
+    private int _lastViewerCount = 0;
 
     public ShareViewModel()
     {
@@ -47,6 +50,24 @@ public partial class ShareViewModel : ObservableObject
         try
         {
             var (_, port, peers) = _bridge.GetStatusInfo();
+
+            // Notify on viewer count changes
+            if (IsSharing && peers != _lastViewerCount)
+            {
+                var loc = LocalizationService.Instance;
+                if (peers > _lastViewerCount && _lastViewerCount > 0)
+                {
+                    // New viewer connected
+                    ShowNotification(loc.ShareConnected, $"{loc.ShareActive}: {peers}");
+                }
+                else if (peers < _lastViewerCount && peers > 0)
+                {
+                    // Viewer disconnected
+                    ShowNotification(loc.ShareDisconnected, $"{loc.ShareActive}: {peers}");
+                }
+            }
+
+            _lastViewerCount = peers;
             ViewerCount = peers;
 
             if (IsSharing)
@@ -59,6 +80,14 @@ public partial class ShareViewModel : ObservableObject
         catch
         {
             // Ignore errors during status update
+        }
+    }
+
+    private void ShowNotification(string title, string message)
+    {
+        if (NotificationsEnabled)
+        {
+            NotificationService.Instance.ShowToast(title, message);
         }
     }
 
@@ -109,6 +138,10 @@ public partial class ShareViewModel : ObservableObject
 
         StatusText = "Sharing screen...";
 
+        // Show notification
+        var loc = LocalizationService.Instance;
+        ShowNotification(loc.ShareStarted, ShareAddress);
+
         StartStatusTimer();
     }
 
@@ -121,6 +154,11 @@ public partial class ShareViewModel : ObservableObject
         ShareAddress = "Waiting to start...";
         ViewerCount = 0;
         StatusText = "Share stopped";
+        _lastViewerCount = 0;
+
+        // Show notification
+        var loc = LocalizationService.Instance;
+        ShowNotification(loc.ShareStopped, "");
 
         _statusTimer?.Stop();
     }

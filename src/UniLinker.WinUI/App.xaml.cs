@@ -13,6 +13,25 @@ public partial class App : Application
 
     public static AppServices Services { get; private set; } = null!;
 
+    // Theme management
+    public static event EventHandler<ElementTheme>? ThemeChanged;
+    private static ElementTheme _currentTheme = ElementTheme.Default;
+    private static MainWindow? _currentWindow;
+
+    public static ElementTheme CurrentTheme
+    {
+        get => _currentTheme;
+        set
+        {
+            if (_currentTheme != value)
+            {
+                _currentTheme = value;
+                ApplyTheme(value);
+                ThemeChanged?.Invoke(null, value);
+            }
+        }
+    }
+
     public App()
     {
         // Initialize the Windows App SDK for unpackaged apps
@@ -37,6 +56,65 @@ public partial class App : Application
         await _platform.StartAsync();
 
         _window = new MainWindow();
+        _currentWindow = _window;
+
+        // Load and apply saved theme
+        LoadTheme();
         _window.Activate();
     }
+
+    private void LoadTheme()
+    {
+        // Load theme from settings
+        var settingsPath = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "uniLinker", "settings.json");
+
+        if (File.Exists(settingsPath))
+        {
+            try
+            {
+                var json = File.ReadAllText(settingsPath);
+                var settings = System.Text.Json.JsonSerializer.Deserialize<AppSettings>(json);
+                if (settings != null)
+                {
+                    _currentTheme = settings.ThemeIndex switch
+                    {
+                        0 => ElementTheme.Dark,
+                        1 => ElementTheme.Light,
+                        _ => ElementTheme.Default
+                    };
+                    ApplyTheme(_currentTheme);
+                }
+            }
+            catch
+            {
+                // Use default theme if load fails
+            }
+        }
+    }
+
+    private static void ApplyTheme(ElementTheme theme)
+    {
+        if (_currentWindow != null)
+        {
+            // Apply theme to the window content
+            if (_currentWindow.Content is FrameworkElement rootElement)
+            {
+                rootElement.RequestedTheme = theme;
+            }
+
+            // Update title bar colors
+            if (_currentWindow is MainWindow mainWindow)
+            {
+                mainWindow.UpdateTitleBarForTheme(theme);
+            }
+        }
+    }
+
+    internal class AppSettings
+    {
+        public int ThemeIndex { get; set; }
+    }
 }
+

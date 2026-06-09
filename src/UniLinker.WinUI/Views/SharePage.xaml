@@ -7,96 +7,294 @@
     mc:Ignorable="d"
     Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
 
-    <Grid Padding="24">
-        <Grid.RowDefinitions>
-            <RowDefinition Height="Auto"/>
-            <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
-        </Grid.RowDefinitions>
+    <Page.Resources>
+        <!-- Pulse animation for sharing state -->
+        <Storyboard x:Key="PulseAnimation">
+            <DoubleAnimation
+                Storyboard.TargetName="PreviewBorder"
+                Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleX)"
+                From="1.0" To="1.02" Duration="0:0:2"
+                AutoReverse="True"
+                RepeatBehavior="Forever"/>
+            <DoubleAnimation
+                Storyboard.TargetName="PreviewBorder"
+                Storyboard.TargetProperty="(UIElement.RenderTransform).(ScaleTransform.ScaleY)"
+                From="1.0" To="1.02" Duration="0:0:2"
+                AutoReverse="True"
+                RepeatBehavior="Forever"/>
+        </Storyboard>
+    </Page.Resources>
 
-        <!-- Header -->
-        <TextBlock Grid.Row="0" Text="Share" Style="{StaticResource TitleTextBlockStyle}" Margin="0,0,0,16"/>
-
-        <!-- Preview Card -->
-        <Border Grid.Row="1"
-                VerticalAlignment="Center"
-                HorizontalAlignment="Center"
-                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                CornerRadius="8"
-                Padding="24">
-            <StackPanel Spacing="16">
-                <!-- Preview Area -->
-                <Border Width="480" Height="270"
-                        Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
-                        CornerRadius="8">
-                    <TextBlock Text="Screen Preview" HorizontalAlignment="Center" VerticalAlignment="Center"
-                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-                </Border>
-
-                <!-- Status -->
-                <TextBlock x:Name="ShareStatusText"
-                           Text="{Binding Share.StatusText, Mode=OneWay}"
-                           HorizontalAlignment="Center"
-                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
-
-                <!-- Address -->
-                <TextBlock x:Name="ShareAddressText"
-                           Text="{Binding Share.ShareAddress, Mode=OneWay}"
-                           HorizontalAlignment="Center"
-                           Style="{StaticResource SubtitleTextBlockStyle}"/>
-
-                <!-- Controls -->
-                <StackPanel Orientation="Horizontal" HorizontalAlignment="Center" Spacing="12">
-                    <Button Content="Start Share"
-                            Command="{Binding Share.StartShareCommand}"
-                            Style="{StaticResource AccentButtonStyle}"/>
-                    <Button Content="Stop Share"
-                            Command="{Binding Share.StopShareCommand}"/>
-                </StackPanel>
+    <ScrollViewer>
+        <StackPanel Padding="32,32,32,48" Spacing="24">
+            <!-- Header Section -->
+            <StackPanel Spacing="8">
+                <TextBlock Text="{Binding Loc.Share}" Style="{StaticResource PageHeaderStyle}"/>
+                <TextBlock Text="Share your screen with connected devices"
+                           Style="{StaticResource DescriptionTextStyle}"
+                           FontSize="14"/>
             </StackPanel>
-        </Border>
 
-        <!-- Settings Expander -->
-        <Expander Grid.Row="2" Header="Advanced Settings" HorizontalAlignment="Stretch">
-            <Grid ColumnSpacing="16">
-                <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="*"/>
-                    <ColumnDefinition Width="*"/>
-                </Grid.ColumnDefinitions>
+            <!-- Preview Card -->
+            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{ThemeResource OverlayCornerRadius}"
+                    Padding="24">
+                <StackPanel Spacing="20">
+                    <!-- Preview Area -->
+                    <Border x:Name="PreviewBorder"
+                            Height="320"
+                            Background="{ThemeResource CardBackgroundFillColorSecondaryBrush}"
+                            CornerRadius="{ThemeResource OverlayCornerRadius}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            RenderTransformOrigin="0.5,0.5">
+                        <Border.RenderTransform>
+                            <ScaleTransform ScaleX="1" ScaleY="1"/>
+                        </Border.RenderTransform>
+                        <Grid>
+                            <!-- Not sharing state -->
+                            <StackPanel VerticalAlignment="Center"
+                                        HorizontalAlignment="Center"
+                                        Spacing="16"
+                                        Visibility="{Binding Share.IsSharing, Converter={StaticResource InverseBoolToVisibilityConverter}}">
+                                <FontIcon Glyph="&#xE960;" FontSize="64"
+                                          Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                                <TextBlock Text="{Binding Loc.ScreenPreview}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           FontSize="16"
+                                           HorizontalAlignment="Center"/>
+                                <TextBlock Text="Screen preview will appear here when sharing"
+                                           Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                           FontSize="12"
+                                           HorizontalAlignment="Center"/>
+                            </StackPanel>
 
-                <StackPanel Grid.Column="0">
-                    <TextBlock Text="Resolution" Margin="0,0,0,8"/>
-                    <ComboBox x:Name="ResolutionComboBox"
-                              SelectedIndex="{Binding Share.ResolutionIndex, Mode=TwoWay}"
-                              HorizontalAlignment="Stretch">
-                        <x:String>1080p (1920x1080)</x:String>
-                        <x:String>2K (2560x1440)</x:String>
-                        <x:String>4K (3840x2160)</x:String>
-                    </ComboBox>
+                            <!-- Sharing state -->
+                            <Grid Visibility="{Binding Share.IsSharing, Converter={StaticResource BoolToVisibilityConverter}}">
+                                <Grid.RowDefinitions>
+                                    <RowDefinition Height="*"/>
+                                    <RowDefinition Height="Auto"/>
+                                </Grid.RowDefinitions>
+
+                                <!-- Animated background pattern -->
+                                <Border Grid.Row="0" Grid.RowSpan="2">
+                                    <Border.Background>
+                                        <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                            <GradientStop Color="{ThemeResource SystemAccentColor}" Offset="0"/>
+                                            <GradientStop Color="{ThemeResource SystemAccentColorLight2}" Offset="0.5"/>
+                                            <GradientStop Color="{ThemeResource SystemAccentColor}" Offset="1"/>
+                                        </LinearGradientBrush>
+                                    </Border.Background>
+                                </Border>
+
+                                <!-- Animated icon -->
+                                <FontIcon Grid.Row="0"
+                                          Glyph="&#xE72D;"
+                                          FontSize="80"
+                                          Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                          HorizontalAlignment="Center"
+                                          VerticalAlignment="Center"
+                                          Opacity="0.8"/>
+
+                                <!-- Share info overlay -->
+                                <Border Grid.Row="1"
+                                        Background="{ThemeResource SystemAccentColor}"
+                                        Padding="20,16">
+                                    <Grid ColumnSpacing="16">
+                                        <Grid.ColumnDefinitions>
+                                            <ColumnDefinition Width="Auto"/>
+                                            <ColumnDefinition Width="*"/>
+                                            <ColumnDefinition Width="Auto"/>
+                                        </Grid.ColumnDefinitions>
+
+                                        <!-- Animated dot -->
+                                        <Border Grid.Column="0"
+                                                Width="12"
+                                                Height="12"
+                                                Background="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                                CornerRadius="6">
+                                            <Border.Resources>
+                                                <Storyboard x:Key="BlinkAnimation" x:Name="BlinkStoryboard">
+                                                    <DoubleAnimation
+                                                        Storyboard.TargetProperty="Opacity"
+                                                        From="1.0" To="0.3" Duration="0:0:0.8"
+                                                        AutoReverse="True"
+                                                        RepeatBehavior="Forever"/>
+                                                </Storyboard>
+                                            </Border.Resources>
+                                        </Border>
+
+                                        <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                                            <TextBlock Text="{Binding Share.StatusText, Mode=OneWay}"
+                                                       Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                                       FontWeight="SemiBold"
+                                                       FontSize="14"/>
+                                            <TextBlock Text="{Binding Share.ShareAddress, Mode=OneWay}"
+                                                       Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                                       FontSize="12"
+                                                       Opacity="0.8"/>
+                                        </StackPanel>
+
+                                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                                            <FontIcon Glyph="&#xE716;" FontSize="14"
+                                                      Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"/>
+                                            <TextBlock Text="{Binding Share.ViewerCount, Mode=OneWay}"
+                                                       Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                                       FontWeight="Bold"
+                                                       FontSize="16"/>
+                                        </StackPanel>
+                                    </Grid>
+                                </Border>
+                            </Grid>
+                        </Grid>
+                    </Border>
+
+                    <!-- Status and Address (when not sharing) -->
+                    <Grid ColumnSpacing="16"
+                          Visibility="{Binding Share.IsSharing, Converter={StaticResource InverseBoolToVisibilityConverter}}">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="Auto"/>
+                        </Grid.ColumnDefinitions>
+
+                        <StackPanel Grid.Column="0" Spacing="8">
+                            <TextBlock Text="{Binding Share.StatusText, Mode=OneWay}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       FontSize="13"/>
+                            <TextBlock Text="{Binding Share.ShareAddress, Mode=OneWay}"
+                                       Style="{StaticResource SubtitleTextBlockStyle}"
+                                       FontWeight="SemiBold"/>
+                        </StackPanel>
+
+                        <!-- Action Buttons -->
+                        <StackPanel Grid.Column="1"
+                                    Orientation="Horizontal"
+                                    Spacing="8"
+                                    VerticalAlignment="Center">
+                            <Button Content="{Binding Loc.StartShare}"
+                                    Command="{Binding Share.StartShareCommand}"
+                                    Style="{StaticResource AccentButtonStyle}"
+                                    MinWidth="120"
+                                    IsEnabled="{Binding Share.IsSharing, Converter={StaticResource InverseBoolConverter}}">
+                                <Button.KeyboardAccelerators>
+                                    <KeyboardAccelerator Key="S" Modifiers="Control"/>
+                                </Button.KeyboardAccelerators>
+                            </Button>
+                            <Button Content="{Binding Loc.StopShare}"
+                                    Command="{Binding Share.StopShareCommand}"
+                                    MinWidth="120"
+                                    IsEnabled="{Binding Share.IsSharing, Mode=OneWay}"/>
+                        </StackPanel>
+                    </Grid>
+
+                    <!-- Stop sharing button (when sharing) -->
+                    <Button Content="{Binding Loc.StopShare}"
+                            Command="{Binding Share.StopShareCommand}"
+                            HorizontalAlignment="Center"
+                            MinWidth="160"
+                            Background="{ThemeResource SystemFillColorCriticalBrush}"
+                            Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                            Visibility="{Binding Share.IsSharing, Converter={StaticResource BoolToVisibilityConverter}}"
+                            CornerRadius="{ThemeResource ControlCornerRadius}"
+                            Padding="24,12">
+                        <Button.Resources>
+                            <SolidColorBrush x:Key="ButtonBackgroundPointerOver" Color="{ThemeResource SystemFillColorCritical}"/>
+                            <SolidColorBrush x:Key="ButtonBackgroundPressed" Color="{ThemeResource SystemFillColorCritical}"/>
+                        </Button.Resources>
+                    </Button>
                 </StackPanel>
+            </Border>
 
-                <StackPanel Grid.Column="1">
-                    <TextBlock Text="Frame Rate" Margin="0,0,0,8"/>
-                    <ComboBox x:Name="FrameRateComboBox"
-                              SelectedIndex="{Binding Share.FrameRateIndex, Mode=TwoWay}"
-                              HorizontalAlignment="Stretch">
-                        <x:String>30 fps</x:String>
-                        <x:String>60 fps</x:String>
-                    </ComboBox>
-                </StackPanel>
+            <!-- Advanced Settings Section -->
+            <StackPanel Spacing="16">
+                <TextBlock Text="{Binding Loc.AdvancedSettings}"
+                           Style="{StaticResource SettingsSectionHeaderStyle}"
+                           Margin="0,8,0,0"/>
 
-                <StackPanel Grid.Column="2">
-                    <TextBlock Text="Bitrate" Margin="0,0,0,8"/>
-                    <ComboBox x:Name="BitrateComboBox"
-                              SelectedIndex="{Binding Share.BitrateIndex, Mode=TwoWay}"
-                              HorizontalAlignment="Stretch">
-                        <x:String>10 Mbps</x:String>
-                        <x:String>15 Mbps</x:String>
-                        <x:String>20 Mbps</x:String>
-                    </ComboBox>
-                </StackPanel>
-            </Grid>
-        </Expander>
-    </Grid>
+                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{ThemeResource OverlayCornerRadius}"
+                        Padding="20">
+                    <Grid ColumnSpacing="24" RowSpacing="16">
+                        <Grid.ColumnDefinitions>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                            <ColumnDefinition Width="*"/>
+                        </Grid.ColumnDefinitions>
+
+                        <!-- Resolution -->
+                        <StackPanel Grid.Column="0" Spacing="8">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE799;" FontSize="14"
+                                          Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock Text="{Binding Loc.Resolution}"
+                                           FontWeight="SemiBold"
+                                           FontSize="13"/>
+                            </StackPanel>
+                            <ComboBox x:Name="ResolutionComboBox"
+                                      SelectedIndex="{Binding Share.ResolutionIndex, Mode=TwoWay}"
+                                      HorizontalAlignment="Stretch"
+                                      MinHeight="36"
+                                      IsEnabled="{Binding Share.IsSharing, Converter={StaticResource InverseBoolConverter}}">
+                                <x:String>1080p (1920x1080)</x:String>
+                                <x:String>2K (2560x1440)</x:String>
+                                <x:String>4K (3840x2160)</x:String>
+                            </ComboBox>
+                            <TextBlock Text="Higher resolution provides better quality but requires more bandwidth"
+                                       Style="{StaticResource DescriptionTextStyle}"
+                                       FontSize="11"/>
+                        </StackPanel>
+
+                        <!-- Frame Rate -->
+                        <StackPanel Grid.Column="1" Spacing="8">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE916;" FontSize="14"
+                                          Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock Text="{Binding Loc.FrameRate}"
+                                           FontWeight="SemiBold"
+                                           FontSize="13"/>
+                            </StackPanel>
+                            <ComboBox x:Name="FrameRateComboBox"
+                                      SelectedIndex="{Binding Share.FrameRateIndex, Mode=TwoWay}"
+                                      HorizontalAlignment="Stretch"
+                                      MinHeight="36"
+                                      IsEnabled="{Binding Share.IsSharing, Converter={StaticResource InverseBoolConverter}}">
+                                <x:String>30 fps</x:String>
+                                <x:String>60 fps</x:String>
+                            </ComboBox>
+                            <TextBlock Text="60 fps provides smoother motion for fast-paced content"
+                                       Style="{StaticResource DescriptionTextStyle}"
+                                       FontSize="11"/>
+                        </StackPanel>
+
+                        <!-- Bitrate -->
+                        <StackPanel Grid.Column="2" Spacing="8">
+                            <StackPanel Orientation="Horizontal" Spacing="8">
+                                <FontIcon Glyph="&#xE9E9;" FontSize="14"
+                                          Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                <TextBlock Text="{Binding Loc.Bitrate}"
+                                           FontWeight="SemiBold"
+                                           FontSize="13"/>
+                            </StackPanel>
+                            <ComboBox x:Name="BitrateComboBox"
+                                      SelectedIndex="{Binding Share.BitrateIndex, Mode=TwoWay}"
+                                      HorizontalAlignment="Stretch"
+                                      MinHeight="36"
+                                      IsEnabled="{Binding Share.IsSharing, Converter={StaticResource InverseBoolConverter}}">
+                                <x:String>10 Mbps</x:String>
+                                <x:String>15 Mbps</x:String>
+                                <x:String>20 Mbps</x:String>
+                            </ComboBox>
+                            <TextBlock Text="Higher bitrate improves quality for fast motion"
+                                       Style="{StaticResource DescriptionTextStyle}"
+                                       FontSize="11"/>
+                        </StackPanel>
+                    </Grid>
+                </Border>
+            </StackPanel>
+        </StackPanel>
+    </ScrollViewer>
 </Page>

@@ -27,6 +27,8 @@ public partial class SettingsViewModel : ObservableObject
         {
             if (SetProperty(ref _themeIndex, value))
             {
+                HasUnsavedChanges = true;
+                // Apply theme immediately
                 ApplyTheme(value);
             }
         }
@@ -71,6 +73,10 @@ public partial class SettingsViewModel : ObservableObject
                     DefaultFps = settings.DefaultFps;
                     DefaultBitrate = settings.DefaultBitrate;
                     LanguageIndex = settings.LanguageIndex;
+
+                    // Apply loaded theme and language
+                    ApplyTheme(ThemeIndex);
+                    LocalizationService.Instance.SetLanguage(LanguageIndex);
                 }
             }
         }
@@ -80,19 +86,15 @@ public partial class SettingsViewModel : ObservableObject
         }
     }
 
-    private void ApplyTheme(int index)
+    private void ApplyTheme(int themeIndex)
     {
-        // WinUI 3 theme is applied via the window's content
-        // The theme will be applied when the app restarts or via the MainWindow
-        if (App.Current is App app)
+        var theme = themeIndex switch
         {
-            app.RequestedTheme = index switch
-            {
-                0 => ApplicationTheme.Dark,
-                1 => ApplicationTheme.Light,
-                _ => ApplicationTheme.Dark // System is not directly supported, default to Dark
-            };
-        }
+            0 => ElementTheme.Dark,
+            1 => ElementTheme.Light,
+            _ => ElementTheme.Default
+        };
+        App.CurrentTheme = theme;
     }
 
     [RelayCommand]
@@ -127,6 +129,9 @@ public partial class SettingsViewModel : ObservableObject
             });
             _bridge?.SaveConfig(platformConfig);
 
+            // Update localization
+            LocalizationService.Instance.SetLanguage(LanguageIndex);
+
             StatusMessage = LanguageIndex == 0 ? "Settings saved successfully" : "设置已保存";
             HasUnsavedChanges = false;
         }
@@ -148,6 +153,11 @@ public partial class SettingsViewModel : ObservableObject
         DefaultFps = 0;
         DefaultBitrate = 1;
         LanguageIndex = 0;
+
+        // Apply default theme and language
+        ApplyTheme(ThemeIndex);
+        LocalizationService.Instance.SetLanguage(LanguageIndex);
+
         StatusMessage = LanguageIndex == 0 ? "Settings reset to defaults" : "设置已重置为默认值";
         HasUnsavedChanges = true;
     }
@@ -166,6 +176,8 @@ public partial class SettingsViewModel : ObservableObject
     partial void OnLanguageIndexChanged(int value)
     {
         HasUnsavedChanges = true;
+        // Update localization service immediately
+        LocalizationService.Instance.SetLanguage(value);
         // Update status message to new language
         StatusMessage = "";
     }

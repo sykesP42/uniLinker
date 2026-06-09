@@ -7,88 +7,173 @@
     mc:Ignorable="d"
     Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
 
-    <Grid Padding="24">
+    <Grid Padding="32,32,32,48">
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="Auto"/>
             <RowDefinition Height="*"/>
-            <RowDefinition Height="Auto"/>
         </Grid.RowDefinitions>
 
-        <!-- Header -->
-        <Grid Grid.Row="0" ColumnSpacing="12" Margin="0,0,0,16">
-            <Grid.ColumnDefinitions>
-                <ColumnDefinition Width="*"/>
-                <ColumnDefinition Width="Auto"/>
-            </Grid.ColumnDefinitions>
+        <!-- Header Section -->
+        <StackPanel Grid.Row="0" Spacing="16" Margin="0,0,0,24">
+            <Grid ColumnSpacing="16">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
 
-            <TextBlock Grid.Column="0" Text="Devices" Style="{StaticResource TitleTextBlockStyle}"/>
-            <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8">
-                <TextBox x:Name="SearchBox"
-                         PlaceholderText="Search devices..."
-                         Text="{Binding Devices.SearchText, Mode=TwoWay}"
-                         Width="200"/>
-                <Button Command="{Binding Devices.StartScanCommand}">
-                    <StackPanel Orientation="Horizontal" Spacing="8">
-                        <FontIcon Glyph="&#xE721;" FontSize="14"/>
-                        <TextBlock Text="Scan"/>
-                    </StackPanel>
-                </Button>
+                <StackPanel Grid.Column="0" Spacing="8">
+                    <TextBlock Text="{Binding Loc.Devices}" Style="{StaticResource PageHeaderStyle}"/>
+                    <TextBlock Text="Discover and connect to nearby devices"
+                               Style="{StaticResource DescriptionTextStyle}"
+                               FontSize="14"/>
+                </StackPanel>
+
+                <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <TextBox x:Name="SearchBox"
+                             PlaceholderText="{Binding Loc.SearchDevices}"
+                             Text="{Binding Devices.SearchText, Mode=TwoWay}"
+                             Width="240"
+                             VerticalAlignment="Center"/>
+                    <Button Command="{Binding Devices.StartScanCommand}"
+                            Style="{StaticResource AccentButtonStyle}"
+                            VerticalAlignment="Center">
+                        <StackPanel Orientation="Horizontal" Spacing="8">
+                            <FontIcon Glyph="&#xE721;" FontSize="14"/>
+                            <TextBlock Text="{Binding Loc.Scan}"/>
+                        </StackPanel>
+                    </Button>
+                </StackPanel>
+            </Grid>
+
+            <!-- Discovery Mode Selector -->
+            <StackPanel Orientation="Horizontal" Spacing="8">
+                <RadioButton Content="{Binding Loc.AutoDiscover}"
+                             GroupName="DiscoveryMode"
+                             Tag="0"
+                             Click="DiscoveryModeRadioButton_Click"
+                             IsChecked="True"/>
+                <RadioButton Content="{Binding Loc.LanDiscovery}"
+                             GroupName="DiscoveryMode"
+                             Tag="1"
+                             Click="DiscoveryModeRadioButton_Click"/>
+                <RadioButton Content="{Binding Loc.ManualIp}"
+                             GroupName="DiscoveryMode"
+                             Tag="2"
+                             Click="DiscoveryModeRadioButton_Click"/>
             </StackPanel>
-        </Grid>
-
-        <!-- Discovery Mode -->
-        <StackPanel Grid.Row="1" Margin="0,0,0,16" Orientation="Horizontal" Spacing="16">
-            <RadioButton Content="Auto-discover" GroupName="DiscoveryMode" Tag="0" Click="DiscoveryModeRadioButton_Click"/>
-            <RadioButton Content="LAN" GroupName="DiscoveryMode" Tag="1" Click="DiscoveryModeRadioButton_Click"/>
-            <RadioButton Content="Manual IP" GroupName="DiscoveryMode" Tag="2" Click="DiscoveryModeRadioButton_Click"/>
         </StackPanel>
 
         <!-- Device Grid -->
-        <GridView Grid.Row="2"
+        <GridView Grid.Row="1"
                   x:Name="DeviceGridView"
                   ItemsSource="{Binding Devices.Devices, Mode=OneWay}"
-                  SelectionMode="None">
+                  SelectionMode="None"
+                  Padding="-4">
+            <GridView.ItemsPanel>
+                <ItemsPanelTemplate>
+                    <ItemsWrapGrid Orientation="Horizontal"
+                                   MaximumRowsOrColumns="4"/>
+                </ItemsPanelTemplate>
+            </GridView.ItemsPanel>
+            <GridView.ItemContainerStyle>
+                <Style TargetType="GridViewItem">
+                    <Setter Property="Margin" Value="4"/>
+                    <Setter Property="Padding" Value="0"/>
+                </Style>
+            </GridView.ItemContainerStyle>
             <GridView.ItemTemplate>
                 <DataTemplate>
-                    <Grid Width="200" Height="140" Padding="12"
-                          Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
-                          CornerRadius="8">
-                        <Grid.RowDefinitions>
-                            <RowDefinition Height="Auto"/>
-                            <RowDefinition Height="*"/>
-                            <RowDefinition Height="Auto"/>
-                        </Grid.RowDefinitions>
+                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            CornerRadius="{ThemeResource OverlayCornerRadius}"
+                            Padding="16"
+                            Width="240"
+                            Height="180">
+                        <Grid>
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
 
-                        <FontIcon Grid.Row="0" Glyph="&#xE970;" FontSize="32" HorizontalAlignment="Left"/>
-                        <StackPanel Grid.Row="1" VerticalAlignment="Center">
-                            <TextBlock Text="{Binding Name}" FontWeight="Medium" TextTrimming="CharacterEllipsis"/>
-                            <TextBlock Text="{Binding IpAddress}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" FontSize="11"/>
-                        </StackPanel>
-                        <Button Grid.Row="2" Content="Connect" HorizontalAlignment="Stretch"/>
-                    </Grid>
+                            <!-- Device Icon -->
+                            <Border Grid.Row="0"
+                                    Width="48" Height="48"
+                                    Background="{ThemeResource SubtleFillColorSecondaryBrush}"
+                                    CornerRadius="24"
+                                    Margin="0,0,0,12">
+                                <FontIcon Glyph="&#xE970;" FontSize="22"
+                                          HorizontalAlignment="Center"
+                                          VerticalAlignment="Center"/>
+                            </Border>
+
+                            <!-- Device Info -->
+                            <StackPanel Grid.Row="1" VerticalAlignment="Center" Spacing="4">
+                                <TextBlock Text="{Binding Name}"
+                                           FontWeight="SemiBold"
+                                           FontSize="14"
+                                           TextTrimming="CharacterEllipsis"
+                                           TextAlignment="Center"/>
+                                <TextBlock Text="{Binding IpAddress}"
+                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                           FontSize="12"
+                                           TextAlignment="Center"/>
+                            </StackPanel>
+
+                            <!-- Connect Button -->
+                            <Button Grid.Row="2"
+                                    Content="Connect"
+                                    HorizontalAlignment="Stretch"
+                                    Style="{StaticResource AccentButtonStyle}"/>
+                        </Grid>
+                    </Border>
                 </DataTemplate>
             </GridView.ItemTemplate>
         </GridView>
 
-        <!-- Manual IP Expander -->
-        <Expander Grid.Row="3" Header="Manual Connection" HorizontalAlignment="Stretch">
+        <!-- Manual IP Connection Panel -->
+        <Border Grid.Row="2"
+                Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                BorderThickness="1"
+                CornerRadius="{ThemeResource OverlayCornerRadius}"
+                Padding="20"
+                Margin="0,16,0,0"
+                VerticalAlignment="Bottom">
             <Grid ColumnSpacing="12">
                 <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
 
-                <TextBox Grid.Column="0"
-                         PlaceholderText="IP Address"
-                         Text="{Binding Devices.ManualIp, Mode=TwoWay}"/>
+                <FontIcon Grid.Column="0"
+                          Glyph="&#xE774;"
+                          FontSize="20"
+                          Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                          Margin="0,0,12,0"
+                          VerticalAlignment="Center"/>
+
                 <TextBox Grid.Column="1"
+                         PlaceholderText="{Binding Loc.IpAddressPlaceholder}"
+                         Text="{Binding Devices.ManualIp, Mode=TwoWay}"
+                         VerticalAlignment="Center"/>
+
+                <TextBox Grid.Column="2"
                          PlaceholderText="Port"
                          Text="{Binding Devices.ManualPort, Mode=TwoWay}"
-                         Width="100"/>
-                <Button Grid.Column="2" Content="Connect" Command="{Binding Devices.ConnectManualCommand}"/>
+                         Width="100"
+                         VerticalAlignment="Center"/>
+
+                <Button Grid.Column="3"
+                        Content="{Binding Loc.Connect}"
+                        Command="{Binding Devices.ConnectManualCommand}"
+                        Style="{StaticResource AccentButtonStyle}"
+                        VerticalAlignment="Center"/>
             </Grid>
-        </Expander>
+        </Border>
     </Grid>
 </Page>

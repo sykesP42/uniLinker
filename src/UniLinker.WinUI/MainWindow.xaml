@@ -9,82 +9,209 @@
     Closed="Window_Closed">
 
     <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="32"/>
+            <RowDefinition Height="*"/>
+        </Grid.RowDefinitions>
+
+        <!-- Custom Title Bar -->
+        <Border
+            Grid.Row="0"
+            x:Name="TitleBarBorder"
+            Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+            <Grid Padding="16,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+
+                <!-- App Icon and Title -->
+                <StackPanel
+                    Grid.Column="0"
+                    Orientation="Horizontal"
+                    Spacing="8"
+                    VerticalAlignment="Center">
+                    <FontIcon Glyph="&#xE9D5;" FontSize="14"/>
+                    <TextBlock
+                        Text="UniLinker"
+                        FontWeight="SemiBold"
+                        FontSize="12"
+                        VerticalAlignment="Center"/>
+                </StackPanel>
+
+                <!-- Window Controls (placeholder - WinUI 3 handles this automatically) -->
+                <Grid Grid.Column="2" VerticalAlignment="Center">
+                    <!-- WinUI 3's AppWindow handles window controls automatically -->
+                </Grid>
+            </Grid>
+        </Border>
+
+        <!-- Main Content -->
         <NavigationView
+            Grid.Row="1"
             x:Name="NavView"
             IsBackButtonVisible="Collapsed"
             IsSettingsVisible="False"
             ItemInvoked="NavView_ItemInvoked"
             PaneDisplayMode="Left"
-            CompactModeThresholdWidth="600"
+            CompactModeThresholdWidth="500"
             ExpandedModeThresholdWidth="800"
-            OpenPaneLength="200">
+            OpenPaneLength="200"
+            SelectionFollowsFocus="Enabled"
+            DataContext="{x:Bind ViewModel}">
 
             <NavigationView.MenuItems>
-                <NavigationViewItem Content="Dashboard" Tag="Dashboard">
+                <NavigationViewItem Content="{Binding Loc.Dashboard}" Tag="Dashboard">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE80F;"/>
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Content="Devices" Tag="Devices">
+                <NavigationViewItem Content="{Binding Loc.Devices}" Tag="Devices">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE970;"/>
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Content="Share" Tag="Share">
+                <NavigationViewItem Content="{Binding Loc.Share}" Tag="Share">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE72D;"/>
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-                <NavigationViewItem Content="Settings" Tag="Settings">
+            </NavigationView.MenuItems>
+
+            <NavigationView.FooterMenuItems>
+                <NavigationViewItem Content="{Binding Loc.Settings}" Tag="Settings">
                     <NavigationViewItem.Icon>
                         <FontIcon Glyph="&#xE713;"/>
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
-            </NavigationView.MenuItems>
+            </NavigationView.FooterMenuItems>
 
-            <!-- Status indicator for expanded mode -->
+            <!-- Status indicator -->
             <NavigationView.PaneFooter>
-                <Grid x:Name="StatusPanel" Margin="8,0,8,8">
-                    <!-- Expanded status (visible when pane is open) -->
-                    <StackPanel x:Name="ExpandedStatus" Spacing="4">
-                        <Grid ColumnSpacing="8">
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="Auto"/>
-                                <ColumnDefinition Width="*"/>
-                            </Grid.ColumnDefinitions>
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                            </Grid.RowDefinitions>
+                <StackPanel Margin="12,0,12,12" Spacing="8">
+                    <!-- Share status indicator (visible when sharing) -->
+                    <Grid x:Name="ShareStatusPanel" Visibility="Collapsed">
+                        <!-- Expanded share status -->
+                        <Border
+                            x:Name="ExpandedShareStatus"
+                            Background="{ThemeResource SystemFillColorAttentionBrush}"
+                            BorderBrush="{ThemeResource SystemFillColorAttentionBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="12,8"
+                            Visibility="Visible">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
 
-                            <!-- Status icon -->
-                            <FontIcon Grid.Row="0" Grid.Column="0"
-                                      Glyph="&#xE73E;"
-                                      FontSize="14"
-                                      Foreground="{ThemeResource SystemFillColorSuccessBrush}"/>
+                                <!-- Animated share indicator -->
+                                <Border
+                                    Grid.Column="0"
+                                    Width="10"
+                                    Height="10"
+                                    Background="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                    CornerRadius="5"
+                                    VerticalAlignment="Center">
+                                    <Border.RenderTransform>
+                                        <ScaleTransform x:Name="ShareIndicatorTransform" ScaleX="1" ScaleY="1"/>
+                                    </Border.RenderTransform>
+                                </Border>
 
-                            <!-- Status text -->
-                            <TextBlock Grid.Row="0" Grid.Column="1"
-                                       Text="Server Online"
-                                       FontSize="12"
-                                       FontWeight="Medium"/>
+                                <!-- Share status text -->
+                                <TextBlock Grid.Column="1"
+                                           Text="{Binding Loc.ShareActive}"
+                                           FontWeight="Medium"
+                                           FontSize="12"
+                                           Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                           TextTrimming="CharacterEllipsis"/>
+                            </Grid>
+                        </Border>
 
-                            <!-- Connection address -->
-                            <TextBlock Grid.Row="1" Grid.Column="0" Grid.ColumnSpan="2"
-                                       Text="{Binding ConnectAddress, Mode=OneWay}"
-                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
-                                       FontSize="11"/>
-                        </Grid>
-                    </StackPanel>
-
-                    <!-- Compact status (visible when pane is collapsed) -->
-                    <Grid x:Name="CompactStatus" Visibility="Collapsed">
-                        <FontIcon Glyph="&#xE73E;"
-                                  FontSize="16"
-                                  Foreground="{ThemeResource SystemFillColorSuccessBrush}"
-                                  ToolTipService.ToolTip="Server Online"/>
+                        <!-- Compact share status -->
+                        <Border
+                            x:Name="CompactShareStatus"
+                            Width="36"
+                            Height="36"
+                            Background="{ThemeResource SystemFillColorAttentionBrush}"
+                            CornerRadius="18"
+                            Visibility="Collapsed"
+                            HorizontalAlignment="Center"
+                            ToolTipService.ToolTip="{Binding Loc.ShareActive}">
+                            <Grid>
+                                <FontIcon
+                                    Glyph="&#xE72D;"
+                                    FontSize="16"
+                                    Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                    HorizontalAlignment="Center"
+                                    VerticalAlignment="Center"/>
+                            </Grid>
+                        </Border>
                     </Grid>
-                </Grid>
+
+                    <!-- Server status panel -->
+                    <Grid x:Name="StatusPanel">
+                        <!-- Expanded status (visible when pane is open) -->
+                        <Border
+                            x:Name="ExpandedStatus"
+                            Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                            BorderThickness="1"
+                            CornerRadius="8"
+                            Padding="12,8"
+                            Visibility="Visible">
+                            <Grid ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="Auto"/>
+                                    <ColumnDefinition Width="*"/>
+                                </Grid.ColumnDefinitions>
+
+                                <!-- Status indicator -->
+                                <Border
+                                    Grid.Column="0"
+                                    Width="10"
+                                    Height="10"
+                                    Background="{ThemeResource SystemFillColorSuccessBrush}"
+                                    CornerRadius="5"
+                                    VerticalAlignment="Center"/>
+
+                                <!-- Status text -->
+                                <StackPanel Grid.Column="1" Spacing="2">
+                                    <TextBlock
+                                        Text="{Binding Loc.ServerOnline}"
+                                        FontWeight="Medium"
+                                        FontSize="12"
+                                        TextTrimming="CharacterEllipsis"/>
+                                    <TextBlock
+                                        Text="{Binding ConnectAddress, Mode=OneWay}"
+                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                        FontSize="11"
+                                        TextTrimming="CharacterEllipsis"/>
+                                </StackPanel>
+                            </Grid>
+                        </Border>
+
+                        <!-- Compact status (visible when pane is collapsed) -->
+                        <Border
+                            x:Name="CompactStatus"
+                            Width="36"
+                            Height="36"
+                            Background="{ThemeResource SystemFillColorSuccessBrush}"
+                            CornerRadius="18"
+                            Visibility="Collapsed"
+                            HorizontalAlignment="Center"
+                            ToolTipService.ToolTip="Server Online&#x0a;Click to see details">
+                            <FontIcon
+                                Glyph="&#xE73E;"
+                                FontSize="16"
+                                Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
+                                HorizontalAlignment="Center"
+                                VerticalAlignment="Center"/>
+                        </Border>
+                    </Grid>
+                </StackPanel>
             </NavigationView.PaneFooter>
 
             <Frame x:Name="ContentFrame"/>
