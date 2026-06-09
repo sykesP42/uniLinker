@@ -55,6 +55,16 @@ public partial class App : Application
 
         await _platform.StartAsync();
 
+        // Start the signaling server for WebRTC connections
+        try
+        {
+            await _signalingServer.StartAsync();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Failed to start signaling server: {ex.Message}");
+        }
+
         _window = new MainWindow();
         _currentWindow = _window;
 

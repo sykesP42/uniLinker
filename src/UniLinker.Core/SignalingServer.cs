@@ -40,7 +40,8 @@ public class SignalingServer : IDisposable
         _capabilities = capabilities ?? ["screen-capture", "h264-encode", "video-stream"];
         _webRoot = Path.Combine(AppContext.BaseDirectory, "web");
         _listener = new HttpListener();
-        _listener.Prefixes.Add($"http://+:{port}/");
+        // Use localhost to avoid needing URL ACL admin permissions
+        _listener.Prefixes.Add($"http://localhost:{port}/");
     }
 
     public async Task StartAsync(CancellationToken ct = default)
