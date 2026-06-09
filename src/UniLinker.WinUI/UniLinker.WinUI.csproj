@@ -36,4 +36,12 @@
   <ItemGroup>
     <ProjectReference Include="..\UniLinker.Core\UniLinker.Core.csproj" />
   </ItemGroup>
+
+  <!-- Copy web directory to output for SignalingServer -->
+  <ItemGroup>
+    <ContentWithTargetPath Include="..\..\web\**\*">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <TargetPath>web\%(RecursiveDir)%(Filename)%(Extension)</TargetPath>
+    </ContentWithTargetPath>
+  </ItemGroup>
 </Project>
