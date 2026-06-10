@@ -207,13 +207,18 @@
             <span class="icon" aria-hidden="true">📺</span>
             <span>输入主机地址并点击连接</span>
         </div>
+        <!-- Standard WebRTC video element (browser handles decoding) -->
         <video id="remoteVideo" autoplay playsinline muted></video>
+        <!-- WebCodecs canvas (optional, for low-latency rendering) -->
+        <canvas id="webcodecsCanvas" style="display:none;"></canvas>
         <div class="overlay-info" id="overlayInfo" aria-live="off"></div>
     </div>
 
     <!-- Toast 通知容器 -->
     <div class="toast-container" id="toastContainer" aria-live="polite"></div>
 
+    <!-- WebCodecs decoder (optional, for browsers that support it) -->
+    <script src="webcodecs-decoder.js"></script>
     <script src="app.js"></script>
 </body>
 </html>

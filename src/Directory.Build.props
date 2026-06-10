@@ -1,0 +1,20 @@
+<Project>
+  <!--
+    Workaround for .NET SDK 10 + Windows App SDK 1.6 PRI generation bug
+    Issue: The MrtCore.PriGen.targets tries to load VS build tasks that don't exist
+    in pure CLI environments (no Visual Studio installed).
+
+    Solution: Override the task assembly path to use a dummy path that won't fail
+    because the target itself will be skipped.
+
+    For unpackaged apps (WindowsPackageType=None), we don't need PRI generation at all.
+  -->
+  <PropertyGroup Condition="'$(WindowsPackageType)' == 'None'">
+    <!-- Point to an empty string to prevent the task loading error -->
+    <PriProjTaskAssembly></PriProjTaskAssembly>
+    <!-- Skip all PRI-related targets -->
+    <GeneratePri>false</GeneratePri>
+    <EnableMrtTargets>false</EnableMrtTargets>
+    <_MrtEnabled>false</_MrtEnabled>
+  </PropertyGroup>
+</Project>

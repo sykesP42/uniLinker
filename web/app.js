@@ -1,10 +1,14 @@
 // UniLinker WebRTC Client
 // Standard WebRTC receiver — works in any browser (Chrome, Firefox, Safari, Edge)
+// Optional WebCodecs support for lower latency rendering
 
 let pc = null;
 let statsInterval = null;
+let webcodecsDecoder = null;
+let useWebCodecs = false; // Set to true to enable WebCodecs rendering
 
 const video = document.getElementById('remoteVideo');
+const webcodecsCanvas = document.getElementById('webcodecsCanvas');
 const placeholder = document.getElementById('placeholder');
 const statusDot = document.getElementById('statusDot');
 const statusText = document.getElementById('statusText');
@@ -95,6 +99,13 @@ async function connect() {
     btnConnect.disabled = true;
     btnConnect.textContent = '...';
     setStatus('connecting', '连接中...');
+
+    // Check if WebCodecs is available and user wants to use it
+    // Note: WebCodecs requires receiving raw H.264 via DataChannel, not MediaStream
+    // The current server implementation sends via MediaStream, so we use standard WebRTC
+    // WebCodecs mode would require server-side changes to send via DataChannel
+    const webcodecsAvailable = typeof WebCodecsDecoder !== 'undefined' && WebCodecsDecoder.isAvailable();
+    console.log('WebCodecs available:', webcodecsAvailable);
 
     try {
         pc = new RTCPeerConnection({
