@@ -1,3 +1,4 @@
+using System.Collections.Concurrent;
 using System.Runtime.InteropServices;
 using UniLinker.Plugin.Sdk;
 
@@ -11,8 +12,9 @@ namespace UniLinker.Plugins.ScreenMirror;
 /// Uses direct COM vtable calls for IMFAttributes/IMFMediaBuffer/IMFSample interface methods
 /// since they are not available as exported DLL functions — only as COM interface method slots.
 ///
-/// IMPORTANT: All MF operations run on a dedicated MTA thread to avoid COM threading conflicts
-/// with WebView2/WinForms which require STA on the main thread.
+/// CRITICAL: All MF operations MUST run on a dedicated MTA thread. WinUI3/WebView2 main thread
+/// is STA, and MF objects created on an MTA thread cannot be used from STA threads (RPC_E_WRONG_THREAD).
+/// This class uses a single dedicated MTA thread with a message loop for all MF operations.
 /// </summary>
 public class MfEncoder : IEncoder
 {
@@ -26,27 +28,16 @@ public class MfEncoder : IEncoder
     private uint _streamIndex;
     private bool _initialized;
 
-    // Thread-safe state management
-    private readonly object _lock = new();
-    private bool _isInitializing;
-    private bool _initResult;
+    // ── Dedicated MTA Thread Management ──
+    // Media Foundation requires MTA (multi-threaded apartment) COM threading.
+    // WinUI3/WebView2 runs on STA main thread, so we need a dedicated MTA thread
+    // for ALL MF operations - not just initialization, but every Encode() call too.
+    private Thread? _mfThread;
+    private readonly BlockingCollection<Action> _mfQueue = new();
     private readonly ManualResetEventSlim _initComplete = new(false);
-
-    private const string Mfplat = "mfplat.dll";
-    private const string Mfreadwrite = "mfreadwrite.dll";
-
-    // ── MF Attribute Key GUIDs (from mfapi.h) ──
-    private static readonly Guid MF_MT_MAJOR_TYPE       = new("48EBA18E-F8C9-4687-BF11-0A74C9F96A8F");
-    private static readonly Guid MF_MT_SUBTYPE           = new("F7E34C9A-42E8-4714-B74B-CB29D72C35E5");
-    private static readonly Guid MF_MT_AVG_BITRATE       = new("20380024-BF00-4F8D-8000-5C1C0062F5E5");
-    private static readonly Guid MF_MT_INTERLACE_MODE    = new("E2724FC4-5C30-4DB6-BC0C-59AEC2F135AD");
-    private static readonly Guid MF_MT_FRAME_SIZE        = new("1652C33D-D6B2-4012-B834-720CF3436C6B");
-    private static readonly Guid MF_MT_FRAME_RATE        = new("C459A2CE-8E67-4B4C-B120-0B18E0EBFEBF");
-    private static readonly Guid MF_MT_PIXEL_ASPECT_RATIO = new("C6376A1E-8D0A-4027-BE45-6D9A0AD3BBE6");
-
-    private static readonly Guid MFMediaType_Video  = new("73646976-0000-0010-8000-00AA00389B71");
-    private static readonly Guid MFVideoFormat_H264 = new("34363248-0000-0010-8000-00AA00389B71");
-    private static readonly Guid MFVideoFormat_ARGB32 = new("00000021-0000-0010-8000-00AA00389B71");
+    private bool _initResult;
+    private bool _isRunning;
+    private readonly object _stateLock = new();
 
     // ── Event ──
 #pragma warning disable CS0067
@@ -103,6 +94,22 @@ public class MfEncoder : IEncoder
     // P/Invoke — exported MF API functions
     // ════════════════════════════════════════════════════════
 
+    private const string Mfplat = "mfplat.dll";
+    private const string Mfreadwrite = "mfreadwrite.dll";
+
+    // ── MF Attribute Key GUIDs (from mfapi.h) ──
+    private static readonly Guid MF_MT_MAJOR_TYPE       = new("48EBA18E-F8C9-4687-BF11-0A74C9F96A8F");
+    private static readonly Guid MF_MT_SUBTYPE           = new("F7E34C9A-42E8-4714-B74B-CB29D72C35E5");
+    private static readonly Guid MF_MT_AVG_BITRATE       = new("20380024-BF00-4F8D-8000-5C1C0062F5E5");
+    private static readonly Guid MF_MT_INTERLACE_MODE    = new("E2724FC4-5C30-4DB6-BC0C-59AEC2F135AD");
+    private static readonly Guid MF_MT_FRAME_SIZE        = new("1652C33D-D6B2-4012-B834-720CF3436C6B");
+    private static readonly Guid MF_MT_FRAME_RATE        = new("C459A2CE-8E67-4B4C-B120-0B18E0EBFEBF");
+    private static readonly Guid MF_MT_PIXEL_ASPECT_RATIO = new("C6376A1E-8D0A-4027-BE45-6D9A0AD3BBE6");
+
+    private static readonly Guid MFMediaType_Video  = new("73646976-0000-0010-8000-00AA00389B71");
+    private static readonly Guid MFVideoFormat_H264 = new("34363248-0000-0010-8000-00AA00389B71");
+    private static readonly Guid MFVideoFormat_ARGB32 = new("00000021-0000-0010-8000-00AA00389B71");
+
     [DllImport(Mfplat)]
     private static extern int MFStartup(uint version, uint flags);
 
@@ -154,7 +161,6 @@ public class MfEncoder : IEncoder
     public static bool IsAvailable()
     {
         // Run on a separate thread to avoid affecting main thread's COM apartment state
-        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         var tcs = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
 
         var thread = new Thread(() =>
@@ -185,6 +191,9 @@ public class MfEncoder : IEncoder
         return tcs.Task.GetAwaiter().GetResult();
     }
 
+    /// <summary>
+    /// Initialize the encoder. This starts a dedicated MTA thread for all MF operations.
+    /// </summary>
     public bool Initialize(int width, int height, int fps, int bitrateKbps)
     {
         // Clamp to valid values
@@ -193,92 +202,168 @@ public class MfEncoder : IEncoder
         _fps = Math.Clamp(fps, 1, 120);
         _bitrateKbps = Math.Clamp(bitrateKbps, 100, 100000);
 
-        // Initialize MF on a dedicated MTA thread
-        var initThread = new Thread(() =>
+        // Start the dedicated MTA thread for all MF operations
+        _isRunning = true;
+        _mfThread = new Thread(MfThreadProc)
+        {
+            IsBackground = true,
+            Name = "MfEncoder-MTA"
+        };
+        _mfThread.Start();
+
+        // Queue the initialization work and wait for completion
+        _initComplete.Reset();
+        _mfQueue.Add(() =>
         {
             try
             {
-                if (MFStartup(0x20070, 0) < 0)
-                {
-                    lock (_lock) { _initResult = false; }
-                    return;
-                }
-
-                if (MFCreateMemoryByteStream(out _byteStream) < 0)
-                {
-                    CleanUp();
-                    lock (_lock) { _initResult = false; }
-                    return;
-                }
-
-                if (MFCreateSinkWriterFromURL(null, _byteStream, nint.Zero, out _sinkWriter) < 0)
-                {
-                    CleanUp();
-                    lock (_lock) { _initResult = false; }
-                    return;
-                }
-
-                nint outType = CreateOutputMediaType();
-                if (MFSinkWriterAddStream(_sinkWriter, outType, out _streamIndex) < 0)
-                {
-                    CleanUp();
-                    lock (_lock) { _initResult = false; }
-                    return;
-                }
-
-                nint inType = CreateInputMediaType();
-                if (MFSinkWriterSetInputMediaType(_sinkWriter, _streamIndex, inType, nint.Zero) < 0)
-                {
-                    CleanUp();
-                    lock (_lock) { _initResult = false; }
-                    return;
-                }
-
-                if (MFSinkWriterBeginWriting(_sinkWriter) < 0)
-                {
-                    CleanUp();
-                    lock (_lock) { _initResult = false; }
-                    return;
-                }
-
-                _initialized = true;
-                lock (_lock) { _initResult = true; }
-                System.Diagnostics.Debug.WriteLine(
-                    $"MF: H.264 encoder initialized ({_width}x{_height} @{_fps}fps, {_bitrateKbps}kbps)");
+                _initResult = InitializeOnMfThread();
             }
             catch (Exception ex)
             {
                 System.Diagnostics.Debug.WriteLine($"MF encoder init error: {ex.Message}");
-                CleanUp();
-                lock (_lock) { _initResult = false; }
+                _initResult = false;
             }
             finally
             {
                 _initComplete.Set();
             }
-        })
-        {
-            IsBackground = true,
-        };
+        });
 
-        initThread.Start();
-        _initComplete.Wait(TimeSpan.FromSeconds(10));
-
-        lock (_lock)
+        // Wait for initialization to complete (with timeout)
+        if (!_initComplete.Wait(TimeSpan.FromSeconds(15)))
         {
-            return _initResult;
+            System.Diagnostics.Debug.WriteLine("MF encoder init timeout");
+            return false;
         }
+
+        if (_initResult)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"MF: H.264 encoder initialized ({_width}x{_height} @{_fps}fps, {_bitrateKbps}kbps)");
+        }
+
+        return _initResult;
     }
 
+    /// <summary>
+    /// Dedicated MTA thread procedure. Processes all MF operations from the queue.
+    /// </summary>
+    private void MfThreadProc()
+    {
+        // This thread is implicitly MTA because we don't call CoInitializeEx
+        // (or we could explicitly call CoInitializeEx with COINIT_MULTITHREADED)
+        System.Diagnostics.Debug.WriteLine("[MfThread] Started, processing queue...");
+
+        while (_isRunning)
+        {
+            try
+            {
+                // Block until work is available
+                var action = _mfQueue.Take();
+                action();
+            }
+            catch (ObjectDisposedException)
+            {
+                break;
+            }
+            catch (InvalidOperationException)
+            {
+                break;
+            }
+        }
+
+        // Cleanup on thread exit
+        CleanupOnMfThread();
+        System.Diagnostics.Debug.WriteLine("[MfThread] Exited");
+    }
+
+    /// <summary>
+    /// Initialize MF resources. Called on the MTA thread.
+    /// </summary>
+    private bool InitializeOnMfThread()
+    {
+        if (MFStartup(0x20070, 0) < 0)
+        {
+            System.Diagnostics.Debug.WriteLine("MF: MFStartup failed");
+            return false;
+        }
+
+        if (MFCreateMemoryByteStream(out _byteStream) < 0)
+        {
+            System.Diagnostics.Debug.WriteLine("MF: MFCreateMemoryByteStream failed");
+            return false;
+        }
+
+        if (MFCreateSinkWriterFromURL(null, _byteStream, nint.Zero, out _sinkWriter) < 0)
+        {
+            System.Diagnostics.Debug.WriteLine("MF: MFCreateSinkWriterFromURL failed");
+            return false;
+        }
+
+        nint outType = CreateOutputMediaType();
+        if (MFSinkWriterAddStream(_sinkWriter, outType, out _streamIndex) < 0)
+        {
+            System.Diagnostics.Debug.WriteLine("MF: MFSinkWriterAddStream failed");
+            return false;
+        }
+
+        nint inType = CreateInputMediaType();
+        if (MFSinkWriterSetInputMediaType(_sinkWriter, _streamIndex, inType, nint.Zero) < 0)
+        {
+            System.Diagnostics.Debug.WriteLine("MF: MFSinkWriterSetInputMediaType failed");
+            return false;
+        }
+
+        if (MFSinkWriterBeginWriting(_sinkWriter) < 0)
+        {
+            System.Diagnostics.Debug.WriteLine("MF: MFSinkWriterBeginWriting failed");
+            return false;
+        }
+
+        _initialized = true;
+        return true;
+    }
+
+    /// <summary>
+    /// Encode a frame. Schedules work on the MTA thread and returns immediately.
+    /// </summary>
     public void Encode(CaptureFrame frame)
+    {
+        if (!_initialized || _sinkWriter == 0) return;
+
+        // Copy frame data to avoid closure issues
+        var frameData = frame.RawData;
+        var frameWidth = frame.Width;
+        var frameHeight = frame.Height;
+        var framePitch = frame.Pitch;
+
+        // Queue encode work to MTA thread
+        _mfQueue.Add(() =>
+        {
+            try
+            {
+                EncodeOnMfThread(frameData, frameWidth, frameHeight, framePitch);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"MF encode error: {ex.Message}");
+            }
+        });
+    }
+
+    /// <summary>
+    /// Encode frame data. Called on the MTA thread.
+    /// </summary>
+    private void EncodeOnMfThread(byte[]? frameData, int frameWidth, int frameHeight, int framePitch)
     {
         if (!_initialized || _sinkWriter == 0) return;
 
         try
         {
             // Strip row-stride padding to produce tight BGRA data
-            var src = frame.RawData ?? [];
-            byte[] bgra = StripPitch(src, frame.Width, frame.Height, frame.Pitch);
+            var src = frameData ?? [];
+            byte[] bgra = StripPitch(src, frameWidth, frameHeight, framePitch);
 
             // Create MF sample from BGRA data
             nint sample = CreateBgraSample(bgra, _frameIndex);
@@ -302,7 +387,43 @@ public class MfEncoder : IEncoder
     public EncoderInfo GetInfo() =>
         new("h264_mf", _bitrateKbps, IsHardware: false);
 
-    public void Dispose() => CleanUp();
+    public void Dispose()
+    {
+        // Signal thread to stop and wait for it
+        _isRunning = false;
+        _mfQueue.CompleteAdding();
+
+        try
+        {
+            if (_mfThread != null && _mfThread.IsAlive)
+            {
+                _mfThread.Join(TimeSpan.FromSeconds(2));
+            }
+        }
+        catch { }
+
+        _mfQueue.Dispose();
+    }
+
+    /// <summary>
+    /// Cleanup MF resources. Called on the MTA thread during thread exit.
+    /// </summary>
+    private void CleanupOnMfThread()
+    {
+        if (_sinkWriter != 0)
+        {
+            try { MFSinkWriterFinalize(_sinkWriter); } catch { }
+            Marshal.Release(_sinkWriter);
+            _sinkWriter = 0;
+        }
+        if (_byteStream != 0)
+        {
+            Marshal.Release(_byteStream);
+            _byteStream = 0;
+        }
+        try { MFShutdown(); } catch { }
+        _initialized = false;
+    }
 
     // ════════════════════════════════════════════════════════
     // Media Type Helpers
@@ -631,22 +752,7 @@ public class MfEncoder : IEncoder
     // Cleanup
     // ════════════════════════════════════════════════════════
 
-    private void CleanUp()
-    {
-        if (_sinkWriter != 0)
-        {
-            try { MFSinkWriterFinalize(_sinkWriter); } catch { }
-            Marshal.Release(_sinkWriter);
-            _sinkWriter = 0;
-        }
-        if (_byteStream != 0)
-        {
-            Marshal.Release(_byteStream);
-            _byteStream = 0;
-        }
-        try { MFShutdown(); } catch { }
-        _initialized = false;
-    }
+    // Cleanup is now handled by CleanupOnMfThread() which runs on the MTA thread.
 }
 
 // ── HRESULT helper ──

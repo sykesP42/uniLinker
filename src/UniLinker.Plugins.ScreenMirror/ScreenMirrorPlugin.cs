@@ -20,14 +20,14 @@ public class ScreenMirrorPlugin : IPlugin
         _ctx = context;
         _capture = new WgcCapture();
 
-        // TODO: MfEncoder causes COM threading conflict with WebView2 (RPC_E_CHANGED_MODE).
-        // For now, always use FfmpegEncoder until this is resolved.
-        // if (MfEncoder.IsAvailable())
-        // {
-        //     _encoder = new MfEncoder();
-        //     context.Logger.Info("Using MfEncoder (native Windows Media Foundation) ✓");
-        // }
-        // else
+        // Prefer MfEncoder (native Windows Media Foundation) if available.
+        // MfEncoder now uses a dedicated MTA thread to avoid COM conflicts with WebView2.
+        if (MfEncoder.IsAvailable())
+        {
+            _encoder = new MfEncoder();
+            context.Logger.Info("Using MfEncoder (native Windows Media Foundation) ✓");
+        }
+        else
         {
             _encoder = new FfmpegEncoder();
             context.Logger.Info("Using FfmpegEncoder (requires ffmpeg.exe in PATH)");
