@@ -75,10 +75,19 @@ public class PeerMesh : IPeerMesh, IDisposable
     ///
     /// OUTGOING path (watcher): Create new PeerConnection, perform SDP exchange
     ///   via HTTP to the remote peer's signaling server.
+    ///
+    /// For DataChannel type, creates a reliable data channel instead of media track.
     /// </summary>
     public async Task<IChannel?> CreateChannel(
         PeerInfo peer, string capability, ChannelOptions? options = null)
     {
+        // Check if DataChannel is requested
+        if (options?.Type == ChannelType.DataChannel)
+        {
+            return await CreateDataChannelAsync(peer, capability, options);
+        }
+
+        // Default: MediaTrack channel
         PeerConnection pc;
         bool isSender;
 
@@ -124,6 +133,90 @@ public class PeerMesh : IPeerMesh, IDisposable
         var channel = new PeerChannel(peer, capability, pc, isSender);
         await channel.OpenAsync();
         return channel;
+    }
+
+    /// <summary>
+    /// Create a DataChannel for reliable data transfer (e.g., file transfer).
+    /// Uses the same WebRTC connection as media, but creates a separate data channel.
+    /// </summary>
+    private async Task<IChannel?> CreateDataChannelAsync(
+        PeerInfo peer, string capability, ChannelOptions options)
+    {
+        PeerConnection pc;
+
+        lock (_lock)
+        {
+            if (!_connections.TryGetValue(peer.Id, out var existing))
+            {
+                // Create new connection for DataChannel
+                pc = new PeerConnection(peer);
+                WireConnectionEvents(pc, peer);
+                _connections[peer.Id] = pc;
+                _peers[peer.Id] = peer;
+            }
+            else
+            {
+                pc = existing;
+            }
+        }
+
+        // Initialize connection if needed
+        if (pc.State == PeerConnectionState.New)
+        {
+            var initialized = await pc.InitializeAsync();
+            if (!initialized)
+            {
+                RemoveConnection(peer.Id);
+                pc.Dispose();
+                return null;
+            }
+
+            var success = await PerformWebRtcExchangeAsync(pc, peer, capability);
+            if (!success)
+            {
+                RemoveConnection(peer.Id);
+                pc.Dispose();
+                return null;
+            }
+        }
+
+        // Wait for connection to be established
+        var timeout = TimeSpan.FromSeconds(10);
+        var startTime = DateTime.UtcNow;
+        while (pc.State != PeerConnectionState.Connected && DateTime.UtcNow - startTime < timeout)
+        {
+            await Task.Delay(100);
+        }
+
+        if (pc.State != PeerConnectionState.Connected)
+        {
+            System.Diagnostics.Debug.WriteLine($"[PeerMesh] DataChannel creation failed: not connected");
+            return null;
+        }
+
+        // Create the DataChannel
+        var label = options.Label ?? $"data-{capability}";
+        var dc = await pc.CreateDataChannelAsync(label, options.Ordered);
+        if (dc == null)
+        {
+            System.Diagnostics.Debug.WriteLine($"[PeerMesh] Failed to create DataChannel");
+            return null;
+        }
+
+        // Wait for DataChannel to open
+        var dcOpenTcs = new TaskCompletionSource<bool>();
+        dc.onopen += () => dcOpenTcs.TrySetResult(true);
+        dc.onerror += (err) => dcOpenTcs.TrySetResult(false);
+
+        var dcTimeout = Task.Delay(5000);
+        var winner = await Task.WhenAny(dcOpenTcs.Task, dcTimeout);
+        if (winner == dcTimeout || !await dcOpenTcs.Task)
+        {
+            System.Diagnostics.Debug.WriteLine($"[PeerMesh] DataChannel open timeout");
+            return null;
+        }
+
+        return new DataChannelWrapper(dc, peer, capability);
     }
 
     /// <summary>

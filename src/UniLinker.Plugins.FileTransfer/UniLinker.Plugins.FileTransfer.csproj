@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>UniLinker.Plugins.FileTransfer</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\UniLinker.Plugin.Sdk\UniLinker.Plugin.Sdk.csproj" />
+    <ProjectReference Include="..\UniLinker.Core\UniLinker.Core.csproj" />
+  </ItemGroup>
+
+</Project>

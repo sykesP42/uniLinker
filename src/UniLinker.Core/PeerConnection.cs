@@ -20,6 +20,7 @@ public class PeerConnection : IDisposable
     private RTCPeerConnection? _pc;
     private readonly string _id = Guid.NewGuid().ToString("N")[..8];
     private bool _isInitialized;
+    private readonly List<RTCDataChannel> _dataChannels = new();
 
     public string Id => _id;
     public PeerInfo RemotePeer { get; }
@@ -27,6 +28,7 @@ public class PeerConnection : IDisposable
 
     public event Action<PeerConnectionState>? StateChanged;
     public event Action<List<RTCIceCandidate>>? IceCandidatesGenerated;
+    public event Action<RTCDataChannel>? DataChannelReceived;
 
     public PeerConnection(PeerInfo remotePeer)
     {
@@ -73,6 +75,17 @@ public class PeerConnection : IDisposable
                 {
                     System.Diagnostics.Debug.WriteLine($"[PC:{_id}] ICE candidate: {candidate}");
                     IceCandidatesGenerated?.Invoke(new List<RTCIceCandidate> { candidate });
+                }
+            };
+
+            // Handle incoming DataChannel from remote peer
+            _pc.ondatachannel += channel =>
+            {
+                if (channel != null)
+                {
+                    System.Diagnostics.Debug.WriteLine($"[PC:{_id}] DataChannel received: {channel.label}");
+                    _dataChannels.Add(channel);
+                    DataChannelReceived?.Invoke(channel);
                 }
             };
 
@@ -218,6 +231,43 @@ public class PeerConnection : IDisposable
         }
     }
 
+    /// <summary>
+    /// Create a WebRTC DataChannel for reliable data transfer.
+    /// </summary>
+    /// <param name="label">Channel label for identification</param>
+    /// <param name="ordered">Whether to guarantee order of messages (default: true)</param>
+    /// <returns>The created DataChannel, or null if peer connection not ready</returns>
+    public async Task<RTCDataChannel?> CreateDataChannelAsync(string label, bool ordered = true)
+    {
+        if (_pc == null)
+        {
+            System.Diagnostics.Debug.WriteLine($"[PC:{_id}] Cannot create DataChannel: not initialized");
+            return null;
+        }
+
+        try
+        {
+            var init = new RTCDataChannelInit
+            {
+                ordered = ordered,
+                maxRetransmits = 3  // Limited retransmits for better latency
+            };
+
+            var channel = await _pc.createDataChannel(label, init);
+            if (channel != null)
+            {
+                _dataChannels.Add(channel);
+                System.Diagnostics.Debug.WriteLine($"[PC:{_id}] DataChannel created: {label}");
+            }
+            return channel;
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[PC:{_id}] CreateDataChannel error: {ex.Message}");
+            return null;
+        }
+    }
+
     public Task CloseAsync()
     {
         _pc?.close();
@@ -227,6 +277,12 @@ public class PeerConnection : IDisposable
 
     public void Dispose()
     {
+        foreach (var dc in _dataChannels)
+        {
+            try { dc.close(); } catch { }
+        }
+        _dataChannels.Clear();
+
         _pc?.close();
         _pc?.Dispose();
         _pc = null;
