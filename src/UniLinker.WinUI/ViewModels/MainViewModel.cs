@@ -27,6 +27,7 @@ public partial class MainViewModel : ObservableObject
     public DashboardViewModel Dashboard { get; }
     public DevicesViewModel Devices { get; }
     public ShareViewModel Share { get; }
+    public FileTransferViewModel FileTransfer { get; }
     public SettingsViewModel Settings { get; }
 
     public MainViewModel()
@@ -35,6 +36,7 @@ public partial class MainViewModel : ObservableObject
         Dashboard = new();
         Devices = new();
         Share = new();
+        FileTransfer = new();
         Settings = new();
     }
 
@@ -46,6 +48,7 @@ public partial class MainViewModel : ObservableObject
         // Create ViewModels with real services
         Devices = new DevicesViewModel(discovery);
         Share = new ShareViewModel(bridge);
+        FileTransfer = new FileTransferViewModel(bridge, discovery);
         Settings = new SettingsViewModel(bridge);
 
         // Subscribe to discovery events for dashboard stats
@@ -146,5 +149,6 @@ public partial class MainViewModel : ObservableObject
         }
         Devices.Cleanup();
         Share.Cleanup();
+        FileTransfer.Cleanup();
     }
 }

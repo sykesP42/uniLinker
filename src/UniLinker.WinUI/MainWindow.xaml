@@ -77,6 +77,11 @@
                         <FontIcon Glyph="&#xE72D;"/>
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
+                <NavigationViewItem Content="{Binding Loc.FileTransferTitle}" Tag="FileTransfer">
+                    <NavigationViewItem.Icon>
+                        <FontIcon Glyph="&#xE8E5;"/>
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
             </NavigationView.MenuItems>
 
             <NavigationView.FooterMenuItems>
