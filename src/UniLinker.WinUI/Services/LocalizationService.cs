@@ -218,7 +218,7 @@ public partial class LocalizationService : ObservableObject
     public string DefaultResolutionDesc => LanguageIndex == 0 ? "Default resolution for screen sharing sessions" : "屏幕共享会话的默认分辨率";
     public string DefaultFrameRateDesc => LanguageIndex == 0 ? "Target frame rate for streaming" : "流传输的目标帧率";
     public string DefaultBitrateDesc => LanguageIndex == 0 ? "Video stream bitrate" : "视频流码率";
-    public string FileTransferDesc => LanguageIndex == 0 ? "Drag and drop file sharing (Coming soon)" : "拖放文件共享（即将推出）";
+    public string FileTransferDesc => LanguageIndex == 0 ? "Drag and drop files to share with connected devices" : "拖放文件与已连接设备共享";
     public string RemoteInputDesc => LanguageIndex == 0 ? "Control device remotely (Coming soon)" : "远程控制设备（即将推出）";
 
     // About
@@ -237,7 +237,6 @@ public partial class LocalizationService : ObservableObject
 
     // File Transfer
     public string FileTransferTitle => LanguageIndex == 0 ? "File Transfer" : "文件传输";
-    public string FileTransferDesc => LanguageIndex == 0 ? "Drag and drop files to share with connected devices" : "拖放文件与已连接设备共享";
     public string DropFilesHere => LanguageIndex == 0 ? "Drop files here" : "拖放文件到这里";
     public string OrClickToSelect => LanguageIndex == 0 ? "or click to select" : "或点击选择";
     public string SelectFiles => LanguageIndex == 0 ? "Select Files" : "选择文件";

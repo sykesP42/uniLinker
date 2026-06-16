@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using UniLinker.Plugins.FileTransfer.Core;
+using UniLinker.Plugins.FileTransfer.Protocol;
 
 namespace UniLinker.WinUI.ViewModels;
 

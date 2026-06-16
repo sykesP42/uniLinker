@@ -2,6 +2,7 @@ using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
 using UniLinker.WinUI.ViewModels;
+using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
 
 namespace UniLinker.WinUI.Views;
@@ -62,7 +63,8 @@ public sealed partial class FileTransferPage : Page
                     // Trigger file send via ViewModel
                     if (_viewModel?.FileTransfer.SelectedDevice != null)
                     {
-                        await _viewModel.FileTransfer.SelectFileCommand.ExecuteAsync();
+                        // Open file picker instead since we need file path
+                        await _viewModel.FileTransfer.SelectFileCommand.ExecuteAsync(null);
                     }
                 }
             }

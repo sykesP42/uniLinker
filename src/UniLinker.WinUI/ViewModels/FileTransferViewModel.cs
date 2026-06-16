@@ -140,13 +140,17 @@ public partial class FileTransferViewModel : ObservableObject
             var picker = new Windows.Storage.Pickers.FileOpenPicker();
             picker.FileTypeFilter.Add("*");
 
-            // Get window handle for WinUI 3
-            var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(
-                App.Services?.MainWindow ??
-                (Microsoft.UI.Xaml.Window.Current ??
-                 throw new InvalidOperationException("No window available")));
-
-            WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+            // Get window handle from XamlRoot
+            if (_xamlRoot != null)
+            {
+                // WinUI 3 way to get window handle
+                var window = Microsoft.UI.Xaml.Window.Current;
+                if (window != null)
+                {
+                    var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(window);
+                    WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
+                }
+            }
 
             var file = await picker.PickSingleFileAsync();
             if (file != null)
