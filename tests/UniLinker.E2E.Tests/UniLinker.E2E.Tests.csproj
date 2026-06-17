@@ -5,6 +5,7 @@
     <Nullable>enable</Nullable>
     <IsPackable>false</IsPackable>
     <IsTestProject>true</IsTestProject>
+    <PlaywrightPlatform>win-x64</PlaywrightPlatform>
   </PropertyGroup>
 
   <ItemGroup>
