@@ -69,6 +69,8 @@
                   x:Name="DeviceGridView"
                   ItemsSource="{Binding Devices.Devices, Mode=OneWay}"
                   SelectionMode="None"
+                  IsItemClickEnabled="True"
+                  ItemClick="DeviceGridView_ItemClick"
                   Padding="-4">
             <GridView.ItemsPanel>
                 <ItemsPanelTemplate>
@@ -125,6 +127,8 @@
                             <!-- Connect Button -->
                             <Button Grid.Row="2"
                                     Content="Connect"
+                                    Tag="{Binding}"
+                                    Click="DeviceConnect_Click"
                                     HorizontalAlignment="Stretch"
                                     Style="{StaticResource AccentButtonStyle}"/>
                         </Grid>
