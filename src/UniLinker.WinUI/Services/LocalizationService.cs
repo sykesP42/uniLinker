@@ -90,6 +90,34 @@ public partial class LocalizationService : ObservableObject
                 OnPropertyChanged(nameof(NotificationsEnabled));
                 OnPropertyChanged(nameof(NotificationsDesc));
                 OnPropertyChanged(nameof(ShareActive));
+                // File Transfer strings
+                OnPropertyChanged(nameof(FileTransferTitle));
+                OnPropertyChanged(nameof(FileTransferDesc));
+                OnPropertyChanged(nameof(DropFilesHere));
+                OnPropertyChanged(nameof(OrClickToSelect));
+                OnPropertyChanged(nameof(SelectFiles));
+                OnPropertyChanged(nameof(SendTo));
+                OnPropertyChanged(nameof(NoDevicesFound));
+                OnPropertyChanged(nameof(ActiveTransfers));
+                OnPropertyChanged(nameof(NoTransfers));
+                OnPropertyChanged(nameof(SaveTo));
+                OnPropertyChanged(nameof(OpenFolder));
+                OnPropertyChanged(nameof(Sending));
+                OnPropertyChanged(nameof(Receiving));
+                OnPropertyChanged(nameof(Completed));
+                OnPropertyChanged(nameof(Cancelled));
+                OnPropertyChanged(nameof(Waiting));
+                OnPropertyChanged(nameof(Transferring));
+                OnPropertyChanged(nameof(FileReceived));
+                OnPropertyChanged(nameof(FileSent));
+                OnPropertyChanged(nameof(TransferFailed));
+                OnPropertyChanged(nameof(AcceptFile));
+                OnPropertyChanged(nameof(RejectFile));
+                OnPropertyChanged(nameof(IncomingFile));
+                OnPropertyChanged(nameof(WantsToSend));
+                OnPropertyChanged(nameof(Size));
+                OnPropertyChanged(nameof(ClearCompleted));
+                OnPropertyChanged(nameof(SelectDeviceFirst));
             }
         }
     }
@@ -190,7 +218,7 @@ public partial class LocalizationService : ObservableObject
     public string DefaultResolutionDesc => LanguageIndex == 0 ? "Default resolution for screen sharing sessions" : "屏幕共享会话的默认分辨率";
     public string DefaultFrameRateDesc => LanguageIndex == 0 ? "Target frame rate for streaming" : "流传输的目标帧率";
     public string DefaultBitrateDesc => LanguageIndex == 0 ? "Video stream bitrate" : "视频流码率";
-    public string FileTransferDesc => LanguageIndex == 0 ? "Drag and drop file sharing (Coming soon)" : "拖放文件共享（即将推出）";
+    public string FileTransferDesc => LanguageIndex == 0 ? "Drag and drop files to share with connected devices" : "拖放文件与已连接设备共享";
     public string RemoteInputDesc => LanguageIndex == 0 ? "Control device remotely (Coming soon)" : "远程控制设备（即将推出）";
 
     // About
@@ -206,6 +234,34 @@ public partial class LocalizationService : ObservableObject
     public string NotificationsEnabled => LanguageIndex == 0 ? "Enable notifications" : "启用通知";
     public string NotificationsDesc => LanguageIndex == 0 ? "Show notifications for share events" : "显示分享事件通知";
     public string ShareActive => LanguageIndex == 0 ? "Sharing Active" : "分享中";
+
+    // File Transfer
+    public string FileTransferTitle => LanguageIndex == 0 ? "File Transfer" : "文件传输";
+    public string DropFilesHere => LanguageIndex == 0 ? "Drop files here" : "拖放文件到这里";
+    public string OrClickToSelect => LanguageIndex == 0 ? "or click to select" : "或点击选择";
+    public string SelectFiles => LanguageIndex == 0 ? "Select Files" : "选择文件";
+    public string SendTo => LanguageIndex == 0 ? "Send to" : "发送到";
+    public string NoDevicesFound => LanguageIndex == 0 ? "No devices connected" : "无已连接设备";
+    public string ActiveTransfers => LanguageIndex == 0 ? "Active Transfers" : "传输列表";
+    public string NoTransfers => LanguageIndex == 0 ? "No active transfers" : "无传输任务";
+    public string SaveTo => LanguageIndex == 0 ? "Save to" : "保存到";
+    public string OpenFolder => LanguageIndex == 0 ? "Open Folder" : "打开文件夹";
+    public string Sending => LanguageIndex == 0 ? "Sending" : "发送中";
+    public string Receiving => LanguageIndex == 0 ? "Receiving" : "接收中";
+    public string Completed => LanguageIndex == 0 ? "Completed" : "已完成";
+    public string Cancelled => LanguageIndex == 0 ? "Cancelled" : "已取消";
+    public string Waiting => LanguageIndex == 0 ? "Waiting..." : "等待中";
+    public string Transferring => LanguageIndex == 0 ? "Transferring" : "传输中";
+    public string FileReceived => LanguageIndex == 0 ? "File received" : "文件已接收";
+    public string FileSent => LanguageIndex == 0 ? "File sent" : "文件已发送";
+    public string TransferFailed => LanguageIndex == 0 ? "Transfer failed" : "传输失败";
+    public string AcceptFile => LanguageIndex == 0 ? "Accept" : "接受";
+    public string RejectFile => LanguageIndex == 0 ? "Reject" : "拒绝";
+    public string IncomingFile => LanguageIndex == 0 ? "Incoming file" : "收到文件";
+    public string WantsToSend => LanguageIndex == 0 ? "wants to send you:" : "想发送给您：";
+    public string Size => LanguageIndex == 0 ? "Size" : "大小";
+    public string ClearCompleted => LanguageIndex == 0 ? "Clear Completed" : "清除已完成";
+    public string SelectDeviceFirst => LanguageIndex == 0 ? "Please select a device first" : "请先选择设备";
 
     public void SetLanguage(int index)
     {

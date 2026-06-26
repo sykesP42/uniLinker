@@ -284,6 +284,7 @@ public sealed partial class MainWindow : Window
             "Dashboard" => typeof(DashboardPage),
             "Devices" => typeof(DevicesPage),
             "Share" => typeof(SharePage),
+            "FileTransfer" => typeof(FileTransferPage),
             "Settings" => typeof(SettingsPage),
             _ => typeof(DashboardPage)
         };
@@ -293,7 +294,8 @@ public sealed partial class MainWindow : Window
             "Dashboard" => 0,
             "Devices" => 1,
             "Share" => 2,
-            "Settings" => 3,
+            "FileTransfer" => 3,
+            "Settings" => 4,
             _ => 0
         });
 

@@ -5,13 +5,13 @@ namespace UniLinker.Core;
 public class Platform : IDisposable
 {
     private readonly PluginLoader _pluginLoader;
-    private readonly PluginHost _pluginHost;
     private readonly ConfigStore _configStore;
     private readonly string _pluginsDir;
 
     public IPluginContext Context { get; }
     public PeerMesh PeerMesh { get; } = new();
     public DiscoveryService Discovery { get; } = new();
+    public PluginHost PluginHost { get; }
 
     public Platform(string pluginsDir, string configPath)
     {
@@ -28,7 +28,7 @@ public class Platform : IDisposable
             UI = new NullUIProvider(),
         };
 
-        _pluginHost = new PluginHost(_pluginLoader, Context);
+        PluginHost = new PluginHost(_pluginLoader, Context);
     }
 
     public async Task StartAsync(CancellationToken ct = default)
@@ -38,14 +38,14 @@ public class Platform : IDisposable
         var config = _configStore.Get<PlatformConfig>("platform");
 
         _pluginLoader.DiscoverAndLoad(_pluginsDir);
-        await _pluginHost.InitializeAllAsync();
+        await PluginHost.InitializeAllAsync();
 
         await Discovery.StartAsync(ct);
     }
 
     public async Task StopAsync()
     {
-        await _pluginHost.ShutdownAllAsync();
+        await PluginHost.ShutdownAllAsync();
         Discovery?.Dispose();
         PeerMesh?.Dispose();
         await _configStore.SaveAsync();

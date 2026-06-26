@@ -14,6 +14,8 @@
             <converters:InverseBooleanToVisibilityConverter x:Key="InverseBoolToVisibilityConverter"/>
             <converters:ThemeIndexToBooleanConverter x:Key="ThemeIndexToBooleanConverter"/>
             <converters:InverseBoolConverter x:Key="InverseBoolConverter"/>
+            <converters:PeerStateIconConverter x:Key="PeerStateIconConverter"/>
+            <converters:CapabilityVisibilityConverter x:Key="CapabilityVisibilityConverter"/>
         </ResourceDictionary>
     </Application.Resources>
 </Application>

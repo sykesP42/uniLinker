@@ -32,6 +32,7 @@
 
   <ItemGroup>
     <ProjectReference Include="..\UniLinker.Core\UniLinker.Core.csproj" />
+    <ProjectReference Include="..\UniLinker.Plugins.FileTransfer\UniLinker.Plugins.FileTransfer.csproj" />
   </ItemGroup>
 
   <!-- Copy web directory to output for SignalingServer -->

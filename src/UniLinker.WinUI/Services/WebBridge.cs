@@ -2,6 +2,8 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using UniLinker.Core;
 using UniLinker.Plugin.Sdk;
+using UniLinker.Plugins.FileTransfer;
+using UniLinker.Plugins.FileTransfer.Core;
 
 namespace UniLinker.WinUI.Services;
 
@@ -15,6 +17,14 @@ public class WebBridge
         _platform = platform;
         Platform = platform;
     }
+
+    /// <summary>
+    /// Get the FileTransfer plugin instance.
+    /// </summary>
+    public FileTransferPlugin? FileTransfer =>
+        Platform.PluginHost?.Plugins
+            .FirstOrDefault(p => p.Plugin.Id == "com.unilinker.file-transfer")?
+            .Plugin as FileTransferPlugin;
 
     // Get discovered devices for native UI
     public IReadOnlyList<PeerInfo> GetDiscoveredDevices()
@@ -188,6 +198,44 @@ public class WebBridge
         }
         catch { }
     }
+
+    #region FileTransfer Methods
+
+    /// <summary>
+    /// Send a file to a remote peer.
+    /// </summary>
+    public async Task<bool> SendFileAsync(PeerInfo peer, string filePath)
+    {
+        if (FileTransfer == null) return false;
+        var session = await FileTransfer.SendFileAsync(peer, filePath);
+        return session != null;
+    }
+
+    /// <summary>
+    /// Get all active file transfers.
+    /// </summary>
+    public IReadOnlyList<TransferSession> GetActiveTransfers()
+    {
+        return FileTransfer?.GetActiveTransfers() ?? Array.Empty<TransferSession>();
+    }
+
+    /// <summary>
+    /// Cancel an active file transfer.
+    /// </summary>
+    public void CancelTransfer(string transferId)
+    {
+        FileTransfer?.CancelTransfer(transferId);
+    }
+
+    /// <summary>
+    /// Get the default save directory for received files.
+    /// </summary>
+    public string GetFileTransferSaveDirectory()
+    {
+        return FileTransfer?.GetSaveDirectory() ?? "";
+    }
+
+    #endregion
 }
 
 // COM-visible wrapper for WebView2 host object

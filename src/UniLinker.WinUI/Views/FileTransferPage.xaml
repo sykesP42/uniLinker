@@ -1,0 +1,323 @@
+<Page
+    x:Class="UniLinker.WinUI.Views.FileTransferPage"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
+    xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
+    mc:Ignorable="d"
+    Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
+    AllowDrop="True"
+    DragOver="Page_DragOver"
+    Drop="Page_Drop">
+
+    <Page.Resources>
+        <!-- Transfer Item Template -->
+        <DataTemplate x:Key="TransferItemTemplate" x:DataType="x:String">
+            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{ThemeResource OverlayCornerRadius}"
+                    Padding="16"
+                    Margin="0,0,0,8">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <!-- Direction Icon -->
+                    <FontIcon Grid.Column="0"
+                              Glyph="{Binding DirectionIcon}"
+                              FontSize="24"
+                              VerticalAlignment="Center"/>
+
+                    <!-- File Name and Progress -->
+                    <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding FileName}"
+                                   FontWeight="SemiBold"
+                                   FontSize="13"
+                                   TextTrimming="CharacterEllipsis"/>
+                        <ProgressBar Value="{Binding Progress}"
+                                     Maximum="100"
+                                     HorizontalAlignment="Stretch"/>
+                        <TextBlock Text="{Binding TransferredText}"
+                                   FontSize="11"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                    </StackPanel>
+
+                    <!-- Speed and Time -->
+                    <StackPanel Grid.Column="2" Spacing="2" VerticalAlignment="Center" Width="100">
+                        <TextBlock Text="{Binding SpeedText}"
+                                   FontSize="12"
+                                   TextAlignment="Right"/>
+                        <TextBlock Text="{Binding TimeText}"
+                                   FontSize="11"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextAlignment="Right"/>
+                    </StackPanel>
+
+                    <!-- Status and Actions -->
+                    <StackPanel Grid.Column="3"
+                                Orientation="Horizontal"
+                                Spacing="8"
+                                VerticalAlignment="Center">
+                        <TextBlock Text="{Binding StateText}"
+                                   FontSize="12"
+                                   VerticalAlignment="Center"/>
+                        <Button Command="{Binding CancelCommand}"
+                                Visibility="{Binding CanCancel, Converter={StaticResource BoolToVisibilityConverter}}"
+                                ToolTipService.ToolTip="Cancel">
+                            <FontIcon Glyph="&#xE10A;" FontSize="12"/>
+                        </Button>
+                        <Button Command="{Binding OpenFolderCommand}"
+                                Visibility="{Binding IsCompleted, Converter={StaticResource BoolToVisibilityConverter}}"
+                                ToolTipService.ToolTip="Open Folder">
+                            <FontIcon Glyph="&#xE838;" FontSize="12"/>
+                        </Button>
+                    </StackPanel>
+                </Grid>
+            </Border>
+        </DataTemplate>
+    </Page.Resources>
+
+    <ScrollViewer>
+        <StackPanel Padding="32,32,32,48" Spacing="24">
+            <!-- Header Section -->
+            <StackPanel Spacing="8">
+                <TextBlock Text="{Binding Loc.FileTransferTitle}"
+                           Style="{StaticResource PageHeaderStyle}"/>
+                <TextBlock Text="{Binding Loc.FileTransferDesc}"
+                           Style="{StaticResource DescriptionTextStyle}"
+                           FontSize="14"/>
+            </StackPanel>
+
+            <!-- Drop Zone Card -->
+            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{ThemeResource OverlayCornerRadius}"
+                    Padding="32">
+                <StackPanel Spacing="16" HorizontalAlignment="Center">
+                    <FontIcon Glyph="&#xE8E5;" FontSize="48"
+                              Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                              HorizontalAlignment="Center"/>
+                    <TextBlock Text="{Binding Loc.DropFilesHere}"
+                               FontWeight="SemiBold"
+                               FontSize="16"
+                               HorizontalAlignment="Center"/>
+                    <TextBlock Text="{Binding Loc.OrClickToSelect}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                               FontSize="13"
+                               HorizontalAlignment="Center"/>
+                    <Button Content="{Binding Loc.SelectFiles}"
+                            Command="{Binding SelectFileCommand}"
+                            Style="{StaticResource AccentButtonStyle}"
+                            MinWidth="140"
+                            HorizontalAlignment="Center"/>
+                </StackPanel>
+            </Border>
+
+            <!-- Target Device Section -->
+            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{ThemeResource OverlayCornerRadius}"
+                    Padding="20">
+                <StackPanel Spacing="12">
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE970;" FontSize="16"
+                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <TextBlock Text="{Binding Loc.SendTo}"
+                                   FontWeight="SemiBold"
+                                   FontSize="14"/>
+                    </StackPanel>
+
+                    <ComboBox ItemsSource="{Binding Devices}"
+                              SelectedItem="{Binding SelectedDevice, Mode=TwoWay}"
+                              PlaceholderText="{Binding Loc.NoDevicesFound}"
+                              HorizontalAlignment="Stretch"
+                              MinHeight="36">
+                        <ComboBox.ItemTemplate>
+                            <DataTemplate>
+                                <StackPanel Orientation="Horizontal" Spacing="8">
+                                    <FontIcon Glyph="&#xE977;" FontSize="14"/>
+                                    <TextBlock Text="{Binding Name}" VerticalAlignment="Center"/>
+                                    <TextBlock Text="{Binding IpAddress}"
+                                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                               FontSize="12"
+                                               VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </DataTemplate>
+                        </ComboBox.ItemTemplate>
+                    </ComboBox>
+                </StackPanel>
+            </Border>
+
+            <!-- Active Transfers Section -->
+            <StackPanel Spacing="16">
+                <Grid ColumnSpacing="8">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <StackPanel Orientation="Horizontal" Spacing="8">
+                        <FontIcon Glyph="&#xE9D9;" FontSize="16"
+                                  Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                        <TextBlock Text="{Binding Loc.ActiveTransfers}"
+                                   Style="{StaticResource SettingsSectionHeaderStyle}"/>
+                    </StackPanel>
+
+                    <Button Grid.Column="1"
+                            Content="{Binding Loc.ClearCompleted}"
+                            Command="{Binding ClearCompletedCommand}"
+                            Visibility="{Binding HasTransfers, Converter={StaticResource BoolToVisibilityConverter}}"
+                            FontSize="12"/>
+                </Grid>
+
+                <!-- Transfer List -->
+                <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{ThemeResource OverlayCornerRadius}"
+                        Padding="16"
+                        MinHeight="150">
+                    <Grid>
+                        <!-- Empty State -->
+                        <StackPanel VerticalAlignment="Center"
+                                    HorizontalAlignment="Center"
+                                    Spacing="8"
+                                    Visibility="{Binding HasTransfers, Converter={StaticResource InverseBoolToVisibilityConverter}}">
+                            <FontIcon Glyph="&#xE8E5;" FontSize="32"
+                                      Foreground="{ThemeResource TextFillColorTertiaryBrush}"/>
+                            <TextBlock Text="{Binding Loc.NoTransfers}"
+                                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                       FontSize="13"
+                                       HorizontalAlignment="Center"/>
+                        </StackPanel>
+
+                        <!-- Transfer Items -->
+                        <ListView ItemsSource="{Binding Transfers}"
+                                  SelectionMode="None"
+                                  Visibility="{Binding HasTransfers, Converter={StaticResource BoolToVisibilityConverter}}">
+                            <ListView.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                                            BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                                            BorderThickness="1"
+                                            CornerRadius="{ThemeResource OverlayCornerRadius}"
+                                            Padding="16"
+                                            Margin="0,0,0,8">
+                                        <Grid ColumnSpacing="16">
+                                            <Grid.ColumnDefinitions>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="*"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                                <ColumnDefinition Width="Auto"/>
+                                            </Grid.ColumnDefinitions>
+
+                                            <!-- Direction Icon -->
+                                            <FontIcon Grid.Column="0"
+                                                      Glyph="{Binding DirectionIcon}"
+                                                      FontSize="24"
+                                                      VerticalAlignment="Center"/>
+
+                                            <!-- File Name and Progress -->
+                                            <StackPanel Grid.Column="1" Spacing="6" VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding FileName}"
+                                                           FontWeight="SemiBold"
+                                                           FontSize="13"
+                                                           TextTrimming="CharacterEllipsis"/>
+                                                <ProgressBar Value="{Binding Progress}"
+                                                             Maximum="100"
+                                                             HorizontalAlignment="Stretch"/>
+                                                <TextBlock Text="{Binding TransferredText}"
+                                                           FontSize="11"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"/>
+                                            </StackPanel>
+
+                                            <!-- Speed and Time -->
+                                            <StackPanel Grid.Column="2" Spacing="2" VerticalAlignment="Center" Width="100">
+                                                <TextBlock Text="{Binding SpeedText}"
+                                                           FontSize="12"
+                                                           TextAlignment="Right"/>
+                                                <TextBlock Text="{Binding TimeText}"
+                                                           FontSize="11"
+                                                           Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                                           TextAlignment="Right"/>
+                                            </StackPanel>
+
+                                            <!-- Status and Actions -->
+                                            <StackPanel Grid.Column="3"
+                                                        Orientation="Horizontal"
+                                                        Spacing="8"
+                                                        VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding StateText}"
+                                                           FontSize="12"
+                                                           VerticalAlignment="Center"/>
+                                                <Button Command="{Binding CancelCommand}"
+                                                        Visibility="{Binding CanCancel, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                        ToolTipService.ToolTip="Cancel">
+                                                    <FontIcon Glyph="&#xE10A;" FontSize="12"/>
+                                                </Button>
+                                                <Button Command="{Binding OpenFolderCommand}"
+                                                        Visibility="{Binding IsCompleted, Converter={StaticResource BoolToVisibilityConverter}}"
+                                                        ToolTipService.ToolTip="Open Folder">
+                                                    <FontIcon Glyph="&#xE838;" FontSize="12"/>
+                                                </Button>
+                                            </StackPanel>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListView.ItemTemplate>
+                        </ListView>
+                    </Grid>
+                </Border>
+            </StackPanel>
+
+            <!-- Save Directory Section -->
+            <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                    BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                    BorderThickness="1"
+                    CornerRadius="{ThemeResource OverlayCornerRadius}"
+                    Padding="20">
+                <Grid ColumnSpacing="16">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="Auto"/>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+
+                    <FontIcon Grid.Column="0"
+                              Glyph="&#xE838;"
+                              FontSize="16"
+                              Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                              VerticalAlignment="Center"/>
+
+                    <StackPanel Grid.Column="1" VerticalAlignment="Center">
+                        <TextBlock Text="{Binding Loc.SaveTo}"
+                                   FontWeight="SemiBold"
+                                   FontSize="13"/>
+                        <TextBlock Text="{Binding SaveDirectory}"
+                                   FontSize="12"
+                                   Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                                   TextTrimming="CharacterEllipsis"/>
+                    </StackPanel>
+
+                    <Button Grid.Column="2"
+                            Content="{Binding Loc.OpenFolder}"
+                            Command="{Binding OpenSaveFolderCommand}"
+                            FontSize="12"/>
+                </Grid>
+            </Border>
+
+            <!-- Status Message -->
+            <TextBlock Text="{Binding StatusMessage}"
+                       FontSize="12"
+                       Foreground="{ThemeResource TextFillColorSecondaryBrush}"
+                       HorizontalAlignment="Center"/>
+        </StackPanel>
+    </ScrollViewer>
+</Page>
