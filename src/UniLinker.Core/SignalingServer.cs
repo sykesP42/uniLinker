@@ -431,6 +431,10 @@ public class SignalingServer : IDisposable
                 pc.Dispose();
             _pendingIceConnections.Clear();
         }
+        lock (_iceLock)
+        {
+            _pendingOutgoingIce.Clear();
+        }
     }
 
     private static async Task SendJson(HttpListenerContext ctx, object data)

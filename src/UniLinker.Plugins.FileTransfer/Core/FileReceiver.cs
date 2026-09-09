@@ -49,7 +49,8 @@ public class FileReceiver : IDisposable
 
             case MessageType.TransferCancel:
                 _session?.Cancel("Cancelled by sender");
-                TransferFailed?.Invoke(_session!, "Cancelled by sender");
+                if (_session != null)
+                    TransferFailed?.Invoke(_session, "Cancelled by sender");
                 Cleanup();
                 break;
         }
@@ -180,7 +181,7 @@ public class FileReceiver : IDisposable
             if (_expectedChunkIndex % ProtocolConstants.WindowSize == 0 ||
                 _expectedChunkIndex == _session.TotalChunks)
             {
-                SendAckAsync().Wait();
+                _ = SendAckAsync();
             }
 
             // Check if transfer is complete
@@ -193,7 +194,7 @@ public class FileReceiver : IDisposable
         {
             _session.Fail(ex.Message);
             TransferFailed?.Invoke(_session, ex.Message);
-            SendErrorAsync(ex.Message).Wait();
+            _ = SendErrorAsync(ex.Message);
         }
     }
 

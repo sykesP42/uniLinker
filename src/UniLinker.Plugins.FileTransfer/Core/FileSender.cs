@@ -33,24 +33,32 @@ public class FileSender : IDisposable
         var fileSize = fileInfo.Length;
         var chunkSize = ProtocolConstants.DefaultChunkSize;
         var totalChunks = (int)Math.Ceiling((double)fileSize / chunkSize);
-        var fileHash = FileHasher.ComputeSha256Async(filePath).GetAwaiter().GetResult();
 
+        // Hash will be computed lazily in StartAsync to avoid blocking the constructor
         _session = new TransferSession(
-            transferId, filePath, fileName, fileSize, totalChunks, chunkSize, fileHash, isSender: true)
-        {
-            // Store sender name in metadata if needed
-        };
+            transferId, filePath, fileName, fileSize, totalChunks, chunkSize, "", isSender: true);
 
         _transferIdCrc = ProtocolHandler.ComputeCrc32(transferId);
     }
 
     /// <summary>
     /// Start the file transfer by sending metadata.
+    /// Computes the file hash if not already set.
     /// </summary>
     public async Task StartAsync()
     {
         try
         {
+            // Compute hash if not already set
+            if (string.IsNullOrEmpty(_session.FileHash))
+            {
+                var hash = await FileHasher.ComputeSha256Async(_session.FilePath);
+                _session = new TransferSession(
+                    _session.TransferId, _session.FilePath, _session.FileName,
+                    _session.TotalBytes, _session.TotalChunks, _session.ChunkSize,
+                    hash, isSender: true);
+            }
+
             // Send file metadata
             var meta = new FileMetaMessage
             {
@@ -176,7 +184,7 @@ public class FileSender : IDisposable
 
         var cancelMsg = new TransferCancelMessage { TransferId = _session.TransferId };
         var cancelBytes = ProtocolHandler.SerializeControlMessage(cancelMsg);
-        _channel.SendAsync(cancelBytes).Wait();
+        _ = _channel.SendAsync(cancelBytes);
     }
 
     public void Dispose()
