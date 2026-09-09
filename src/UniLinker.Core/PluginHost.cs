@@ -19,18 +19,26 @@ public class PluginHost
     {
         foreach (var loaded in _loader.LoadedPlugins)
         {
-            var ctx = new PluginContextWrapper(_contextTemplate, new PluginInfo
+            try
             {
-                Id = loaded.Plugin.Id,
-                Name = loaded.Plugin.Name,
-                Version = loaded.Plugin.Version,
-                AssemblyPath = loaded.AssemblyPath,
-                Capabilities = loaded.Plugin.Capabilities,
-            });
+                var ctx = new PluginContextWrapper(_contextTemplate, new PluginInfo
+                {
+                    Id = loaded.Plugin.Id,
+                    Name = loaded.Plugin.Name,
+                    Version = loaded.Plugin.Version,
+                    AssemblyPath = loaded.AssemblyPath,
+                    Capabilities = loaded.Plugin.Capabilities,
+                });
 
-            var ok = await loaded.Plugin.Initialize(ctx);
-            System.Diagnostics.Debug.WriteLine(
-                $"Plugin '{loaded.Plugin.Id}' initialized: {ok}");
+                var ok = await loaded.Plugin.Initialize(ctx);
+                System.Diagnostics.Debug.WriteLine(
+                    $"Plugin '{loaded.Plugin.Id}' initialized: {ok}");
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Plugin '{loaded.Plugin.Id}' init failed: {ex.Message}");
+            }
         }
     }
 
@@ -39,8 +47,13 @@ public class PluginHost
         foreach (var loaded in _loader.LoadedPlugins)
         {
             try { await loaded.Plugin.Shutdown(); }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"Plugin '{loaded.Plugin.Id}' shutdown error: {ex.Message}");
+            }
+            try { loaded.Context.Unload(); }
             catch { }
-            loaded.Context.Unload();
         }
     }
 
