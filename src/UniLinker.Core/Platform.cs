@@ -7,6 +7,7 @@ public class Platform : IDisposable
     private readonly PluginLoader _pluginLoader;
     private readonly ConfigStore _configStore;
     private readonly string _pluginsDir;
+    private bool _disposed;
 
     public IPluginContext Context { get; }
     public PeerMesh PeerMesh { get; } = new();
@@ -35,8 +36,6 @@ public class Platform : IDisposable
     {
         await _configStore.LoadAsync();
 
-        var config = _configStore.Get<PlatformConfig>("platform");
-
         _pluginLoader.DiscoverAndLoad(_pluginsDir);
         await PluginHost.InitializeAllAsync();
 
@@ -45,16 +44,26 @@ public class Platform : IDisposable
 
     public async Task StopAsync()
     {
-        await PluginHost.ShutdownAllAsync();
-        Discovery?.Dispose();
-        PeerMesh?.Dispose();
-        await _configStore.SaveAsync();
+        if (_disposed) return;
+
+        try { await PluginHost.ShutdownAllAsync(); }
+        catch (Exception ex) { Console.WriteLine($"[ERR] Plugin shutdown failed: {ex.Message}"); }
+
+        try { Discovery?.Dispose(); } catch { }
+        try { PeerMesh?.Dispose(); } catch { }
+        try { await _configStore.SaveAsync(); }
+        catch (Exception ex) { Console.WriteLine($"[ERR] Config save failed: {ex.Message}"); }
+
+        _disposed = true;
     }
 
     public void Dispose()
     {
-        Discovery?.Dispose();
-        PeerMesh?.Dispose();
+        if (_disposed) return;
+
+        try { Discovery?.Dispose(); } catch { }
+        try { PeerMesh?.Dispose(); } catch { }
+        _disposed = true;
     }
 }
 
@@ -82,7 +91,7 @@ internal class ConsoleLogger : IPluginLogger
     public void Info(string msg) => Console.WriteLine($"[INF] {msg}");
     public void Warn(string msg) => Console.WriteLine($"[WRN] {msg}");
     public void Error(string msg, Exception? ex) =>
-        Console.WriteLine($"[ERR] {msg} {ex?.Message}");
+        Console.WriteLine(ex != null ? $"[ERR] {msg} {ex.Message}\n{ex.StackTrace}" : $"[ERR] {msg}");
 }
 
 internal class NullUIProvider : IUIProvider
