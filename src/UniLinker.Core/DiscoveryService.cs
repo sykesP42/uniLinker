@@ -10,12 +10,22 @@ public class DiscoveryService : IDeviceDiscovery, IDisposable
     private readonly int _port;
     private readonly string _version;
     private readonly string[] _capabilities;
+    private readonly object _lock = new();
     private readonly List<PeerInfo> _devices = new();
     private CancellationTokenSource? _cts;
 
     public event Action<PeerInfo>? DeviceFound;
     public event Action<PeerInfo>? DeviceLost;
-    public IReadOnlyList<PeerInfo> KnownDevices => _devices.AsReadOnly();
+    public IReadOnlyList<PeerInfo> KnownDevices
+    {
+        get
+        {
+            lock (_lock)
+            {
+                return _devices.ToList().AsReadOnly();
+            }
+        }
+    }
 
     public DiscoveryService(
         string deviceName = "",
@@ -48,30 +58,49 @@ public class DiscoveryService : IDeviceDiscovery, IDisposable
                     scanTime: TimeSpan.FromSeconds(3),
                     cancellationToken: ct);
 
-                foreach (var host in results)
-                {
-                    var peerInfo = MapHostToPeer(host);
-                    var existing = _devices.FirstOrDefault(d => d.Id == peerInfo.Id);
+                List<PeerInfo> newDevices;
+                List<PeerInfo> staleDevices;
 
-                    if (existing == null)
+                lock (_lock)
+                {
+                    foreach (var host in results)
                     {
-                        _devices.Add(peerInfo);
-                        DeviceFound?.Invoke(peerInfo);
+                        var peerInfo = MapHostToPeer(host);
+                        var existing = _devices.FirstOrDefault(d => d.Id == peerInfo.Id);
+
+                        if (existing == null)
+                        {
+                            _devices.Add(peerInfo);
+                        }
+                        else
+                        {
+                            existing.LastSeen = DateTime.UtcNow;
+                            existing.IpAddress = peerInfo.IpAddress;
+                        }
                     }
-                    else
+
+                    // Remove stale devices (not seen in 30 seconds)
+                    staleDevices = _devices
+                        .Where(d => (DateTime.UtcNow - d.LastSeen).TotalSeconds > 30)
+                        .ToList();
+                    foreach (var d in staleDevices)
                     {
-                        existing.LastSeen = DateTime.UtcNow;
-                        existing.IpAddress = peerInfo.IpAddress;
+                        _devices.Remove(d);
                     }
+
+                    newDevices = _devices
+                        .Where(d => (DateTime.UtcNow - d.LastSeen).TotalSeconds <= 30)
+                        .ToList();
                 }
 
-                // Remove stale devices (not seen in 30 seconds)
-                var stale = _devices
-                    .Where(d => (DateTime.UtcNow - d.LastSeen).TotalSeconds > 30)
-                    .ToList();
-                foreach (var d in stale)
+                // Fire events outside the lock to avoid deadlocks
+                foreach (var peerInfo in newDevices.Where(p =>
+                    (DateTime.UtcNow - p.LastSeen).TotalSeconds < 5))
                 {
-                    _devices.Remove(d);
+                    DeviceFound?.Invoke(peerInfo);
+                }
+                foreach (var d in staleDevices)
+                {
                     DeviceLost?.Invoke(d);
                 }
             }
