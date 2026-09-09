@@ -2,6 +2,8 @@ namespace UniLinker.Core;
 
 public static class ErrorHandler
 {
+    private static readonly object _lock = new();
+
     public static void SetupGlobalHandlers()
     {
         AppDomain.CurrentDomain.UnhandledException += (_, args) =>
@@ -26,8 +28,11 @@ public static class ErrorHandler
                 "uniLinker", "error.log");
             var dir = Path.GetDirectoryName(logPath);
             if (dir != null) Directory.CreateDirectory(dir);
-            File.AppendAllText(logPath,
-                $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}\n");
+            lock (_lock)
+            {
+                File.AppendAllText(logPath,
+                    $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message}\n");
+            }
         }
         catch { /* best effort */ }
     }

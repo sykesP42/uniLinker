@@ -8,6 +8,8 @@ public class ScreenMirrorPlugin : IPlugin
     private WgcCapture? _capture;
     private IEncoder? _encoder;
     private bool _isSharing;
+    private Action<CaptureFrame>? _captureHandler;
+    private Func<EncodedPacket, Task>? _encodeHandler;
 
     public string Id => "com.unilinker.screen-mirror";
     public string Name => "屏幕投屏";
@@ -66,17 +68,19 @@ public class ScreenMirrorPlugin : IPlugin
             _isSharing = true;
 
             // Wire: capture -> encode -> send
-            _capture.FrameCaptured += frame =>
+            _captureHandler = frame =>
             {
                 if (_isSharing)
-                    _encoder.Encode(frame);
+                    _encoder!.Encode(frame);
             };
+            _capture.FrameCaptured += _captureHandler;
 
-            _encoder.PacketEncoded += async packet =>
+            _encodeHandler = async packet =>
             {
                 if (_isSharing && channel.IsOpen)
                     await channel.SendPacketAsync(packet);
             };
+            _encoder.PacketEncoded += _encodeHandler;
         }
 
         return channel;
@@ -88,6 +92,11 @@ public class ScreenMirrorPlugin : IPlugin
     public async Task Shutdown()
     {
         _isSharing = false;
+        _ctx.Peers.ChannelRequested -= OnChannelRequested;
+        if (_capture != null && _captureHandler != null)
+            _capture.FrameCaptured -= _captureHandler;
+        if (_encoder != null && _encodeHandler != null)
+            _encoder.PacketEncoded -= _encodeHandler;
         _capture?.Dispose();
         _encoder?.Dispose();
         await Task.CompletedTask;
