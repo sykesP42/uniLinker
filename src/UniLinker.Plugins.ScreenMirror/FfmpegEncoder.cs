@@ -13,8 +13,6 @@ public class FfmpegEncoder : IEncoder
     private Process? _ffmpeg;
     private int _width, _height, _fps, _bitrateKbps;
     private bool _initialized;
-    private readonly List<byte[]> _pendingNals = new();
-    private readonly object _nalLock = new();
 
     public event Action<EncodedPacket>? PacketEncoded;
 
@@ -89,7 +87,7 @@ public class FfmpegEncoder : IEncoder
     private async Task ReadEncodedDataAsync(Stream stdout)
     {
         var buffer = new byte[65536];
-        var pending = new MemoryStream();
+        using var pending = new MemoryStream();
         long frameIndex = 0;
 
         try
@@ -108,11 +106,6 @@ public class FfmpegEncoder : IEncoder
                 {
                     var ts = frameIndex * 1000000 / _fps;
                     bool isKeyFrame = IsKeyFrame(nal);
-
-                    lock (_nalLock)
-                    {
-                        _pendingNals.Add(nal);
-                    }
 
                     PacketEncoded?.Invoke(new EncodedPacket(nal, ts, isKeyFrame));
                 }
@@ -280,7 +273,7 @@ public class FfmpegEncoder : IEncoder
         // Try PATH environment variable
         try
         {
-            var proc = Process.Start(new ProcessStartInfo("where", "ffmpeg.exe")
+            using var proc = Process.Start(new ProcessStartInfo("where", "ffmpeg.exe")
             {
                 RedirectStandardOutput = true,
                 UseShellExecute = false,
