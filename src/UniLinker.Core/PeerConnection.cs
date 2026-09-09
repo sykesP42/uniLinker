@@ -115,23 +115,33 @@ public class PeerConnection : IDisposable
         });
 
         // Wait for ICE gathering to complete (with timeout)
-        var tcs = new TaskCompletionSource<string>();
-        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var tcs = new TaskCompletionSource<string>(TaskCreationOptions.RunContinuationsAsynchronously);
 
-        _pc.onicegatheringstatechange += state =>
+        void OnGatheringComplete(RTCIceGatheringState state)
         {
-            if (state == RTCIceGatheringState.complete && _pc.localDescription != null)
+            if (state == RTCIceGatheringState.complete && _pc?.localDescription != null)
             {
                 tcs.TrySetResult(_pc.localDescription.ToString());
             }
-        };
+        }
 
-        // Fallback after timeout
+        _pc.onicegatheringstatechange += OnGatheringComplete;
+
+        var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
         _ = Task.Run(async () =>
         {
-            await Task.Delay(3000, cts.Token);
-            var sdpText = _pc?.localDescription?.ToString() ?? "";
-            tcs.TrySetResult(sdpText);
+            try
+            {
+                await Task.Delay(3000, cts.Token);
+                var sdpText = _pc?.localDescription?.ToString() ?? "";
+                tcs.TrySetResult(sdpText);
+            }
+            catch (OperationCanceledException) { }
+            finally
+            {
+                _pc.onicegatheringstatechange -= OnGatheringComplete;
+                cts.Dispose();
+            }
         }, cts.Token);
 
         return tcs.Task;
@@ -159,11 +169,10 @@ public class PeerConnection : IDisposable
 
         _pc.onicegatheringstatechange += OnStateChange;
 
-        // Fallback timeout — if ICE never completes, proceed anyway
         _ = Task.Run(async () =>
         {
             await Task.Delay(timeout);
-            _pc.onicegatheringstatechange -= OnStateChange;
+            _pc?.onicegatheringstatechange -= OnStateChange;
             tcs.TrySetResult();
         });
 
