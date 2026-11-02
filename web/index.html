@@ -195,6 +195,11 @@
         <div class="connect-row" style="margin-left: auto;">
             <input type="text" id="hostInput" placeholder="Host (e.g. 192.168.1.5)"
                    aria-label="主机地址" tabindex="0">
+            <script>
+                // Default to the host serving this page so LAN access works
+                // without typing an address (same-origin port is used too).
+                document.getElementById('hostInput').value = location.hostname;
+            </script>
             <button class="primary" id="btnConnect" onclick="connect()"
                     aria-label="连接" tabindex="0">Connect</button>
             <button id="btnFullscreen" onclick="toggleFullscreen()" disabled

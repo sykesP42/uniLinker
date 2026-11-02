@@ -90,22 +90,22 @@ async function connect() {
         return;
     }
 
-    const host = hostInput.value.trim();
+    const host = hostInput.value.trim() || location.hostname;
     if (!host) {
         showToast('请输入主机地址', 'warning');
         return;
     }
+    hostInput.value = host;
+
+    // Same server that served this page (keep page-local port when proxied).
+    const port = location.port || 9527;
+    const baseUrl = `${location.protocol}//${host}:${port}`;
+    // One stable id per session so /ice candidates match the signaling offer.
+    const peerId = 'browser-' + Date.now() + '-' + Math.random().toString(36).slice(2, 8);
 
     btnConnect.disabled = true;
     btnConnect.textContent = '...';
     setStatus('connecting', '连接中...');
-
-    // Check if WebCodecs is available and user wants to use it
-    // Note: WebCodecs requires receiving raw H.264 via DataChannel, not MediaStream
-    // The current server implementation sends via MediaStream, so we use standard WebRTC
-    // WebCodecs mode would require server-side changes to send via DataChannel
-    const webcodecsAvailable = typeof WebCodecsDecoder !== 'undefined' && WebCodecsDecoder.isAvailable();
-    console.log('WebCodecs available:', webcodecsAvailable);
 
     try {
         pc = new RTCPeerConnection({
@@ -148,13 +148,12 @@ async function connect() {
         // ICE candidate forwarding
         pc.onicecandidate = (event) => {
             if (event.candidate) {
-                console.log('ICE candidate:', event.candidate);
                 // Send candidate to host
-                fetch(`http://${host}:9527/ice`, {
+                fetch(`${baseUrl}/ice`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        peerId: 'browser-' + Date.now(),
+                        peerId: peerId,
                         candidate: event.candidate.candidate,
                         sdpMid: event.candidate.sdpMid,
                         sdpMLineIndex: event.candidate.sdpMLineIndex
@@ -174,13 +173,13 @@ async function connect() {
         await waitForIceGathering(pc);
 
         // Send offer to host's signaling server
-        const response = await fetch(`http://${host}:9527/signaling`, {
+        const response = await fetch(`${baseUrl}/signaling`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
                 type: 'offer',
                 sdp: pc.localDescription.sdp,
-                fromPeerId: 'browser-' + Date.now(),
+                fromPeerId: peerId,
                 capability: 'screen-capture'
             })
         });
