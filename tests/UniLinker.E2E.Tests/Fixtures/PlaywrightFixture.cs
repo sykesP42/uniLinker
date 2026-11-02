@@ -19,13 +19,35 @@ public class PlaywrightFixture : IAsyncDisposable
 
         _playwright = Microsoft.Playwright.Playwright.CreateAsync().GetAwaiter().GetResult();
 
-        _browser = _playwright.Chromium.LaunchAsync(new BrowserTypeLaunchOptions
+        // Prefer the installed Edge/Chrome channel: the Playwright Chromium
+        // build is open-source and has NO H264 codec, so the screen mirror
+        // flow cannot be tested on it. Real browsers ship H264.
+        var launchOptions = new BrowserTypeLaunchOptions
         {
             Headless = true,
-            Args = new[] { "--disable-gpu", "--disable-software-rasterizer" }
-        }).GetAwaiter().GetResult();
-
-        Console.WriteLine("[PlaywrightFixture] Browser launched");
+            Args = new[] { "--disable-gpu", "--disable-software-rasterizer", "--autoplay-policy=no-user-gesture-required" },
+        };
+        foreach (var channel in new[] { "msedge", "chrome" })
+        {
+            try
+            {
+                launchOptions.Channel = channel;
+                _browser = _playwright.Chromium.LaunchAsync(launchOptions).GetAwaiter().GetResult();
+                Console.WriteLine($"[PlaywrightFixture] Browser launched (channel: {channel})");
+                break;
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[PlaywrightFixture] channel {channel} unavailable: {ex.Message.Split('\n')[0]}");
+                _browser = null!;
+            }
+        }
+        if (_browser == null)
+        {
+            launchOptions.Channel = null;
+            _browser = _playwright.Chromium.LaunchAsync(launchOptions).GetAwaiter().GetResult();
+            Console.WriteLine("[PlaywrightFixture] Browser launched (bundled chromium; H264 tests will fail)");
+        }
     }
 
     public async Task<IPage> NewPageAsync()
