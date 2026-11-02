@@ -9,33 +9,72 @@ public class PluginHost
 
     public List<LoadedPlugin> Plugins => _loader.LoadedPlugins;
 
+    private readonly List<IPlugin> _builtinPlugins = new();
+
     public PluginHost(PluginLoader loader, IPluginContext contextTemplate)
     {
         _loader = loader;
         _contextTemplate = contextTemplate;
     }
 
+    /// <summary>
+    /// All registered plugins: built-ins first, then directory-loaded ones.
+    /// </summary>
+    public IEnumerable<IPlugin> GetAllPlugins()
+    {
+        foreach (var plugin in _builtinPlugins)
+            yield return plugin;
+        foreach (var loaded in _loader.LoadedPlugins)
+            yield return loaded.Plugin;
+    }
+
+    /// <summary>
+    /// Register a built-in plugin instance (no assembly loaded from disk).
+    /// </summary>
+    public void Register(IPlugin plugin)
+    {
+        _builtinPlugins.Add(plugin);
+    }
+
     public async Task InitializeAllAsync()
     {
+        foreach (var plugin in _builtinPlugins)
+        {
+            await InitializePluginAsync(plugin, Path.Combine(
+                AppContext.BaseDirectory, $"{plugin.Id}.builtin"));
+        }
+
         foreach (var loaded in _loader.LoadedPlugins)
         {
-            var ctx = new PluginContextWrapper(_contextTemplate, new PluginInfo
-            {
-                Id = loaded.Plugin.Id,
-                Name = loaded.Plugin.Name,
-                Version = loaded.Plugin.Version,
-                AssemblyPath = loaded.AssemblyPath,
-                Capabilities = loaded.Plugin.Capabilities,
-            });
-
-            var ok = await loaded.Plugin.Initialize(ctx);
-            System.Diagnostics.Debug.WriteLine(
-                $"Plugin '{loaded.Plugin.Id}' initialized: {ok}");
+            await InitializePluginAsync(loaded.Plugin, loaded.AssemblyPath);
         }
+    }
+
+    private async Task InitializePluginAsync(IPlugin plugin, string assemblyPath)
+    {
+        var ctx = new PluginContextWrapper(_contextTemplate, new PluginInfo
+        {
+            Id = plugin.Id,
+            Name = plugin.Name,
+            Version = plugin.Version,
+            AssemblyPath = assemblyPath,
+            Capabilities = plugin.Capabilities,
+        });
+
+        var ok = await plugin.Initialize(ctx);
+        System.Diagnostics.Debug.WriteLine(
+            $"Plugin '{plugin.Id}' initialized: {ok}");
     }
 
     public async Task ShutdownAllAsync()
     {
+        foreach (var plugin in _builtinPlugins)
+        {
+            try { await plugin.Shutdown(); }
+            catch { }
+        }
+        _builtinPlugins.Clear();
+
         foreach (var loaded in _loader.LoadedPlugins)
         {
             try { await loaded.Plugin.Shutdown(); }

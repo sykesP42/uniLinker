@@ -1,3 +1,4 @@
+using Makaretu.Dns;
 using UniLinker.Plugin.Sdk;
 using Zeroconf;
 
@@ -6,12 +7,17 @@ namespace UniLinker.Core;
 public class DiscoveryService : IDeviceDiscovery, IDisposable
 {
     private const string ServiceType = "_unilinker._tcp.local.";
+    private const string ServiceName = "_unilinker._tcp";
     private readonly string _deviceName;
     private readonly int _port;
     private readonly string _version;
     private readonly string[] _capabilities;
     private readonly List<PeerInfo> _devices = new();
     private CancellationTokenSource? _cts;
+
+    // mDNS advertisement (Zeroconf can only browse, not announce).
+    private MulticastService? _mdns;
+    private ServiceDiscovery? _serviceDiscovery;
 
     public event Action<PeerInfo>? DeviceFound;
     public event Action<PeerInfo>? DeviceLost;
@@ -20,21 +26,51 @@ public class DiscoveryService : IDeviceDiscovery, IDisposable
     public DiscoveryService(
         string deviceName = "",
         int port = 9527,
-        string version = "3.0.0",
+        string version = "3.1.0",
         string[]? capabilities = null)
     {
         _deviceName = string.IsNullOrEmpty(deviceName)
             ? Environment.MachineName : deviceName;
         _port = port;
         _version = version;
-        _capabilities = capabilities ?? [];
+        _capabilities = capabilities ?? ["screen-capture", "file-send"];
     }
 
     public async Task StartAsync(CancellationToken ct = default)
     {
         _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        StartAdvertisement();
         _ = BrowseLoopAsync(_cts.Token);
         await Task.CompletedTask;
+    }
+
+    private void StartAdvertisement()
+    {
+        try
+        {
+            _mdns = new MulticastService();
+            _serviceDiscovery = new ServiceDiscovery(_mdns);
+
+            var profile = new ServiceProfile(_deviceName, ServiceName, (ushort)_port);
+            profile.AddProperty("name", _deviceName);
+            profile.AddProperty("version", _version);
+            profile.AddProperty("capabilities", string.Join(",", _capabilities));
+
+            _serviceDiscovery.Advertise(profile);
+            _mdns.Start();
+
+            System.Diagnostics.Debug.WriteLine(
+                $"[Discovery] Advertising '{_deviceName}' on {ServiceType} port {_port}");
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine(
+                $"[Discovery] advertisement failed: {ex.Message}");
+            _serviceDiscovery?.Dispose();
+            _serviceDiscovery = null;
+            _mdns?.Dispose();
+            _mdns = null;
+        }
     }
 
     private async Task BrowseLoopAsync(CancellationToken ct)
@@ -51,6 +87,11 @@ public class DiscoveryService : IDeviceDiscovery, IDisposable
                 foreach (var host in results)
                 {
                     var peerInfo = MapHostToPeer(host);
+
+                    // Ignore our own advertisement.
+                    if (string.Equals(peerInfo.Name, _deviceName, StringComparison.OrdinalIgnoreCase))
+                        continue;
+
                     var existing = _devices.FirstOrDefault(d => d.Id == peerInfo.Id);
 
                     if (existing == null)
@@ -85,7 +126,14 @@ public class DiscoveryService : IDeviceDiscovery, IDisposable
                     $"Discovery browse error: {ex.Message}");
             }
 
-            await Task.Delay(5000, ct);
+            try
+            {
+                await Task.Delay(5000, ct);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
         }
     }
 
@@ -130,12 +178,22 @@ public class DiscoveryService : IDeviceDiscovery, IDisposable
     public Task StopAsync()
     {
         _cts?.Cancel();
+        StopAdvertisement();
         return Task.CompletedTask;
+    }
+
+    private void StopAdvertisement()
+    {
+        try { _serviceDiscovery?.Dispose(); } catch { }
+        try { _mdns?.Dispose(); } catch { }
+        _serviceDiscovery = null;
+        _mdns = null;
     }
 
     public void Dispose()
     {
         _cts?.Cancel();
         _cts?.Dispose();
+        StopAdvertisement();
     }
 }
