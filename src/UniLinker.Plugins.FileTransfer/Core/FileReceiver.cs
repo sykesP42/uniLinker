@@ -32,6 +32,11 @@ public class FileReceiver : IDisposable
 
     public TransferSession? Session => _session;
 
+    /// <summary>
+    /// Stable identifier for tracking (transfer id once known, channel id before).
+    /// </summary>
+    public string SessionId => _session?.TransferId ?? _channel.Id;
+
     private void OnMessageReceived(byte[] data)
     {
         var msgType = ProtocolHandler.ParseMessageType(data);

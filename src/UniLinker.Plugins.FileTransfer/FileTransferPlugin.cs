@@ -7,7 +7,7 @@ namespace UniLinker.Plugins.FileTransfer;
 /// File Transfer Plugin for UniLinker.
 /// Enables peer-to-peer file transfer between devices.
 /// </summary>
-public class FileTransferPlugin : IPlugin
+public class FileTransferPlugin : IPlugin, IIncomingChannelHandler
 {
     private IPluginContext? _ctx;
     private TransferManager? _transferManager;
@@ -87,9 +87,22 @@ public class FileTransferPlugin : IPlugin
 
     public Task<IChannel?> OnPeerRequest(PeerInfo peer, string capability)
     {
-        // Handle incoming channel requests for file transfer
-        // For MVP, we return null and let TransferManager handle channels
+        // Outgoing channels are created on demand by TransferManager.
         return Task.FromResult<IChannel?>(null);
+    }
+
+    /// <summary>
+    /// The remote peer pushed a file to us: a DataChannel opened on an
+    /// incoming connection. Hand it to the receiver (auto-accept).
+    /// </summary>
+    public Task OnIncomingChannel(PeerInfo peer, IChannel channel)
+    {
+        if (_transferManager == null) return Task.CompletedTask;
+
+        System.Diagnostics.Debug.WriteLine(
+            $"[FileTransferPlugin] Incoming data channel from {peer.Name} ({channel.Capability})");
+        _transferManager.CreateReceiver(channel);
+        return Task.CompletedTask;
     }
 
     public Task Shutdown()
