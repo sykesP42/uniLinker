@@ -310,6 +310,7 @@ public sealed partial class MainWindow : Window
         {
             ViewModel.Cleanup();
             _trayIcon?.Dispose();
+            await App.ShutdownAsync();
             return;
         }
 
@@ -346,6 +347,7 @@ public sealed partial class MainWindow : Window
                 _isClosing = true;
                 ViewModel.Cleanup();
                 _trayIcon?.Dispose();
+                await App.ShutdownAsync();
                 this.Close();
             }
             // Cancel - do nothing, window stays open

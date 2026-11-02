@@ -1,5 +1,7 @@
 using Microsoft.UI.Xaml;
 using UniLinker.Core;
+using UniLinker.Plugins.FileTransfer;
+using UniLinker.Plugins.ScreenMirror;
 using UniLinker.WinUI.Services;
 
 namespace UniLinker.WinUI;
@@ -37,6 +39,7 @@ public partial class App : Application
         // Initialize the Windows App SDK for unpackaged apps
         // Note: For unpackaged apps, the runtime must be installed or deployed
         // See: https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/deploy-unpackaged-apps
+        CrashLogger.Initialize();
         InitializeComponent();
     }
 
@@ -48,12 +51,28 @@ public partial class App : Application
             "uniLinker", "config.json");
 
         _platform = new Platform(pluginsDir, configPath);
+
+        // Built-in plugins (external ones are still loaded from plugins/).
+        _platform.RegisterPlugin(new ScreenMirrorPlugin());
+        _platform.RegisterPlugin(new FileTransferPlugin());
+
+        try
+        {
+            await _platform.StartAsync();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Platform start failed: {ex.Message}");
+        }
+
+        var config = _platform.Context.Config.Get<PlatformConfig>("platform");
+
         _bridge = new WebBridge(_platform);
-        _signalingServer = new SignalingServer(9527, _platform.PeerMesh);
+        _signalingServer = new SignalingServer(
+            config.HttpPort > 0 ? config.HttpPort : 9527,
+            _platform.PeerMesh);
 
         Services = new AppServices(_platform, _bridge, _signalingServer);
-
-        await _platform.StartAsync();
 
         // Start the signaling server for WebRTC connections
         try
@@ -71,6 +90,18 @@ public partial class App : Application
         // Load and apply saved theme
         LoadTheme();
         _window.Activate();
+    }
+
+    /// <summary>
+    /// Stop the platform and signaling server (called on real app exit).
+    /// </summary>
+    public static async Task ShutdownAsync()
+    {
+        if (Current is App app)
+        {
+            try { app._signalingServer?.Stop(); } catch { }
+            try { await app._platform?.StopAsync(); } catch { }
+        }
     }
 
     private void LoadTheme()
