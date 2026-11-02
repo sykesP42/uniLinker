@@ -111,7 +111,7 @@ public class PeerConnection : IDisposable
         _pc.setLocalDescription(new RTCSessionDescriptionInit
         {
             type = RTCSdpType.offer,
-            sdp = offer.ToString()
+            sdp = offer.sdp
         });
 
         // Wait for ICE gathering to complete (with timeout)
@@ -122,7 +122,7 @@ public class PeerConnection : IDisposable
         {
             if (state == RTCIceGatheringState.complete && _pc.localDescription != null)
             {
-                tcs.TrySetResult(_pc.localDescription.ToString());
+                tcs.TrySetResult(_pc.localDescription.sdp.ToString());
             }
         };
 
@@ -130,7 +130,7 @@ public class PeerConnection : IDisposable
         _ = Task.Run(async () =>
         {
             await Task.Delay(3000, cts.Token);
-            var sdpText = _pc?.localDescription?.ToString() ?? "";
+            var sdpText = _pc?.localDescription?.sdp.ToString() ?? "";
             tcs.TrySetResult(sdpText);
         }, cts.Token);
 
@@ -190,7 +190,7 @@ public class PeerConnection : IDisposable
             _pc.setLocalDescription(new RTCSessionDescriptionInit
             {
                 type = RTCSdpType.answer,
-                sdp = answer.ToString()
+                sdp = answer.sdp
             });
 
             var localSdp = _pc.localDescription?.ToString() ?? "";
@@ -200,10 +200,14 @@ public class PeerConnection : IDisposable
         return Task.CompletedTask;
     }
 
-    /// <summary>Get local SDP as a string, after setting remote description.</summary>
+    /// <summary>
+    /// Get the local SDP as text, after setting local/remote descriptions.
+    /// Note: localDescription.sdp is an SDP object; the wrapper class has no
+    /// ToString override, so the inner SDP must be stringified directly.
+    /// </summary>
     public string? GetLocalSdp()
     {
-        return _pc?.localDescription?.ToString();
+        return _pc?.localDescription?.sdp?.ToString();
     }
 
     /// <summary>Add a remote ICE candidate.</summary>
