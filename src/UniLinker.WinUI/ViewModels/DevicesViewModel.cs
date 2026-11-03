@@ -3,6 +3,7 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.UI.Dispatching;
 using UniLinker.Plugin.Sdk;
+using UniLinker.WinUI.Services;
 
 namespace UniLinker.WinUI.ViewModels;
 
@@ -10,8 +11,9 @@ public partial class DevicesViewModel : ObservableObject
 {
     [ObservableProperty] private string _searchText = "";
     [ObservableProperty] private bool _isScanning = false;
-    [ObservableProperty] private string _statusMessage = "Click scan to discover LAN devices";
-    [ObservableProperty] private int _discoveryMode = 0; // 0: Auto, 1: LAN, 2: Manual IP
+    [ObservableProperty] private string _statusMessage = "";
+    [ObservableProperty] private bool _hasDevices = false;
+    [ObservableProperty] private bool _hasNoDevices = true;
 
     [ObservableProperty] private string _manualIp = "";
     [ObservableProperty] private string _manualPort = "9527";
@@ -71,16 +73,19 @@ public partial class DevicesViewModel : ObservableObject
 
     private void UpdateStatus()
     {
+        var loc = LocalizationService.Instance;
+        HasDevices = Devices.Count > 0;
+        HasNoDevices = Devices.Count == 0;
         StatusMessage = Devices.Count > 0
-            ? $"{Devices.Count} device(s) discovered"
-            : "Scanning for devices...";
+            ? string.Format(loc.DeviceCountFormat, Devices.Count)
+            : loc.ScanningForDevices;
     }
 
     [RelayCommand]
     private void StartScan()
     {
         IsScanning = true;
-        StatusMessage = "Scanning LAN...";
+        StatusMessage = LocalizationService.Instance.ScanningForDevices;
 
         // Discovery is already running in background via Platform.StartAsync()
         // Just show scanning state briefly
@@ -96,23 +101,42 @@ public partial class DevicesViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void ConnectToDevice(PeerInfo? device)
-    {
-        if (device == null) return;
-
-        // Connection happens via SignalingServer HTTP endpoint
-        // User should open browser at http://device.IpAddress:device.Port
-        StatusMessage = $"Open browser at http://{device.IpAddress}:{device.Port} to connect";
-    }
-
-    [RelayCommand]
-    private void ConnectManual()
+    private async Task ConnectManualAsync()
     {
         if (string.IsNullOrEmpty(ManualIp)) return;
 
         if (int.TryParse(ManualPort, out var port))
         {
-            StatusMessage = $"Open browser at http://{ManualIp}:{port} to connect";
+            // Probe the device's signaling server and add it to the list.
+            StatusMessage = string.Format(LocalizationService.Instance.DeviceCountFormat, Devices.Count);
+            try
+            {
+                using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+                var json = await http.GetStringAsync($"http://{ManualIp}:{port}/info");
+                using var doc = System.Text.Json.JsonDocument.Parse(json);
+                var name = doc.RootElement.TryGetProperty("name", out var n)
+                    ? n.GetString() : ManualIp;
+
+                var peer = new PeerInfo
+                {
+                    Id = $"manual-{ManualIp}:{port}",
+                    Name = string.IsNullOrEmpty(name) ? ManualIp : name!,
+                    IpAddress = ManualIp,
+                    Port = port,
+                    State = PeerState.Discovered,
+                    LastSeen = DateTime.UtcNow,
+                };
+
+                if (!Devices.Any(d => d.Id == peer.Id))
+                {
+                    Devices.Add(peer);
+                }
+                UpdateStatus();
+            }
+            catch
+            {
+                StatusMessage = $"No response from {ManualIp}:{port}";
+            }
         }
         else
         {

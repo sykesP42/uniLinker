@@ -15,6 +15,11 @@ public partial class App : Application
 
     public static AppServices Services { get; private set; } = null!;
 
+    /// <summary>
+    /// Handle of the main window (for pickers and other window-scoped APIs).
+    /// </summary>
+    public static nint MainWindowHandle { get; internal set; }
+
     // Theme management
     public static event EventHandler<ElementTheme>? ThemeChanged;
     private static ElementTheme _currentTheme = ElementTheme.Default;
@@ -102,6 +107,36 @@ public partial class App : Application
             try { app._signalingServer?.Stop(); } catch { }
             try { await app._platform?.StopAsync(); } catch { }
         }
+    }
+
+    /// <summary>
+    /// Apply device name / port to the running platform. Restarts the
+    /// signaling server when the port changed. Returns false when the
+    /// platform is not running.
+    /// </summary>
+    public static async Task<bool> ApplyRuntimeSettingsAsync(string deviceName, int httpPort)
+    {
+        if (Current is not App app || app._platform == null) return false;
+
+        var oldPort = app._signalingServer?.Port ?? 0;
+        await app._platform.ApplySettingsAsync(deviceName, httpPort);
+
+        if (httpPort > 0 && httpPort != oldPort)
+        {
+            try
+            {
+                app._signalingServer?.Stop();
+                app._signalingServer = new SignalingServer(httpPort, app._platform.PeerMesh);
+                Services = new AppServices(app._platform, app._bridge!, app._signalingServer);
+                await app._signalingServer.StartAsync();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Signaling restart failed: {ex.Message}");
+                return false;
+            }
+        }
+        return true;
     }
 
     private void LoadTheme()

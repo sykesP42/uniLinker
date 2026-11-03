@@ -1,6 +1,7 @@
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Navigation;
+using UniLinker.WinUI.Services;
 using UniLinker.WinUI.ViewModels;
 using Windows.ApplicationModel.DataTransfer;
 using Windows.Storage;
@@ -32,18 +33,13 @@ public sealed partial class FileTransferPage : Page
         }
     }
 
-    protected override void OnNavigatedFrom(NavigationEventArgs e)
-    {
-        base.OnNavigatedFrom(e);
-    }
-
     private void Page_DragOver(object sender, DragEventArgs e)
     {
         // Accept file drops
         if (e.DataView.Contains(StandardDataFormats.StorageItems))
         {
             e.AcceptedOperation = DataPackageOperation.Copy;
-            e.DragUIOverride.Caption = "Drop to send file";
+            e.DragUIOverride.Caption = LocalizationService.Instance.DropFilesHere;
         }
         else
         {
@@ -53,20 +49,15 @@ public sealed partial class FileTransferPage : Page
 
     private async void Page_Drop(object sender, DragEventArgs e)
     {
-        if (e.DataView.Contains(StandardDataFormats.StorageItems))
+        if (_viewModel == null) return;
+        if (!e.DataView.Contains(StandardDataFormats.StorageItems)) return;
+
+        var items = await e.DataView.GetStorageItemsAsync();
+        foreach (var item in items)
         {
-            var items = await e.DataView.GetStorageItemsAsync();
-            foreach (var item in items)
+            if (item is StorageFile file)
             {
-                if (item is StorageFile file)
-                {
-                    // Trigger file send via ViewModel
-                    if (_viewModel?.FileTransfer.SelectedDevice != null)
-                    {
-                        // Open file picker instead since we need file path
-                        await _viewModel.FileTransfer.SelectFileCommand.ExecuteAsync(null);
-                    }
-                }
+                await _viewModel.FileTransfer.SendDroppedFileAsync(file.Path);
             }
         }
     }

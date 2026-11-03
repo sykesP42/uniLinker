@@ -52,7 +52,7 @@ public sealed partial class MainWindow : Window
         ViewModel.Share.PropertyChanged += OnShareStateChanged;
 
         // Initialize notification service
-        NotificationService.Instance.Initialize(this.DispatcherQueue, this.Content.XamlRoot);
+        NotificationService.Instance.Initialize(this.DispatcherQueue, NotificationHost);
 
         // Setup share animation timer
         SetupShareAnimation();
@@ -236,6 +236,7 @@ public sealed partial class MainWindow : Window
         // Get window handle for tray icon (WinUI 3 way)
         var windowId = this.AppWindow.Id;
         _hwnd = Microsoft.UI.Win32Interop.GetWindowFromWindowId(windowId);
+        App.MainWindowHandle = _hwnd;
 
         // Initialize tray icon
         InitializeTray();

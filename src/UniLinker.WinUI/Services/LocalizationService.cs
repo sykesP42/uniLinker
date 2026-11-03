@@ -67,6 +67,14 @@ public partial class LocalizationService : ObservableObject
                 OnPropertyChanged(nameof(Online));
                 OnPropertyChanged(nameof(View));
                 OnPropertyChanged(nameof(SystemReady));
+                OnPropertyChanged(nameof(DashboardSubtitle));
+                OnPropertyChanged(nameof(DevicesSubtitle));
+                OnPropertyChanged(nameof(ShareSubtitle));
+                OnPropertyChanged(nameof(SettingsSubtitle));
+                OnPropertyChanged(nameof(NoDevicesHint));
+                OnPropertyChanged(nameof(ScanningForDevices));
+                OnPropertyChanged(nameof(DeviceCountFormat));
+                OnPropertyChanged(nameof(StatusText));
                 OnPropertyChanged(nameof(SearchDevices));
                 OnPropertyChanged(nameof(Scan));
                 OnPropertyChanged(nameof(AutoDiscover));
@@ -90,6 +98,9 @@ public partial class LocalizationService : ObservableObject
                 OnPropertyChanged(nameof(NotificationsEnabled));
                 OnPropertyChanged(nameof(NotificationsDesc));
                 OnPropertyChanged(nameof(ShareActive));
+                OnPropertyChanged(nameof(CopiedToClipboard));
+                OnPropertyChanged(nameof(CopyLink));
+                OnPropertyChanged(nameof(OpenInBrowser));
                 // File Transfer strings
                 OnPropertyChanged(nameof(FileTransferTitle));
                 OnPropertyChanged(nameof(FileTransferDesc));
@@ -187,6 +198,14 @@ public partial class LocalizationService : ObservableObject
     public string Online => LanguageIndex == 0 ? "Online" : "在线";
     public string View => LanguageIndex == 0 ? "View" : "查看";
     public string SystemReady => LanguageIndex == 0 ? "System Ready" : "系统就绪";
+    public string DashboardSubtitle => LanguageIndex == 0 ? "Monitor connections and system status" : "监控连接与系统状态";
+    public string DevicesSubtitle => LanguageIndex == 0 ? "Discover and connect to nearby devices" : "发现并连接附近的设备";
+    public string ShareSubtitle => LanguageIndex == 0 ? "Share your screen with any browser" : "与任意浏览器分享你的屏幕";
+    public string SettingsSubtitle => LanguageIndex == 0 ? "Configure your UniLinker preferences" : "配置 UniLinker 偏好设置";
+    public string NoDevicesHint => LanguageIndex == 0 ? "Devices on the same network will appear here automatically" : "同一网络下的设备会自动出现在这里";
+    public string ScanningForDevices => LanguageIndex == 0 ? "Scanning for devices..." : "正在扫描设备...";
+    public string DeviceCountFormat => LanguageIndex == 0 ? "{0} device(s) discovered" : "已发现 {0} 台设备";
+    public string StatusText => LanguageIndex == 0 ? "Status" : "状态";
 
     // Devices page strings
     public string SearchDevices => LanguageIndex == 0 ? "Search devices..." : "搜索设备...";
@@ -234,6 +253,9 @@ public partial class LocalizationService : ObservableObject
     public string NotificationsEnabled => LanguageIndex == 0 ? "Enable notifications" : "启用通知";
     public string NotificationsDesc => LanguageIndex == 0 ? "Show notifications for share events" : "显示分享事件通知";
     public string ShareActive => LanguageIndex == 0 ? "Sharing Active" : "分享中";
+    public string CopiedToClipboard => LanguageIndex == 0 ? "Address copied to clipboard" : "地址已复制到剪贴板";
+    public string CopyLink => LanguageIndex == 0 ? "Copy address" : "复制地址";
+    public string OpenInBrowser => LanguageIndex == 0 ? "Open in browser" : "在浏览器中打开";
 
     // File Transfer
     public string FileTransferTitle => LanguageIndex == 0 ? "File Transfer" : "文件传输";

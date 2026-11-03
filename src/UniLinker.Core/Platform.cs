@@ -66,6 +66,29 @@ public class Platform : IDisposable
         await Discovery.StartAsync(ct);
     }
 
+    /// <summary>
+    /// Apply device name / port at runtime: persists config and recreates
+    /// the discovery service so mDNS advertises the new values.
+    /// </summary>
+    public async Task ApplySettingsAsync(string deviceName, int httpPort, CancellationToken ct = default)
+    {
+        var config = _configStore.Get<PlatformConfig>("platform");
+        config.DeviceName = deviceName;
+        config.HttpPort = httpPort;
+        _configStore.Set("platform", config);
+        await _configStore.SaveAsync();
+
+        Discovery?.StopAsync();
+        Discovery?.Dispose();
+        Discovery = new DiscoveryService(
+            deviceName, httpPort > 0 ? httpPort : 9527);
+        if (Context is PlatformContext platformContext)
+        {
+            platformContext.Discovery = Discovery;
+        }
+        await Discovery.StartAsync(ct);
+    }
+
     private async Task OnIncomingChannel(PeerInfo peer, IChannel channel)
     {
         foreach (var plugin in PluginHost.GetAllPlugins().OfType<IIncomingChannelHandler>())

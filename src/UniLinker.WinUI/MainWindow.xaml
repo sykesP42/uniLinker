@@ -222,5 +222,14 @@
             <Frame x:Name="ContentFrame"/>
 
         </NavigationView>
+
+        <!-- In-app notification host (overlays all content) -->
+        <StackPanel x:Name="NotificationHost"
+                    Grid.RowSpan="2"
+                    VerticalAlignment="Top"
+                    HorizontalAlignment="Right"
+                    Margin="0,12,16,0"
+                    Spacing="8"
+                    IsHitTestVisible="True"/>
     </Grid>
 </Window>
