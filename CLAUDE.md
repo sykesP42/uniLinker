@@ -6,33 +6,22 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 **Windows (WinUI 3):**
 ```bash
-# Build with MSBuild (requires Visual Studio 2022 with Windows App SDK)
+# Build with MSBuild (requires Visual Studio 2022 with Windows App SDK workload).
+# dotnet build fails: it lacks the AppxPackage PRI tasks used by WindowsAppSDK.
 "C:/Program Files/Microsoft Visual Studio/2022/Community/MSBuild/Current/Bin/amd64/MSBuild.exe" UniLinker.sln -p:Configuration=Debug
 
-# Or with dotnet CLI (may have issues with Windows App SDK)
-dotnet build src/UniLinker.WinUI/UniLinker.WinUI.csproj
-
 # Run
-./src/UniLinker.WinUI/bin/Debug/net9.0-windows10.0.19041.0/win-x64/UniLinker.WinUI.exe
+./src/UniLinker.WinUI/bin/Debug/net9.0-windows10.0.22621.0/win-x64/UniLinker.WinUI.exe
 ```
 
-**Android:**
+**E2E Tests** (self-contained: the fixture launches the real app):
 ```bash
-# Open in Android Studio and run, or:
-cd android && ./gradlew assembleDebug
-```
-
-**E2E Tests:**
-```bash
-# Install Playwright browsers (first time)
-pwsh tests/UniLinker.E2E.Tests/bin/Debug/net9.0/playwright.ps1 install chromium
-
-# Run tests
-dotnet test tests/UniLinker.E2E.Tests
-
-# Run specific category
 dotnet test tests/UniLinker.E2E.Tests --filter "Category=ScreenMirror"
+# Debug-only diagnostics (SDP dumps, screenshots):
+dotnet test tests/UniLinker.E2E.Tests --filter "Category=Debug"
 ```
+The Playwright fixture prefers the installed Edge/Chrome channel — the bundled
+Chromium build has **no H264 codec**, so screen mirror tests fail on it.
 
 ## Architecture
 
@@ -44,38 +33,42 @@ Plugin SDK (interfaces) → Core Platform → Plugins → UI Shell
 |-------|-------------|-------------------|
 | SDK | `UniLinker.Plugin.Sdk/` | `sdk/` |
 | Core | Platform + PeerMesh + SignalingServer | Platform + WebRTCService |
-| Plugins | ScreenMirror, FileTransfer | ScreenMirror |
-| UI | WinUI 3 (WebView2) | Jetpack Compose |
+| Plugins | ScreenMirror, FileTransfer (built-in) | ScreenMirror |
+| UI | WinUI 3 | Jetpack Compose |
 
 **Key Components:**
-- `Platform` — Plugin host, orchestrates lifecycle
-- `PeerMesh` — WebRTC connection management, SDP exchange
-- `SignalingServer` — HTTP server on port 9527 for WebRTC signaling
-- `IPlugin` — Plugin interface: Initialize, OnPeerRequest, Shutdown
-
-**Plugin System:**
-- Plugins implement `IPlugin` with capabilities (e.g., "screen-capture")
-- `PluginHost` loads DLLs from `plugins/` directory
-- Plugins access `IPluginContext` for peers, discovery, config, UI
+- `Platform` — plugin host, orchestrates lifecycle; built-in plugins register via `Platform.RegisterPlugin()`, external DLLs are still loaded from `<output>/plugins/`
+- `PeerMesh` — WebRTC connection management; `RegisterIncomingConnection(peer, pc)` binds the exact negotiated connection
+- `SignalingServer` — **TcpListener-based HTTP server on 0.0.0.0:9527** (HttpListener was localhost-only and http.sys needs admin URL ACLs). Endpoints: `/info`, `/api/status`, `/signaling`, `/ice`, `/ice-pending`, static files from `web/`
+- `DiscoveryService` — mDNS advertise (Makaretu.Dns.Multicast) + browse (Zeroconf)
+- `IPlugin` / `IIncomingChannelHandler` — plugin interfaces; the latter receives data channels opened by remote peers
 
 **Connection Flow:**
-1. Browser/Android sends SDP offer to `POST /signaling`
-2. `SignalingServer` creates `PeerConnection`, sets remote description
-3. `PeerMesh.RaiseChannelRequestedAsync` triggers plugin's `OnPeerRequest`
-4. Plugin creates channel, starts streaming
+1. Browser sends SDP offer to `POST /signaling`
+2. `SignalingServer` creates a `PeerConnection`, answers, and registers **that same instance** in `PeerMesh`
+3. `PeerMesh.RaiseChannelRequestedAsync` triggers the plugin's `OnChannelRequested`
+4. Plugin starts capture/encoding; `PeerChannel.SendPacketAsync` → `RTCPeerConnection.SendVideoFrame(duration, annexBFrame)` (SIPSorcery parses NALs and fragments FU-A itself)
+
+**Screen mirror pipeline** (`ScreenMirrorPlugin`): WGC capture (BGRA, staging readback) → `OpenH264Encoder` (H264Sharp; emits one complete Annex-B access unit per frame, re-encodes the last frame when the desktop is static) → all open viewer channels. One shared capture session; IDR forced when a viewer joins.
 
 ## Critical Implementation Notes
 
-**MfEncoder COM Threading:**
-- Media Foundation objects require MTA thread
-- WinUI3 main thread is STA
-- Solution: Dedicated MTA thread with `BlockingCollection<Action>` queue
-- All MF operations (Initialize, Encode, Cleanup) must run on same thread
-- See: `src/UniLinker.Plugins.ScreenMirror/MfEncoder.cs`
+**Target framework pinning:**
+- All WinUI/plugin projects use `net9.0-windows10.0.22621.0` + `WindowsSdkPackageVersion 10.0.22621.38` to match Windows App SDK 1.6's projection. Raising the TFM to 26100 makes XamlTypeInfo reference a non-existent `Microsoft.Windows.UI.Xaml` version → instant startup crash. Plugin and host **must** share the same WinRT.Runtime version or plugin assembly load fails.
 
-**Signaling Port:**
-- Hardcoded to 9527 in `App.xaml.cs`
-- Browser client connects to `http://localhost:9527`
+**WGC capture (WgcCapture.cs):**
+- `IGraphicsCaptureItemInterop.CreateForMonitor` (HRESULT, 3 args) — the DisplayId API is absent from the pinned projection
+- Surface access MUST use `WinRT.CastExtensions.As<T>()`; a raw COM cast throws on CsWinRT 2.x
+- `Direct3D11CaptureFramePool.CreateFreeThreaded` (no DispatcherQueue on plugin threads)
+- `_isCapturing` must be set **before** `StartCapture` — on a static desktop the only delivered frame races the flag otherwise
+
+**Encoder (OpenH264Encoder.cs):**
+- `MFCreateMemoryByteStream` does not exist as an export — the old Media Foundation SinkWriter encoder could never initialize; do not resurrect it
+- H264Sharp's `RgbImage(Bgra, w, h, stride, data)` handles stride-padded WGC frames natively
+
+**Signaling port:** default 9527, configurable in Settings (saving restarts the server at runtime). First run triggers a Windows Firewall prompt — required for LAN access.
+
+**Diagnostics:** file logs at `%APPDATA%\uniLinker\unilinker.log` (plugin + server) and `crash.log` (unhandled exceptions). Console output is invisible for unpackaged WinUI apps.
 
 ## Git Conventions
 
