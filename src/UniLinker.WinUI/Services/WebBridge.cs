@@ -71,19 +71,26 @@ public class WebBridge
         });
     }
 
-    // Called from JS: StartSharing(configJson)
+    /// <summary>
+    /// Update the screen-mirror config so the plugin picks it up on the next
+    /// channel request. Values are optional; missing keys keep defaults.
+    /// </summary>
     public async void StartSharing(string configJson)
     {
         try
         {
-            var opts = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(configJson);
-            // Update screen-mirror config so the plugin picks it up on next channel request
+            var opts = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(configJson)
+                       ?? new Dictionary<string, JsonElement>();
+
+            static int GetInt(Dictionary<string, JsonElement> o, string key, int fallback)
+                => o.TryGetValue(key, out var el) && el.TryGetInt32(out var v) && v > 0 ? v : fallback;
+
             _platform.Context.Config.Set("screen-mirror", new
             {
-                CaptureWidth = opts?.GetValueOrDefault("width", default).GetInt32() ?? 1920,
-                CaptureHeight = opts?.GetValueOrDefault("height", default).GetInt32() ?? 1080,
-                CaptureFps = opts?.GetValueOrDefault("fps", default).GetInt32() ?? 30,
-                BitrateKbps = opts?.GetValueOrDefault("bitrate", default).GetInt32() ?? 15000,
+                CaptureWidth = GetInt(opts, "width", 1920),
+                CaptureHeight = GetInt(opts, "height", 1080),
+                CaptureFps = GetInt(opts, "fps", 30),
+                BitrateKbps = GetInt(opts, "bitrate", 8000),
             });
             await _platform.Context.Config.SaveAsync();
             System.Diagnostics.Debug.WriteLine($"StartSharing: configured {configJson}");
@@ -112,68 +119,6 @@ public class WebBridge
         catch (Exception ex)
         {
             System.Diagnostics.Debug.WriteLine($"StopSharing error: {ex.Message}");
-        }
-    }
-
-    // Called from JS: WatchDevice(peerId)
-    public async void WatchDevice(string peerId)
-    {
-        try
-        {
-            var peer = _platform.Discovery?.KnownDevices
-                .FirstOrDefault(p => p.Id == peerId);
-            if (peer == null)
-            {
-                System.Diagnostics.Debug.WriteLine($"WatchDevice: peer {peerId} not found");
-                return;
-            }
-
-            // Request screen-capture from peer — triggers their ChannelRequested handler
-            var channel = await (_platform.PeerMesh?.CreateChannel(peer, "screen-capture") ?? Task.FromResult<IChannel?>(null));
-
-            if (channel != null)
-            {
-                // Subscribe to received packets (depacketized NAL units from RTP)
-                var frameCount = 0;
-                var keyFrameCount = 0;
-                channel.PacketReceived += packet =>
-                {
-                    frameCount++;
-                    if (packet.IsKeyFrame) keyFrameCount++;
-                    if (frameCount % 60 == 0)
-                    {
-                        System.Diagnostics.Debug.WriteLine(
-                            $"[Watch] Received {frameCount} frames ({keyFrameCount} keyframes) " +
-                            $"from {peer.Name}, last packet {packet.Data.Length} bytes");
-                    }
-                };
-
-                System.Diagnostics.Debug.WriteLine(
-                    $"WatchDevice: channel opened to {peer.Name}, receiving on local port");
-            }
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"WatchDevice error: {ex.Message}");
-        }
-    }
-
-    // Called from JS: StopWatching(peerId)
-    public async void StopWatching(string peerId)
-    {
-        try
-        {
-            var peers = _platform.PeerMesh?.ConnectedPeers ?? [];
-            var peer = peers.FirstOrDefault(p => p.Id == peerId);
-            if (peer != null)
-            {
-                await (_platform.PeerMesh?.DisconnectPeer(peer) ?? Task.CompletedTask);
-                System.Diagnostics.Debug.WriteLine($"StopWatching: disconnected from {peer.Name}");
-            }
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"StopWatching error: {ex.Message}");
         }
     }
 
@@ -236,21 +181,4 @@ public class WebBridge
     }
 
     #endregion
-}
-
-// COM-visible wrapper for WebView2 host object
-[ComVisible(true)]
-[ClassInterface(ClassInterfaceType.AutoDispatch)]
-public class CoreWebView2Bridge
-{
-    private readonly WebBridge _bridge;
-    public CoreWebView2Bridge(WebBridge bridge) => _bridge = bridge;
-    public string GetDevices() => _bridge.GetDevices();
-    public string GetStatus() => _bridge.GetStatus();
-    public void StartSharing(string configJson) => _bridge.StartSharing(configJson);
-    public void StopSharing() => _bridge.StopSharing();
-    public void WatchDevice(string peerId) => _bridge.WatchDevice(peerId);
-    public void StopWatching(string peerId) => _bridge.StopWatching(peerId);
-    public string GetConfig() => _bridge.GetConfig();
-    public void SaveConfig(string configJson) => _bridge.SaveConfig(configJson);
 }

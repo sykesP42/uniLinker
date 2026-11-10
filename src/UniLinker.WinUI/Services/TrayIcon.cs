@@ -59,8 +59,14 @@ public class TrayIcon : IDisposable
     [DllImport("shell32.dll", CharSet = CharSet.Unicode)]
     private static extern bool Shell_NotifyIcon(int dwMessage, ref NOTIFYICONDATA lpData);
 
+    [DllImport("user32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
+    private static extern nint LoadImage(nint hInstance, string lpFileName, uint type, int cx, int cy, uint fuLoad);
+
     [DllImport("user32.dll")]
     private static extern nint LoadIcon(nint hInstance, nint lpIconName);
+
+    private const uint IMAGE_ICON = 1;
+    private const uint LR_LOADFROMFILE = 0x0010;
 
     [DllImport("user32.dll")]
     private static extern bool DestroyIcon(nint hIcon);
@@ -103,9 +109,22 @@ public class TrayIcon : IDisposable
     private delegate nint WndProcDelegate(nint hWnd, int msg, nint wParam, nint lParam);
     private WndProcDelegate? _wndProcDelegate;
 
-    public void Initialize(nint hwnd, string tooltip = "UniLinker")
+    public void Initialize(nint hwnd, string tooltip = "UniLinker", string? iconPath = null)
     {
         _hwnd = hwnd;
+
+        var hIcon = nint.Zero;
+        try
+        {
+            if (!string.IsNullOrEmpty(iconPath) && File.Exists(iconPath))
+            {
+                hIcon = LoadImage(nint.Zero, iconPath, IMAGE_ICON, 32, 32, LR_LOADFROMFILE);
+            }
+        }
+        catch
+        {
+            hIcon = nint.Zero;
+        }
 
         // Subclass window to handle tray icon messages
         _wndProcDelegate = WndProc;
@@ -120,7 +139,7 @@ public class TrayIcon : IDisposable
             uID = _id,
             uFlags = NIF_MESSAGE | NIF_ICON | NIF_TIP,
             uCallbackMessage = WM_TRAYICON,
-            hIcon = LoadIcon(nint.Zero, 32512), // IDI_APPLICATION
+            hIcon = hIcon != nint.Zero ? hIcon : LoadIcon(nint.Zero, (nint)32512), // fallback: IDI_APPLICATION
             szTip = tooltip
         };
 
@@ -159,9 +178,10 @@ public class TrayIcon : IDisposable
     {
         var hMenu = CreatePopupMenu();
 
-        AppendMenu(hMenu, 0x00000000, IDM_SHOW, "Show Window");
+        var loc = UniLinker.WinUI.Services.LocalizationService.Instance;
+        AppendMenu(hMenu, 0x00000000, IDM_SHOW, loc.ShowWindow);
         AppendMenu(hMenu, 0x00000800, 0, ""); // Separator
-        AppendMenu(hMenu, 0x00000000, IDM_EXIT, "Exit");
+        AppendMenu(hMenu, 0x00000800, IDM_EXIT, loc.Exit + "	Alt+F4");
 
         GetCursorPos(out var pt);
 

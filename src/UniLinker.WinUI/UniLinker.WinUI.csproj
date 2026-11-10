@@ -5,6 +5,7 @@
     <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
     <RootNamespace>UniLinker.WinUI</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>app.ico</ApplicationIcon>
     <UseWinUI>true</UseWinUI>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
@@ -34,6 +35,14 @@
     <ProjectReference Include="..\UniLinker.Core\UniLinker.Core.csproj" />
     <ProjectReference Include="..\UniLinker.Plugins.FileTransfer\UniLinker.Plugins.FileTransfer.csproj" />
     <ProjectReference Include="..\UniLinker.Plugins.ScreenMirror\UniLinker.Plugins.ScreenMirror.csproj" />
+  </ItemGroup>
+
+  <!-- App icon for AppWindow and tray (loaded from file at runtime) -->
+  <ItemGroup>
+    <ContentWithTargetPath Include="app.ico">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <TargetPath>app.ico</TargetPath>
+    </ContentWithTargetPath>
   </ItemGroup>
 
   <!-- Copy web directory to output for SignalingServer -->

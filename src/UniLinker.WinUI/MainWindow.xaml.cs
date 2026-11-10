@@ -171,10 +171,27 @@ public sealed partial class MainWindow : Window
         UpdateTitleBarColors();
     }
 
+    /// <summary>
+    /// Path of the app icon copied to the output directory.
+    /// </summary>
+    public static string IconPath => Path.Combine(AppContext.BaseDirectory, "app.ico");
+
     private void ConfigureTitleBar()
     {
         // Get the AppWindow
         var appWindow = this.AppWindow;
+
+        try
+        {
+            if (File.Exists(IconPath))
+            {
+                appWindow.SetIcon(IconPath);
+            }
+        }
+        catch
+        {
+            // Icon is cosmetic; ignore failures.
+        }
 
         // Customize the title bar
         var titleBar = appWindow.TitleBar;
@@ -254,7 +271,7 @@ public sealed partial class MainWindow : Window
     private void InitializeTray()
     {
         _trayIcon = new TrayIcon();
-        _trayIcon.Initialize(_hwnd, "UniLinker - Running");
+        _trayIcon.Initialize(_hwnd, "UniLinker - Running", IconPath);
 
         _trayIcon.ShowClicked += () =>
         {

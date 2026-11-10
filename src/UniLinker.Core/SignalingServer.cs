@@ -159,7 +159,6 @@ public class SignalingServer : IDisposable
                 break;
 
             case "/ice" when request.Method == "POST":
-                Log.Info($"ICE candidate received for {request.Body.Length}B body");
                 await HandleIceCandidateAsync(request);
                 await WriteJsonAsync(stream, 200, new { ok = true });
                 break;

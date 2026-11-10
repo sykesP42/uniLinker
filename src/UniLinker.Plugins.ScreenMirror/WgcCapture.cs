@@ -27,12 +27,18 @@ public class WgcCapture : ICapture
 
     public event Action<CaptureFrame>? FrameCaptured;
     private int _framesDelivered;
+    private long _lastReadbackTicks;
+    private int _minReadbackIntervalMs = 33;
 
     public bool Start(int width, int height, int fps)
     {
         _width = width > 0 ? width : 1920;
         _height = height > 0 ? height : 1080;
         _fps = fps > 0 ? fps : 30;
+        // Throttle the expensive staging readback to the target fps; WGC
+        // delivers frames at the display refresh rate (60/120Hz) while the
+        // encoder only consumes _fps frames per second.
+        _minReadbackIntervalMs = Math.Max(1, 1000 / _fps - 2);
 
         try
         {
@@ -93,6 +99,16 @@ public class WgcCapture : ICapture
         Direct3D11CaptureFramePool sender, object args)
     {
         if (!_isCapturing) return;
+
+        // Skip frames arriving faster than the target fps: the GPU-side copy
+        // plus CPU readback dominates the pipeline cost, so dropping here is
+        // far cheaper than encoding and discarding afterwards.
+        var nowTicks = Environment.TickCount64;
+        if (nowTicks - _lastReadbackTicks < _minReadbackIntervalMs)
+        {
+            return;
+        }
+        _lastReadbackTicks = nowTicks;
 
         try
         {
