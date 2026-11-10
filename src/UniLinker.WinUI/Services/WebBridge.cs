@@ -67,7 +67,7 @@ public class WebBridge
             deviceName = config.DeviceName,
             port = config.HttpPort,
             peers = _platform.PeerMesh?.ConnectedPeers.Count ?? 0,
-            version = "3.0.0",
+            version = UniLinkerInfo.Version,
         });
     }
 

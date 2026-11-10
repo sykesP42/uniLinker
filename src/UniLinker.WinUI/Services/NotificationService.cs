@@ -1,12 +1,14 @@
 using Microsoft.UI.Dispatching;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Controls;
+using Microsoft.UI.Xaml.Media;
 
 namespace UniLinker.WinUI.Services;
 
 /// <summary>
-/// Service for showing app notifications (toast notifications)
-/// Note: For unpackaged WinUI 3 apps, toast notifications require additional setup
+/// In-app notifications rendered as transient InfoBars over the window
+/// content (unpackaged WinUI 3 apps cannot send toast notifications
+/// without extra plumbing).
 /// </summary>
 public class NotificationService
 {
@@ -14,7 +16,7 @@ public class NotificationService
     public static NotificationService Instance => _instance ??= new NotificationService();
 
     private DispatcherQueue? _dispatcherQueue;
-    private XamlRoot? _xamlRoot;
+    private Panel? _host;
     private bool _notificationsEnabled = true;
 
     public bool NotificationsEnabled
@@ -23,37 +25,64 @@ public class NotificationService
         set => _notificationsEnabled = value;
     }
 
-    public void Initialize(DispatcherQueue dispatcherQueue, XamlRoot xamlRoot)
+    public void Initialize(DispatcherQueue dispatcherQueue, Panel notificationHost)
     {
         _dispatcherQueue = dispatcherQueue;
-        _xamlRoot = xamlRoot;
+        _host = notificationHost;
     }
 
     /// <summary>
-    /// Show a notification message (simplified for unpackaged apps)
+    /// Show a notification message.
     /// </summary>
     public void ShowToast(string title, string message)
     {
-        if (!_notificationsEnabled)
-            return;
-
-        // For unpackaged WinUI 3 apps, we'll use a simple approach
-        // In production, you would use Windows Community Toolkit Notifications
+        if (!_notificationsEnabled) return;
         ShowInAppNotification(title, message);
     }
 
     /// <summary>
-    /// Show an in-app notification using InfoBar
+    /// Show an in-app InfoBar notification that dismisses itself.
     /// </summary>
     public void ShowInAppNotification(string title, string message, InfoBarSeverity severity = InfoBarSeverity.Informational)
     {
-        if (_dispatcherQueue == null || _xamlRoot == null)
-            return;
+        var host = _host;
+        var dispatcher = _dispatcherQueue;
+        if (host == null || dispatcher == null) return;
 
-        _dispatcherQueue.TryEnqueue(() =>
+        dispatcher.TryEnqueue(() =>
         {
-            // This is a simplified approach
-            // In production, you would use a proper notification overlay system
+            var bar = new InfoBar
+            {
+                Title = title,
+                Message = message,
+                Severity = severity,
+                IsOpen = true,
+                IsClosable = true,
+                Margin = new Thickness(0, 0, 0, 8),
+                MaxWidth = 380,
+                Shadow = SharedShadow,
+            };
+
+            bar.Closed += (_, _) => host.Children.Remove(bar);
+
+            // Keep at most 3 notifications visible.
+            while (host.Children.Count >= 3)
+            {
+                host.Children.RemoveAt(0);
+            }
+            host.Children.Add(bar);
+
+            // Auto dismiss.
+            var timer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(5) };
+            timer.Tick += (_, _) =>
+            {
+                timer.Stop();
+                bar.IsOpen = false;
+            };
+            timer.Start();
         });
     }
+
+    private static Shadow? _sharedShadow;
+    private static Shadow SharedShadow => _sharedShadow ??= new ThemeShadow();
 }

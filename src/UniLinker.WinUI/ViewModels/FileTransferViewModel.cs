@@ -140,16 +140,11 @@ public partial class FileTransferViewModel : ObservableObject
             var picker = new Windows.Storage.Pickers.FileOpenPicker();
             picker.FileTypeFilter.Add("*");
 
-            // Get window handle from XamlRoot
-            if (_xamlRoot != null)
+            // Unpackaged WinUI: initialize the picker with the main window.
+            var hwnd = App.MainWindowHandle;
+            if (hwnd != nint.Zero)
             {
-                // WinUI 3 way to get window handle
-                var window = Microsoft.UI.Xaml.Window.Current;
-                if (window != null)
-                {
-                    var hwnd = WinRT.Interop.WindowNative.GetWindowHandle(window);
-                    WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
-                }
+                WinRT.Interop.InitializeWithWindow.Initialize(picker, hwnd);
             }
 
             var file = await picker.PickSingleFileAsync();
@@ -163,6 +158,11 @@ public partial class FileTransferViewModel : ObservableObject
             StatusMessage = $"Error: {ex.Message}";
         }
     }
+
+    /// <summary>
+    /// Send a file dropped on the page to the currently selected device.
+    /// </summary>
+    public Task SendDroppedFileAsync(string filePath) => SendFileAsync(filePath);
 
     private async Task SendFileAsync(string filePath)
     {

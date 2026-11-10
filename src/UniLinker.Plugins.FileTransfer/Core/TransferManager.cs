@@ -68,8 +68,16 @@ public class TransferManager : IDisposable
             var sender = new FileSender(channel, filePath, fileName);
 
             // Wire up events
-            sender.TransferCompleted += session => TransferCompleted?.Invoke(session);
-            sender.TransferFailed += (session, error) => TransferFailed?.Invoke(session, error);
+            sender.TransferCompleted += session =>
+            {
+                RemoveSender(session.TransferId);
+                TransferCompleted?.Invoke(session);
+            };
+            sender.TransferFailed += (session, error) =>
+            {
+                RemoveSender(session.TransferId);
+                TransferFailed?.Invoke(session, error);
+            };
 
             lock (_lock)
             {
@@ -99,10 +107,31 @@ public class TransferManager : IDisposable
 
         // Wire up events
         receiver.FileOffered += OnFileOffered;
-        receiver.TransferCompleted += session => TransferCompleted?.Invoke(session);
-        receiver.TransferFailed += (session, error) => TransferFailed?.Invoke(session, error);
+        receiver.TransferCompleted += session =>
+        {
+            RemoveReceiver(session.TransferId);
+            TransferCompleted?.Invoke(session);
+        };
+        receiver.TransferFailed += (session, error) =>
+        {
+            RemoveReceiver(session.TransferId);
+            TransferFailed?.Invoke(session, error);
+        };
+
+        lock (_lock)
+        {
+            _receivers[receiver.SessionId] = receiver;
+        }
 
         return receiver;
+    }
+
+    private void RemoveReceiver(string transferId)
+    {
+        lock (_lock)
+        {
+            _receivers.Remove(transferId);
+        }
     }
 
     private void OnFileOffered(Protocol.FileMetaMessage meta, FileReceiver receiver)
@@ -124,6 +153,14 @@ public class TransferManager : IDisposable
                 sender.Cancel();
                 _senders.Remove(transferId);
             }
+        }
+    }
+
+    private void RemoveSender(string transferId)
+    {
+        lock (_lock)
+        {
+            _senders.Remove(transferId);
         }
     }
 

@@ -29,6 +29,7 @@ public class TrayIcon : IDisposable
     private const int WM_TRAYICON = WM_USER + 1;
     private const int WM_LBUTTONUP = 0x0202;
     private const int WM_RBUTTONUP = 0x0205;
+    private const int WM_COMMAND = 0x0111;
 
     // Menu commands
     private const int IDM_SHOW = 1000;
@@ -140,6 +141,11 @@ public class TrayIcon : IDisposable
             {
                 ShowContextMenu();
             }
+        }
+        else if (msg == WM_COMMAND)
+        {
+            // TrackPopupMenu posts the selected item as WM_COMMAND.
+            HandleMenuCommand(wParam.ToInt32() & 0xFFFF);
         }
         else if (msg == WM_DESTROY)
         {

@@ -1,5 +1,7 @@
 using Microsoft.UI.Xaml;
 using UniLinker.Core;
+using UniLinker.Plugins.FileTransfer;
+using UniLinker.Plugins.ScreenMirror;
 using UniLinker.WinUI.Services;
 
 namespace UniLinker.WinUI;
@@ -12,6 +14,11 @@ public partial class App : Application
     private MainWindow? _window;
 
     public static AppServices Services { get; private set; } = null!;
+
+    /// <summary>
+    /// Handle of the main window (for pickers and other window-scoped APIs).
+    /// </summary>
+    public static nint MainWindowHandle { get; internal set; }
 
     // Theme management
     public static event EventHandler<ElementTheme>? ThemeChanged;
@@ -37,6 +44,7 @@ public partial class App : Application
         // Initialize the Windows App SDK for unpackaged apps
         // Note: For unpackaged apps, the runtime must be installed or deployed
         // See: https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/deploy-unpackaged-apps
+        CrashLogger.Initialize();
         InitializeComponent();
     }
 
@@ -48,12 +56,28 @@ public partial class App : Application
             "uniLinker", "config.json");
 
         _platform = new Platform(pluginsDir, configPath);
+
+        // Built-in plugins (external ones are still loaded from plugins/).
+        _platform.RegisterPlugin(new ScreenMirrorPlugin());
+        _platform.RegisterPlugin(new FileTransferPlugin());
+
+        try
+        {
+            await _platform.StartAsync();
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Platform start failed: {ex.Message}");
+        }
+
+        var config = _platform.Context.Config.Get<PlatformConfig>("platform");
+
         _bridge = new WebBridge(_platform);
-        _signalingServer = new SignalingServer(9527, _platform.PeerMesh);
+        _signalingServer = new SignalingServer(
+            config.HttpPort > 0 ? config.HttpPort : 9527,
+            _platform.PeerMesh);
 
         Services = new AppServices(_platform, _bridge, _signalingServer);
-
-        await _platform.StartAsync();
 
         // Start the signaling server for WebRTC connections
         try
@@ -71,6 +95,48 @@ public partial class App : Application
         // Load and apply saved theme
         LoadTheme();
         _window.Activate();
+    }
+
+    /// <summary>
+    /// Stop the platform and signaling server (called on real app exit).
+    /// </summary>
+    public static async Task ShutdownAsync()
+    {
+        if (Current is App app)
+        {
+            try { app._signalingServer?.Stop(); } catch { }
+            try { await app._platform?.StopAsync(); } catch { }
+        }
+    }
+
+    /// <summary>
+    /// Apply device name / port to the running platform. Restarts the
+    /// signaling server when the port changed. Returns false when the
+    /// platform is not running.
+    /// </summary>
+    public static async Task<bool> ApplyRuntimeSettingsAsync(string deviceName, int httpPort)
+    {
+        if (Current is not App app || app._platform == null) return false;
+
+        var oldPort = app._signalingServer?.Port ?? 0;
+        await app._platform.ApplySettingsAsync(deviceName, httpPort);
+
+        if (httpPort > 0 && httpPort != oldPort)
+        {
+            try
+            {
+                app._signalingServer?.Stop();
+                app._signalingServer = new SignalingServer(httpPort, app._platform.PeerMesh);
+                Services = new AppServices(app._platform, app._bridge!, app._signalingServer);
+                await app._signalingServer.StartAsync();
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine($"Signaling restart failed: {ex.Message}");
+                return false;
+            }
+        }
+        return true;
     }
 
     private void LoadTheme()

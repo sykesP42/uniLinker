@@ -6,7 +6,7 @@ public class AppServices
 {
     public Platform Platform { get; }
     public WebBridge Bridge { get; }
-    public SignalingServer SignalingServer { get; }
+    public SignalingServer SignalingServer { get; set; }
     public NavigationService Navigation { get; }
 
     public AppServices(Platform platform, WebBridge bridge, SignalingServer signalingServer)

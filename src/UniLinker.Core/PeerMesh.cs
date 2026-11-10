@@ -26,6 +26,12 @@ public class PeerMesh : IPeerMesh, IDisposable
     public event Func<PeerInfo, string, Task<IChannel?>>? ChannelRequested;
 
     /// <summary>
+    /// Raised when a remote peer opened a DataChannel on an incoming
+    /// connection (e.g. a file transfer pushed to this device).
+    /// </summary>
+    public event Action<PeerInfo, IChannel>? DataChannelReady;
+
+    /// <summary>
     /// Raise ChannelRequested from external code (e.g. SignalingServer).
     /// </summary>
     public async Task<IChannel?> RaiseChannelRequestedAsync(PeerInfo peer, string capability)
@@ -43,12 +49,12 @@ public class PeerMesh : IPeerMesh, IDisposable
     }
 
     /// <summary>
-    /// Register a PeerConnection for an incoming SDP offer (from a browser or another device).
-    /// Called by SignalingServer when it receives an offer.
-    /// The caller should have already called InitializeAsync and SetRemoteDescriptionAsync
-    /// on this PeerConnection before registering.
+    /// Register a pre-negotiated PeerConnection for an incoming SDP offer
+    /// (from a browser or another device). Called by SignalingServer with the
+    /// exact connection that received the offer, so plugin channels are bound
+    /// to the live WebRTC session.
     /// </summary>
-    public PeerConnection RegisterIncomingConnection(PeerInfo peer)
+    public PeerConnection RegisterIncomingConnection(PeerInfo peer, PeerConnection connection)
     {
         lock (_lock)
         {
@@ -57,14 +63,28 @@ public class PeerMesh : IPeerMesh, IDisposable
 
             if (_connections.TryGetValue(peer.Id, out var existing))
             {
-                return existing;
+                if (!ReferenceEquals(existing, connection))
+                {
+                    existing.Dispose();
+                    _connections[peer.Id] = connection;
+                }
+                return _connections[peer.Id];
             }
 
-            var pc = new PeerConnection(peer);
-            WireConnectionEvents(pc, peer);
-            _connections[peer.Id] = pc;
-            return pc;
+            WireConnectionEvents(connection, peer);
+            _connections[peer.Id] = connection;
+            return connection;
         }
+    }
+
+    /// <summary>
+    /// Register a connection for an incoming offer without an existing
+    /// PeerConnection (creates a fresh, un-negotiated one — the caller must
+    /// have handled the SDP offer itself).
+    /// </summary>
+    public PeerConnection RegisterIncomingConnection(PeerInfo peer)
+    {
+        return RegisterIncomingConnection(peer, new PeerConnection(peer));
     }
 
     /// <summary>
@@ -313,6 +333,20 @@ public class PeerMesh : IPeerMesh, IDisposable
                 RemoveConnection(peer.Id);
             }
         };
+
+        pc.DataChannelReceived += channel =>
+        {
+            try
+            {
+                var wrapper = new DataChannelWrapper(channel, peer, channel.label);
+                DataChannelReady?.Invoke(peer, wrapper);
+            }
+            catch (Exception ex)
+            {
+                System.Diagnostics.Debug.WriteLine(
+                    $"[PeerMesh] DataChannel wrap failed: {ex.Message}");
+            }
+        };
     }
 
     public async Task DisconnectPeer(PeerInfo peer)
@@ -424,9 +458,11 @@ internal class PeerChannel : IChannel
     {
         if (State == ChannelState.Open && _isSender)
         {
-            // Convert timestamp from microseconds to RTP timestamp units (90kHz clock)
-            var rtpTimestamp = (uint)(packet.TimestampUs * 90 / 1000);
-            _pc.SendVideoFrame(rtpTimestamp, packet.Data);
+            // SIPSorcery's SendVideo takes a DURATION in RTP units (added to
+            // the previous timestamp), not an absolute timestamp. At 30 fps
+            // one frame lasts 3000 ticks of the 90 kHz clock.
+            const uint frameDurationRtp = 90000 / 30;
+            _pc.SendVideoFrame(frameDurationRtp, packet.Data);
         }
         await Task.CompletedTask;
     }

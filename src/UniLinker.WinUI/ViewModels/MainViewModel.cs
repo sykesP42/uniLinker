@@ -3,7 +3,6 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.UI.Dispatching;
 using UniLinker.Plugin.Sdk;
-using UniLinker.WinUI.Models;
 using UniLinker.WinUI.Services;
 
 namespace UniLinker.WinUI.ViewModels;
@@ -19,7 +18,6 @@ public partial class MainViewModel : ObservableObject
     [ObservableProperty] private string _deviceInfo = "Local: UniLinker";
     [ObservableProperty] private string _connectAddress = "Listening: 0.0.0.0:9527";
     [ObservableProperty] private int _deviceCount;
-    [ObservableProperty] private ConnectionQuality _connectionQuality = ConnectionQuality.Good;
 
     // Localization service for all pages to bind to
     public LocalizationService Loc => LocalizationService.Instance;
@@ -64,7 +62,6 @@ public partial class MainViewModel : ObservableObject
         {
             DeviceCount = _discovery?.KnownDevices.Count ?? 0;
             Dashboard.DiscoveredDevices = DeviceCount;
-            UpdateConnectionQuality();
         });
     }
 
@@ -74,18 +71,7 @@ public partial class MainViewModel : ObservableObject
         {
             DeviceCount = _discovery?.KnownDevices.Count ?? 0;
             Dashboard.DiscoveredDevices = DeviceCount;
-            UpdateConnectionQuality();
         });
-    }
-
-    private void UpdateConnectionQuality()
-    {
-        ConnectionQuality = DeviceCount switch
-        {
-            > 2 => ConnectionQuality.Excellent,
-            > 0 => ConnectionQuality.Good,
-            _ => ConnectionQuality.Poor
-        };
     }
 
     private void StartRefreshTimer()
@@ -117,7 +103,6 @@ public partial class MainViewModel : ObservableObject
 
             DeviceCount = _discovery?.KnownDevices.Count ?? 0;
             Dashboard.DiscoveredDevices = DeviceCount;
-            UpdateConnectionQuality();
         }
         catch
         {

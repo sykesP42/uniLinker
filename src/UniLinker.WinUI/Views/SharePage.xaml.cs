@@ -10,7 +10,6 @@ public sealed partial class SharePage : Page
 {
     private MainViewModel? _viewModel;
     private Storyboard? _pulseStoryboard;
-    private Storyboard? _blinkStoryboard;
 
     public SharePage()
     {
@@ -80,6 +79,5 @@ public sealed partial class SharePage : Page
     private void StopAnimations()
     {
         _pulseStoryboard?.Stop();
-        _blinkStoryboard?.Stop();
     }
 }

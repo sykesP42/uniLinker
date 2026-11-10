@@ -32,6 +32,11 @@ public class FileReceiver : IDisposable
 
     public TransferSession? Session => _session;
 
+    /// <summary>
+    /// Stable identifier for tracking (transfer id once known, channel id before).
+    /// </summary>
+    public string SessionId => _session?.TransferId ?? _channel.Id;
+
     private void OnMessageReceived(byte[] data)
     {
         var msgType = ProtocolHandler.ParseMessageType(data);
@@ -180,7 +185,7 @@ public class FileReceiver : IDisposable
             if (_expectedChunkIndex % ProtocolConstants.WindowSize == 0 ||
                 _expectedChunkIndex == _session.TotalChunks)
             {
-                SendAckAsync().Wait();
+                _ = SendAckAsync();
             }
 
             // Check if transfer is complete
@@ -193,7 +198,7 @@ public class FileReceiver : IDisposable
         {
             _session.Fail(ex.Message);
             TransferFailed?.Invoke(_session, ex.Message);
-            SendErrorAsync(ex.Message).Wait();
+            _ = SendErrorAsync(ex.Message);
         }
     }
 

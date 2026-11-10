@@ -99,13 +99,61 @@ public class ScreenMirrorTests : IClassFixture<AppFixture>, IAsyncLifetime
         var videoVisible = await _page.Locator("#remoteVideo").IsVisibleAsync();
         videoVisible.Should().BeTrue("Video element should be visible after connection");
 
-        // Verify video is playing
+        // Verify the video is rendering (headless browsers start paused;
+        // kick playback explicitly before asserting).
         var isPlaying = await _page.EvaluateAsync<bool>(
+            @"async () => {
+                const video = document.getElementById('remoteVideo');
+                if (!video) return false;
+                await video.play().catch(() => {});
+                return video.readyState >= 2 && video.videoWidth > 0;
+            }");
+        isPlaying.Should().BeTrue("Video should be playing (readyState >= 2, frames decoded)");
+    }
+
+    [Fact]
+    [Trait("Category", "ScreenMirror")]
+    public async Task SM05_Browser_ReceivesActualVideoData()
+    {
+        // The strongest end-to-end assertion: the inbound WebRTC track must
+        // actually render frames (capture -> encode -> RTP -> decode).
+        var url = $"{AppFixture.BaseUrl}/index.html";
+        await _page!.GotoAsync(url);
+
+        await _page.Locator("#hostInput").FillAsync("localhost");
+        await _page.Locator("#btnConnect").ClickAsync();
+
+        await _page.WaitForFunctionAsync(
             @"() => {
                 const video = document.getElementById('remoteVideo');
-                return video && video.readyState >= 2 && !video.paused;
+                return video && video.srcObject !== null;
+            }",
+            new PageWaitForFunctionOptions { Timeout = 20000 });
+
+        await _page.WaitForFunctionAsync(
+            @"() => {
+                const video = document.getElementById('remoteVideo');
+                return video.readyState >= 2 && video.videoWidth > 0;
+            }",
+            new PageWaitForFunctionOptions { Timeout = 30000 });
+
+        var stats = await _page.EvaluateAsync<string>(
+            @"async () => {
+                const video = document.getElementById('remoteVideo');
+                await video.play().catch(() => {});
+                await new Promise(r => setTimeout(r, 1500));
+                const tracks = video.srcObject ? video.srcObject.getVideoTracks() : [];
+                return JSON.stringify({
+                    readyState: video.readyState,
+                    videoWidth: video.videoWidth,
+                    videoHeight: video.videoHeight,
+                    currentTime: video.currentTime,
+                    trackState: tracks.length ? tracks[0].readyState : 'none'
+                });
             }");
-        isPlaying.Should().BeTrue("Video should be playing (readyState >= 2)");
+        Console.WriteLine($"[SM05] video stats: {stats}");
+
+        stats.Should().NotContain("\"videoWidth\":0");
     }
 
     [Fact]

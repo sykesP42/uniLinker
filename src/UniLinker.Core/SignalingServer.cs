@@ -1,23 +1,30 @@
 using System.Net;
+using System.Net.Sockets;
 using System.Text;
 using System.Text.Json;
-using SIPSorcery.Net;
 using UniLinker.Plugin.Sdk;
 
 namespace UniLinker.Core;
 
 /// <summary>
 /// HTTP server for WebRTC SDP + ICE candidate signaling exchange.
-/// Each uniLinker instance runs one.
+/// Every UniLinker instance runs one, reachable from the LAN.
 ///
-/// Endpoints:
-///   GET  /info        — device metadata and capabilities
-///   POST /signaling   — SDP exchange (offer/answer) and ICE candidate relay
-///   POST /ice         — ICE candidate from browser/peer
+/// Implemented directly on TcpListener instead of HttpListener so that
+/// binding to all interfaces does not require an http.sys URL ACL
+/// (admin rights). Endpoints:
+///   GET  /info         — device metadata and capabilities
+///   GET  /api/status   — runtime status
+///   POST /signaling    — SDP exchange (offer/answer)
+///   POST /ice          — ICE candidate from browser/peer
+///   GET  /ice-pending  — ICE candidates waiting for a peer
+///   GET  /*            — static viewer page from the web root
 /// </summary>
 public class SignalingServer : IDisposable
 {
-    private readonly HttpListener _listener;
+    private const int MaxHeaderBytes = 32 * 1024;
+    private const int MaxBodyBytes = 4 * 1024 * 1024;
+
     private readonly int _port;
     private readonly PeerMesh _peerMesh;
     private readonly string[] _capabilities;
@@ -25,10 +32,10 @@ public class SignalingServer : IDisposable
     private readonly Dictionary<string, PeerConnection> _pendingIceConnections = new();
     private readonly Dictionary<string, List<IceCandidateMessage>> _pendingOutgoingIce = new();
     private readonly object _iceLock = new();
+    private TcpListener? _listener;
     private CancellationTokenSource? _cts;
 
-    public event Action<string, string>? OfferReceived; // sdp, fromPeerId
-    public event Action<string>? SdpAnswerReceived;
+    public bool IsRunning { get; private set; }
 
     public SignalingServer(
         int port,
@@ -39,225 +46,219 @@ public class SignalingServer : IDisposable
         _peerMesh = peerMesh;
         _capabilities = capabilities ?? ["screen-capture", "h264-encode", "video-stream"];
         _webRoot = Path.Combine(AppContext.BaseDirectory, "web");
-        _listener = new HttpListener();
-        // Use localhost to avoid needing URL ACL admin permissions
-        _listener.Prefixes.Add($"http://localhost:{port}/");
     }
 
-    public async Task StartAsync(CancellationToken ct = default)
-    {
-        _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+    public int Port => _port;
 
-        try
+    public Task StartAsync(CancellationToken ct = default)
+    {
+        if (IsRunning) return Task.CompletedTask;
+
+        _cts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+        var token = _cts.Token;
+
+        _listener = new TcpListener(IPAddress.IPv6Any, _port);
+        _listener.Server.DualMode = true; // covers IPv4-mapped addresses too
+        _listener.Server.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
+        _listener.Start();
+
+        IsRunning = true;
+        Log.Info($"Signaling server listening on port {_port} (all interfaces)");
+
+        _ = AcceptLoopAsync(token);
+        return Task.CompletedTask;
+    }
+
+    private async Task AcceptLoopAsync(CancellationToken token)
+    {
+        var listener = _listener!;
+        while (!token.IsCancellationRequested)
         {
-            Console.WriteLine($"[SignalingServer] Starting on port {_port}...");
-            _listener.Start();
-            Console.WriteLine($"[SignalingServer] Started successfully on http://+:{_port}/");
-        }
-        catch (HttpListenerException ex) when (ex.ErrorCode == 5)
-        {
-            // Access denied -- try with localhost only
-            Console.WriteLine($"[SignalingServer] Access denied, trying localhost only...");
-            _listener.Prefixes.Clear();
-            _listener.Prefixes.Add($"http://localhost:{_port}/");
+            TcpClient client;
             try
             {
-                _listener.Start();
-                Console.WriteLine($"[SignalingServer] Started on localhost:{_port}");
+                client = await listener.AcceptTcpClientAsync(token);
             }
-            catch (Exception ex2)
+            catch (OperationCanceledException)
             {
-                Console.WriteLine($"[SignalingServer] Failed to start on localhost: {ex2.Message}");
-                throw;
+                break;
             }
-        }
-        catch (Exception ex)
-        {
-            Console.WriteLine($"[SignalingServer] Error starting: {ex.Message}");
-            throw;
-        }
-
-        Console.WriteLine($"[SignalingServer] Listening for connections...");
-
-        try
-        {
-            while (!_cts.IsCancellationRequested)
+            catch (SocketException) when (token.IsCancellationRequested)
             {
-                var ctxTask = _listener.GetContextAsync();
-                using var timeoutCts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-                var completedTask = await Task.WhenAny(
-                    ctxTask, Task.Delay(Timeout.Infinite, timeoutCts.Token));
-
-                if (completedTask != ctxTask || _cts.IsCancellationRequested)
-                    break;
-
-                var ctx = await ctxTask;
-                _ = HandleRequestAsync(ctx);
+                break;
             }
+            catch (Exception ex)
+            {
+                Console.WriteLine($"[SignalingServer] accept error: {ex.Message}");
+                continue;
+            }
+            _ = HandleClientAsync(client, token);
         }
-        catch (OperationCanceledException) { }
-        catch (HttpListenerException) { /* shutting down */ }
     }
 
-    private async Task HandleRequestAsync(HttpListenerContext ctx)
+    private async Task HandleClientAsync(TcpClient client, CancellationToken token)
     {
         try
         {
-            // CORS headers on every response
-            ctx.Response.Headers.Add("Access-Control-Allow-Origin", "*");
-            ctx.Response.Headers.Add("Access-Control-Allow-Methods", "GET, POST, OPTIONS");
-            ctx.Response.Headers.Add("Access-Control-Allow-Headers", "Content-Type");
+            using var _ = client;
+            client.NoDelay = true;
+            client.ReceiveTimeout = 15000;
+            client.SendTimeout = 15000;
 
-            if (ctx.Request.HttpMethod == "OPTIONS")
+            var stream = client.GetStream();
+            var request = await ReadHttpRequestAsync(stream);
+            if (request == null)
             {
-                ctx.Response.StatusCode = 204;
-                ctx.Response.Close();
+                await WriteResponseAsync(stream, 400, "text/plain", "Bad request"u8.ToArray());
                 return;
             }
 
-            var path = ctx.Request.Url?.AbsolutePath ?? "/";
-
-            switch (path)
-            {
-                case "/info":
-                    await SendJson(ctx, new
-                    {
-                        name = Environment.MachineName,
-                        version = "3.0.0",
-                        capabilities = _capabilities,
-                        status = "available",
-                    });
-                    break;
-
-                case "/api/status":
-                    await SendJson(ctx, new
-                    {
-                        deviceName = Environment.MachineName,
-                        version = "3.0.0",
-                        port = _port,
-                        peers = _peerMesh.ConnectedPeers.Count,
-                        status = "running",
-                    });
-                    break;
-
-                case "/signaling" when ctx.Request.HttpMethod == "POST":
-                    await HandleSignaling(ctx);
-                    break;
-
-                case "/ice" when ctx.Request.HttpMethod == "POST":
-                    await HandleIceCandidate(ctx);
-                    break;
-
-                case "/ice-pending" when ctx.Request.HttpMethod == "GET":
-                    await HandleIcePending(ctx);
-                    break;
-
-                default:
-                    // Serve static files from web/ directory
-                    if (ctx.Request.HttpMethod == "GET")
-                        await ServeStaticFile(ctx, path);
-                    else
-                    {
-                        ctx.Response.StatusCode = 404;
-                        ctx.Response.Close();
-                    }
-                    break;
-            }
+            await RouteAsync(stream, request);
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"Signaling error: {ex.Message}");
-            try
-            {
-                ctx.Response.StatusCode = 500;
-                ctx.Response.Close();
-            }
-            catch { /* best effort */ }
+            System.Diagnostics.Debug.WriteLine($"[SignalingServer] client error: {ex.Message}");
         }
     }
 
-    private async Task HandleSignaling(HttpListenerContext ctx)
+    private async Task RouteAsync(NetworkStream stream, HttpRequest request)
     {
-        using var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8);
-        var body = await reader.ReadToEndAsync();
-
-        var msg = JsonSerializer.Deserialize<SignalingMessage>(body);
-        if (msg == null)
+        if (request.Method == "OPTIONS")
         {
-            ctx.Response.StatusCode = 400;
-            ctx.Response.Close();
+            await WriteResponseAsync(stream, 204, "text/plain", [], withCors: true);
+            return;
+        }
+
+        var path = request.Path;
+
+        switch (path)
+        {
+            case "/info" when request.Method == "GET":
+                await WriteJsonAsync(stream, 200, new
+                {
+                    name = GetDeviceName(),
+                    version = UniLinkerInfo.Version,
+                    capabilities = _capabilities,
+                    status = "available",
+                });
+                break;
+
+            case "/api/status" when request.Method == "GET":
+                await WriteJsonAsync(stream, 200, new
+                {
+                    deviceName = GetDeviceName(),
+                    version = UniLinkerInfo.Version,
+                    port = _port,
+                    peers = _peerMesh.ConnectedPeers.Count,
+                    status = IsRunning ? "running" : "stopped",
+                });
+                break;
+
+            case "/signaling" when request.Method == "POST":
+                await HandleSignalingAsync(stream, request);
+                break;
+
+            case "/ice" when request.Method == "POST":
+                Log.Info($"ICE candidate received for {request.Body.Length}B body");
+                await HandleIceCandidateAsync(request);
+                await WriteJsonAsync(stream, 200, new { ok = true });
+                break;
+
+            case "/ice-pending" when request.Method == "GET":
+                await HandleIcePendingAsync(stream, request.Query);
+                break;
+
+            default:
+                if (request.Method == "GET")
+                    await ServeStaticFileAsync(stream, path);
+                else
+                    await WriteResponseAsync(stream, 404, "text/plain", "Not found"u8.ToArray(), withCors: true);
+                break;
+        }
+    }
+
+    private async Task HandleSignalingAsync(NetworkStream stream, HttpRequest request)
+    {
+        SignalingMessage? msg;
+        try
+        {
+            msg = JsonSerializer.Deserialize<SignalingMessage>(request.Body, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            });
+        }
+        catch (JsonException)
+        {
+            msg = null;
+        }
+        if (msg == null || string.IsNullOrEmpty(msg.Sdp))
+        {
+            await WriteResponseAsync(stream, 400, "text/plain", "Invalid signaling message"u8.ToArray(), withCors: true);
             return;
         }
 
         if (msg.Type == "offer")
         {
-            await HandleOffer(ctx, msg);
+            await HandleOfferAsync(stream, msg);
         }
         else if (msg.Type == "answer")
         {
-            SdpAnswerReceived?.Invoke(msg.Sdp);
-            ctx.Response.StatusCode = 200;
-            ctx.Response.Close();
+            // Answer to an outgoing connection we initiated (not used by the
+            // browser viewer flow, which polls /ice-pending instead).
+            await WriteJsonAsync(stream, 200, new { ok = true });
         }
         else
         {
-            ctx.Response.StatusCode = 400;
-            ctx.Response.Close();
+            await WriteResponseAsync(stream, 400, "text/plain", "Unknown message type"u8.ToArray(), withCors: true);
         }
     }
 
-    private async Task HandleOffer(HttpListenerContext ctx, SignalingMessage msg)
+    private async Task HandleOfferAsync(NetworkStream stream, SignalingMessage msg)
     {
-        OfferReceived?.Invoke(msg.Sdp, msg.FromPeerId);
-
+        var peerId = string.IsNullOrEmpty(msg.FromPeerId) ? "unknown" : msg.FromPeerId;
         var peerInfo = new PeerInfo
         {
-            Id = msg.FromPeerId,
-            Name = msg.FromPeerId,
-            IpAddress = ctx.Request.RemoteEndPoint?.Address?.ToString() ?? "127.0.0.1",
+            Id = peerId,
+            Name = peerId,
+            IpAddress = "0.0.0.0", // filled in by the server from the socket
             Port = _port,
             State = PeerState.Discovered,
             Capabilities = msg.Capability != null ? [msg.Capability] : [],
         };
 
-        // Create a new PeerConnection, initialize it, and set the remote offer
         var pc = new PeerConnection(peerInfo);
-        var ok = await pc.InitializeAsync();
-        if (!ok)
+        if (!await pc.InitializeAsync())
         {
-            ctx.Response.StatusCode = 500;
-            ctx.Response.Close();
+            await WriteResponseAsync(stream, 500, "text/plain", "WebRTC init failed"u8.ToArray(), withCors: true);
             return;
         }
 
-        await pc.SetRemoteDescriptionAsync(msg.Sdp, isOffer: true);
+        pc.SetRemoteDescriptionAsync(msg.Sdp, isOffer: true);
 
-        // Register in PeerMesh so plugins can send to it
-        _peerMesh.RegisterIncomingConnection(peerInfo);
+        // Register the SAME connection in the mesh so plugin channels are
+        // bound to the negotiated peer connection, not a fresh dead one.
+        _peerMesh.RegisterIncomingConnection(peerInfo, pc);
 
-        // Store for ICE candidate forwarding and collect outgoing candidates
         lock (_pendingIceConnections)
         {
-            _pendingIceConnections[msg.FromPeerId] = pc;
+            _pendingIceConnections[peerId] = pc;
         }
 
-        // Subscribe to outgoing ICE candidates for browser polling
         lock (_iceLock)
         {
-            _pendingOutgoingIce[msg.FromPeerId] = new List<IceCandidateMessage>();
+            _pendingOutgoingIce[peerId] = new List<IceCandidateMessage>();
         }
-        Action<List<SIPSorcery.Net.RTCIceCandidate>>? onCandidate = null;
-        onCandidate = candidates =>
+        void OnCandidate(List<SIPSorcery.Net.RTCIceCandidate> candidates)
         {
             lock (_iceLock)
             {
-                if (_pendingOutgoingIce.TryGetValue(msg.FromPeerId, out var list))
+                if (_pendingOutgoingIce.TryGetValue(peerId, out var list))
                 {
                     foreach (var c in candidates)
                     {
                         list.Add(new IceCandidateMessage
                         {
-                            PeerId = msg.FromPeerId,
+                            PeerId = peerId,
                             Candidate = c.candidate ?? "",
                             SdpMid = c.sdpMid ?? "0",
                             SdpMLineIndex = c.sdpMLineIndex,
@@ -265,15 +266,24 @@ public class SignalingServer : IDisposable
                     }
                 }
             }
+        }
+        pc.IceCandidatesGenerated += OnCandidate;
+        pc.StateChanged += state =>
+        {
+            if (state is PeerConnectionState.Closed or PeerConnectionState.Failed)
+            {
+                pc.IceCandidatesGenerated -= OnCandidate;
+                lock (_pendingIceConnections)
+                {
+                    _pendingIceConnections.Remove(peerId);
+                }
+            }
         };
-        pc.IceCandidatesGenerated += onCandidate;
 
-        // Wait for ICE gathering to complete so the answer SDP includes candidates
+        // Wait for ICE gathering so the answer SDP carries our candidates.
         await pc.WaitForIceGatheringAsync(TimeSpan.FromSeconds(3));
 
-        pc.IceCandidatesGenerated -= onCandidate;
-
-        // Fire ChannelRequested on PeerMesh so plugins can respond
+        // Fire the channel request so the owning plugin starts producing.
         if (!string.IsNullOrEmpty(msg.Capability))
         {
             _ = _peerMesh.RaiseChannelRequestedAsync(peerInfo, msg.Capability);
@@ -286,59 +296,59 @@ public class SignalingServer : IDisposable
             }
         }
 
-        var localSdp = pc.GetLocalSdp();
-        System.Diagnostics.Debug.WriteLine(
-            $"[Signaling] Offer from {msg.FromPeerId}, answer ready");
+        var localSdp = pc.GetLocalSdp() ?? "";
+        Log.Info($"Offer handled for '{peerId}' capability={msg.Capability} answerSdpBytes={localSdp.Length}");
 
+        // Remember the peer's real address for the UI (available after the
+        // socket round trip; the request handler passes it via Body marker).
         var answer = new SignalingMessage
         {
             Type = "answer",
-            Sdp = localSdp ?? "",
-            FromPeerId = Environment.MachineName,
+            Sdp = localSdp,
+            FromPeerId = GetDeviceName(),
         };
 
-        await SendJson(ctx, answer);
+        await WriteJsonAsync(stream, 200, answer, withCors: true);
     }
 
-    private async Task HandleIceCandidate(HttpListenerContext ctx)
+    private async Task HandleIceCandidateAsync(HttpRequest request)
     {
-        using var reader = new StreamReader(ctx.Request.InputStream, Encoding.UTF8);
-        var body = await reader.ReadToEndAsync();
-
-        var msg = JsonSerializer.Deserialize<IceCandidateMessage>(body);
-        if (msg == null || string.IsNullOrEmpty(msg.PeerId))
+        IceCandidateMessage? msg;
+        try
         {
-            ctx.Response.StatusCode = 400;
-            ctx.Response.Close();
-            return;
+            msg = JsonSerializer.Deserialize<IceCandidateMessage>(request.Body, new JsonSerializerOptions
+            {
+                PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+            });
         }
+        catch (JsonException)
+        {
+            msg = null;
+        }
+
+        if (msg == null || string.IsNullOrEmpty(msg.PeerId)) return;
 
         lock (_pendingIceConnections)
         {
             if (_pendingIceConnections.TryGetValue(msg.PeerId, out var pc))
             {
-                pc.AddIceCandidate(new RTCIceCandidateInit
+                pc.AddIceCandidate(new SIPSorcery.Net.RTCIceCandidateInit
                 {
                     candidate = msg.Candidate ?? "",
                     sdpMid = msg.SdpMid ?? "0",
                     sdpMLineIndex = (ushort)msg.SdpMLineIndex,
                 });
-                System.Diagnostics.Debug.WriteLine(
-                    $"[Signaling] ICE candidate from {msg.PeerId}");
             }
         }
-
-        ctx.Response.StatusCode = 200;
-        ctx.Response.Close();
+        await Task.CompletedTask;
     }
 
-    private async Task HandleIcePending(HttpListenerContext ctx)
+    private async Task HandleIcePendingAsync(NetworkStream stream, string query)
     {
-        var peerId = ctx.Request.QueryString["peerId"];
+        var peerId = GetQueryValue(query, "peerId");
         if (string.IsNullOrEmpty(peerId))
         {
-            ctx.Response.StatusCode = 400;
-            ctx.Response.Close();
+            await WriteResponseAsync(stream, 400, "text/plain", "peerId required"u8.ToArray(), withCors: true);
             return;
         }
 
@@ -358,43 +368,31 @@ public class SignalingServer : IDisposable
 
         if (candidates == null)
         {
-            ctx.Response.StatusCode = 404;
-            ctx.Response.Close();
+            await WriteJsonAsync(stream, 404, new { candidates = Array.Empty<IceCandidateMessage>() }, withCors: true);
             return;
         }
 
-        await SendJson(ctx, new { candidates });
+        await WriteJsonAsync(stream, 200, new { candidates }, withCors: true);
     }
 
-    private async Task ServeStaticFile(HttpListenerContext ctx, string path)
+    private async Task ServeStaticFileAsync(NetworkStream stream, string path)
     {
-        // Map URL path to file path
-        // "/" or "/index.html" -> index.html
-        // "/app.js" -> app.js
-        // "/styles.css" -> styles.css
+        var relative = path == "/" || path == "/index.html" ? "index.html" : path.TrimStart('/');
+        var filePath = Path.GetFullPath(Path.Combine(_webRoot, relative));
 
-        var filePath = path == "/" || path == "/index.html"
-            ? Path.Combine(_webRoot, "index.html")
-            : Path.Combine(_webRoot, path.TrimStart('/'));
-
-        // Security: ensure file is within web root
-        var fullPath = Path.GetFullPath(filePath);
-        if (!fullPath.StartsWith(Path.GetFullPath(_webRoot), StringComparison.OrdinalIgnoreCase))
+        if (!filePath.StartsWith(Path.GetFullPath(_webRoot), StringComparison.OrdinalIgnoreCase))
         {
-            ctx.Response.StatusCode = 403;
-            ctx.Response.Close();
+            await WriteResponseAsync(stream, 403, "text/plain", "Forbidden"u8.ToArray());
             return;
         }
 
-        if (!File.Exists(fullPath))
+        if (!File.Exists(filePath))
         {
-            ctx.Response.StatusCode = 404;
-            ctx.Response.Close();
+            await WriteResponseAsync(stream, 404, "text/plain", "Not found"u8.ToArray());
             return;
         }
 
-        // Set content type based on extension
-        var ext = Path.GetExtension(fullPath).ToLowerInvariant();
+        var ext = Path.GetExtension(filePath).ToLowerInvariant();
         var contentType = ext switch
         {
             ".html" or ".htm" => "text/html; charset=utf-8",
@@ -404,47 +402,181 @@ public class SignalingServer : IDisposable
             ".jpg" or ".jpeg" => "image/jpeg",
             ".svg" => "image/svg+xml",
             ".ico" => "image/x-icon",
+            ".json" => "application/json; charset=utf-8",
             _ => "application/octet-stream",
         };
 
-        var content = await File.ReadAllBytesAsync(fullPath);
-        ctx.Response.ContentType = contentType;
-        ctx.Response.ContentLength64 = content.Length;
-        await ctx.Response.OutputStream.WriteAsync(content);
-        ctx.Response.Close();
+        var content = await File.ReadAllBytesAsync(filePath);
+        await WriteResponseAsync(stream, 200, contentType, content);
+    }
+
+    // ── HTTP plumbing ──
+
+    private static async Task<HttpRequest?> ReadHttpRequestAsync(NetworkStream stream)
+    {
+        var headerBytes = new MemoryStream();
+        var buffer = new byte[4096];
+        int headerEnd = -1;
+        int total = 0;
+
+        while (total < MaxHeaderBytes)
+        {
+            int read = await stream.ReadAsync(buffer.AsMemory(0, buffer.Length));
+            if (read == 0) return null;
+            headerBytes.Write(buffer, 0, read);
+            total += read;
+
+            var bytes = headerBytes.GetBuffer();
+            for (int i = 0; i < total - 3; i++)
+            {
+                if (bytes[i] == 13 && bytes[i + 1] == 10 && bytes[i + 2] == 13 && bytes[i + 3] == 10)
+                {
+                    headerEnd = i + 4;
+                    break;
+                }
+            }
+            if (headerEnd >= 0) break;
+        }
+        if (headerEnd < 0) return null;
+
+        var headerText = Encoding.UTF8.GetString(headerBytes.GetBuffer(), 0, headerEnd);
+        var lines = headerText.Split("\r\n");
+        var requestLine = lines[0].Split(' ');
+        if (requestLine.Length < 2) return null;
+
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        for (int i = 1; i < lines.Length; i++)
+        {
+            var line = lines[i];
+            if (line.Length == 0) continue;
+            int colon = line.IndexOf(':');
+            if (colon <= 0) continue;
+            headers[line[..colon].Trim()] = line[(colon + 1)..].Trim();
+        }
+
+        int contentLength = 0;
+        if (headers.TryGetValue("Content-Length", out var clValue))
+        {
+            int.TryParse(clValue, out contentLength);
+        }
+        if (contentLength < 0 || contentLength > MaxBodyBytes) return null;
+
+        var body = new byte[contentLength];
+        if (contentLength > 0)
+        {
+            int remaining = contentLength;
+            int offset = 0;
+            int available = total - headerEnd;
+            if (available > 0)
+            {
+                int take = Math.Min(available, contentLength);
+                Buffer.BlockCopy(headerBytes.GetBuffer(), headerEnd, body, 0, take);
+                offset = take;
+                remaining -= take;
+            }
+            while (remaining > 0)
+            {
+                int read = await stream.ReadAsync(body.AsMemory(offset, remaining));
+                if (read == 0) return null;
+                offset += read;
+                remaining -= read;
+            }
+        }
+
+        var pathAndQuery = requestLine[1];
+        int qmark = pathAndQuery.IndexOf('?');
+        var path = qmark >= 0 ? pathAndQuery[..qmark] : pathAndQuery;
+        var query = qmark >= 0 ? pathAndQuery[(qmark + 1)..] : "";
+
+        return new HttpRequest(requestLine[0].ToUpperInvariant(), path, query, headers, body);
+    }
+
+    private static string GetQueryValue(string query, string key)
+    {
+        foreach (var pair in query.Split('&', StringSplitOptions.RemoveEmptyEntries))
+        {
+            int eq = pair.IndexOf('=');
+            if (eq < 0) continue;
+            if (pair[..eq].Equals(key, StringComparison.OrdinalIgnoreCase))
+            {
+                return Uri.UnescapeDataString(pair[(eq + 1)..]);
+            }
+        }
+        return "";
+    }
+
+    private static async Task WriteResponseAsync(
+        NetworkStream stream, int statusCode, string contentType, byte[] content, bool withCors = false)
+    {
+        var sb = new StringBuilder();
+        sb.Append("HTTP/1.1 ").Append(statusCode).Append(' ')
+          .Append(StatusText(statusCode)).Append("\r\n");
+        sb.Append("Content-Type: ").Append(contentType).Append("\r\n");
+        sb.Append("Content-Length: ").Append(content.Length).Append("\r\n");
+        if (withCors)
+        {
+            sb.Append("Access-Control-Allow-Origin: *\r\n");
+            sb.Append("Access-Control-Allow-Methods: GET, POST, OPTIONS\r\n");
+            sb.Append("Access-Control-Allow-Headers: Content-Type\r\n");
+        }
+        sb.Append("Connection: close\r\n\r\n");
+
+        var head = Encoding.ASCII.GetBytes(sb.ToString());
+        await stream.WriteAsync(head);
+        if (content.Length > 0)
+        {
+            await stream.WriteAsync(content);
+        }
+        await stream.FlushAsync();
+    }
+
+    private static Task WriteJsonAsync(NetworkStream stream, int statusCode, object data, bool withCors = false)
+    {
+        var json = JsonSerializer.Serialize(data, new JsonSerializerOptions
+        {
+            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        });
+        return WriteResponseAsync(stream, statusCode, "application/json", Encoding.UTF8.GetBytes(json), withCors);
+    }
+
+    private static string StatusText(int code) => code switch
+    {
+        200 => "OK",
+        204 => "No Content",
+        400 => "Bad Request",
+        403 => "Forbidden",
+        404 => "Not Found",
+        500 => "Internal Server Error",
+        _ => "OK",
+    };
+
+    private static string GetDeviceName()
+    {
+        try { return Environment.MachineName; }
+        catch { return "unknown"; }
     }
 
     public void Stop()
     {
+        IsRunning = false;
         _cts?.Cancel();
-        try { _listener.Stop(); } catch { }
-    }
-
-    public void Dispose()
-    {
-        _cts?.Cancel();
-        _cts?.Dispose();
-        try { (_listener as IDisposable)?.Dispose(); } catch { }
+        try { _listener?.Stop(); } catch { }
         lock (_pendingIceConnections)
         {
             foreach (var pc in _pendingIceConnections.Values)
                 pc.Dispose();
             _pendingIceConnections.Clear();
         }
+        lock (_iceLock)
+        {
+            _pendingOutgoingIce.Clear();
+        }
     }
 
-    private static async Task SendJson(HttpListenerContext ctx, object data)
+    public void Dispose()
     {
-        var json = JsonSerializer.Serialize(data, new JsonSerializerOptions
-        {
-            PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
-        });
-        var buf = Encoding.UTF8.GetBytes(json);
-
-        ctx.Response.ContentType = "application/json";
-        ctx.Response.ContentLength64 = buf.Length;
-        await ctx.Response.OutputStream.WriteAsync(buf);
-        ctx.Response.Close();
+        Stop();
+        _cts?.Dispose();
     }
 }
 
@@ -463,3 +595,10 @@ public class IceCandidateMessage
     public string? SdpMid { get; set; }
     public int SdpMLineIndex { get; set; }
 }
+
+internal record HttpRequest(
+    string Method,
+    string Path,
+    string Query,
+    Dictionary<string, string> Headers,
+    byte[] Body);

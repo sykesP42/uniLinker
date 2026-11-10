@@ -146,6 +146,43 @@ public partial class ShareViewModel : ObservableObject
     }
 
     [RelayCommand]
+    private void CopyLink()
+    {
+        if (string.IsNullOrEmpty(ShareAddress) || ShareAddress.StartsWith("Waiting")) return;
+
+        try
+        {
+            var package = new Windows.ApplicationModel.DataTransfer.DataPackage();
+            package.SetText(ShareAddress);
+            Windows.ApplicationModel.DataTransfer.Clipboard.SetContent(package);
+            ShowNotification(LocalizationService.Instance.CopiedToClipboard, ShareAddress);
+        }
+        catch
+        {
+            // Clipboard may be locked by another process; ignore.
+        }
+    }
+
+    [RelayCommand]
+    private void OpenInBrowser()
+    {
+        if (string.IsNullOrEmpty(ShareAddress) || ShareAddress.StartsWith("Waiting")) return;
+
+        try
+        {
+            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+            {
+                FileName = ShareAddress,
+                UseShellExecute = true,
+            });
+        }
+        catch
+        {
+            // Ignore launch failures.
+        }
+    }
+
+    [RelayCommand]
     private void StopShare()
     {
         _bridge?.StopSharing();

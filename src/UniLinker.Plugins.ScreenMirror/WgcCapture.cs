@@ -3,6 +3,7 @@ using Windows.Graphics;
 using Windows.Graphics.Capture;
 using Windows.Graphics.DirectX;
 using Windows.Graphics.DirectX.Direct3D11;
+using UniLinker.Core;
 using UniLinker.Plugin.Sdk;
 using Vortice.Direct3D11;
 using Vortice.DXGI;
@@ -25,6 +26,7 @@ public class WgcCapture : ICapture
     private Texture2DDescription _stagingDesc;
 
     public event Action<CaptureFrame>? FrameCaptured;
+    private int _framesDelivered;
 
     public bool Start(int width, int height, int fps)
     {
@@ -36,43 +38,53 @@ public class WgcCapture : ICapture
         {
             if (!CreateD3DDeviceAndWrap())
             {
-                System.Diagnostics.Debug.WriteLine("WGC: Failed to create D3D device");
+                Log.Error("WGC: Failed to create D3D device");
                 return false;
             }
 
             var displayId = GetPrimaryDisplayId();
             if (displayId == null)
             {
-                System.Diagnostics.Debug.WriteLine("WGC: Failed to get primary display id");
+                Log.Error("WGC: Failed to get primary display id");
                 return false;
             }
 
-            _item = GraphicsCaptureItem.TryCreateFromDisplayId(displayId.Value);
+            _item = CreateItemForMonitor(displayId.HMonitor);
             if (_item == null)
             {
-                System.Diagnostics.Debug.WriteLine("WGC: No display item found");
+                Log.Error("WGC: No display item found");
                 return false;
             }
+            Log.Info($"WGC: item '{_item.DisplayName}' size {_item.Size.Width}x{_item.Size.Height} thread={Environment.CurrentManagedThreadId} supported={Windows.Graphics.Capture.GraphicsCaptureSession.IsSupported()} d3dDevice={_d3dDevice != null} ctx={_d3dContext != null}");
 
-            _framePool = Direct3D11CaptureFramePool.Create(
+            // CreateFreeThreaded delivers FrameArrived without needing a
+            // DispatcherQueue on the calling thread (capture runs on the
+            // plugin's background session thread).
+            _framePool = Direct3D11CaptureFramePool.CreateFreeThreaded(
                 _winrtDevice!,
                 DirectXPixelFormat.B8G8R8A8UIntNormalized,
                 2,
                 _item.Size);
 
             _session = _framePool.CreateCaptureSession(_item);
-            _session.IsCursorCaptureEnabled = false;
+            // NOTE: leave cursor capture on by default; toggling this property
+            // before StartCapture has been flaky across Windows builds.
+            _session.IsCursorCaptureEnabled = true;
 
             _framePool.FrameArrived += OnFrameArrived;
-            _session.StartCapture();
+            // Must be set before StartCapture: on a static desktop WGC only
+            // delivers the initial frame, which would otherwise race this
+            // flag and be dropped forever.
             _isCapturing = true;
+            _session.StartCapture();
+            Log.Info($"WGC: session started, thread={Environment.CurrentManagedThreadId}, framePoolIsFreeThreaded=yes");
 
-            System.Diagnostics.Debug.WriteLine("WGC: D3D11 capture started with staging readback");
+            Log.Info("WGC capture started (staging readback)");
             return true;
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"WGC error: {ex.Message}");
+            Log.Error($"WGC error: {ex}");
             return false;
         }
     }
@@ -89,8 +101,10 @@ public class WgcCapture : ICapture
 
             var surface = frame.Surface;
 
-            // Get the underlying ID3D11Texture2D from WinRT IDirect3DSurface
-            var dxgiAccess = (IDirect3DDxgiInterfaceAccessNative)(object)surface;
+            // Get the underlying ID3D11Texture2D from WinRT IDirect3DSurface.
+            // A raw COM cast fails on CsWinRT 2.x (the object is an
+            // IInspectable wrapper); CastExtensions.As performs the QI.
+            var dxgiAccess = WinRT.CastExtensions.As<IDirect3DDxgiInterfaceAccessNative>(surface);
             nint dxgiSurfacePtr = nint.Zero;
             nint texturePtr = nint.Zero;
 
@@ -154,13 +168,18 @@ public class WgcCapture : ICapture
                 var ts = (long)(frame.SystemRelativeTime.TotalMilliseconds * 1000);
 
                 var captureFrame = new CaptureFrame(
-                    D3dTexture: texturePtr,
+                    D3dTexture: nint.Zero,
                     Width: (int)desc.Width,
                     Height: (int)desc.Height,
                     Pitch: rowPitch,
                     TimestampUs: ts,
                     RawData: rawData);
 
+                _framesDelivered++;
+                if (_framesDelivered == 1 || _framesDelivered % 120 == 0)
+                {
+                    Log.Info($"WGC frame #{_framesDelivered} {desc.Width}x{desc.Height} pitch={rowPitch}");
+                }
                 FrameCaptured?.Invoke(captureFrame);
             }
             finally
@@ -214,11 +233,10 @@ public class WgcCapture : ICapture
 
     private bool CreateD3DDeviceAndWrap()
     {
-        // Step 1: Create native D3D11 device via P/Invoke
         int hr = NativeD3D11CreateDevice(
-            nint.Zero,                               // pAdapter
+            nint.Zero,
             D3D_DRIVER_TYPE.D3D_DRIVER_TYPE_HARDWARE,
-            nint.Zero,                               // Software
+            nint.Zero,
             (uint)D3D11_CREATE_DEVICE_FLAG.D3D11_CREATE_DEVICE_BGRA_SUPPORT,
             null, 0,
             D3D11_SDK_VERSION,
@@ -228,86 +246,96 @@ public class WgcCapture : ICapture
 
         if (hr < 0 || nativeDevice == 0)
         {
-            System.Diagnostics.Debug.WriteLine($"WGC: D3D11CreateDevice failed, hr=0x{hr:X8}");
+            Log.Error($"WGC: D3D11CreateDevice failed, hr=0x{hr:X8}");
+            return false;
+        }
+
+        // Keep device + context alive for staging readbacks (Vortice
+        // wrappers take ownership of one reference each).
+        Marshal.AddRef(nativeDevice);
+        _d3dDevice = new ID3D11Device(nativeDevice);
+        _d3dContext = new ID3D11DeviceContext(nativeContext);
+        Marshal.Release(nativeContext);
+
+        Guid iidDxgiDevice = new("54ec77fa-1377-44e6-8c32-88fd5f44c84c");
+        hr = Marshal.QueryInterface(nativeDevice, in iidDxgiDevice, out nint dxgiDevice);
+        Marshal.Release(nativeDevice);
+        if (hr < 0)
+        {
+            Log.Error($"WGC: QI for IDXGIDevice failed, hr=0x{hr:X8}");
             return false;
         }
 
         try
         {
-            // Step 2: Wrap native device and context in Vortice managed objects
-            Marshal.AddRef(nativeDevice); // Vortice constructor will AddRef; we balance here
-            _d3dDevice = new ID3D11Device(nativeDevice);
-            _d3dContext = new ID3D11DeviceContext(nativeContext);
-
-            // Step 3: Get IDXGIDevice for WinRT wrapping
-            Guid iidDxgiDevice = new("54ec77fa-1377-44e6-8c32-88fd5f44c84c");
-            hr = Marshal.QueryInterface(nativeDevice, in iidDxgiDevice, out nint dxgiDevice);
+            hr = CreateDirect3D11DeviceFromDXGIDevice(dxgiDevice, out nint iinspectable);
             if (hr < 0)
             {
-                System.Diagnostics.Debug.WriteLine($"WGC: QI for IDXGIDevice failed, hr=0x{hr:X8}");
+                Log.Error($"WGC: CreateDirect3D11DeviceFromDXGIDevice failed, hr=0x{hr:X8}");
                 return false;
             }
 
-            try
-            {
-                // Wrap DXGI device into WinRT IDirect3DDevice
-                hr = CreateDirect3D11DeviceFromDXGIDevice(dxgiDevice, out nint iinspectable);
-                if (hr < 0)
-                {
-                    System.Diagnostics.Debug.WriteLine(
-                        $"WGC: CreateDirect3D11DeviceFromDXGIDevice failed, hr=0x{hr:X8}");
-                    return false;
-                }
-
-                Guid iidDirect3DDevice = typeof(IDirect3DDevice).GUID;
-                hr = Marshal.QueryInterface(iinspectable, in iidDirect3DDevice, out nint d3dDeviceWinRT);
-                Marshal.Release(iinspectable);
-
-                if (hr < 0)
-                {
-                    System.Diagnostics.Debug.WriteLine($"WGC: QI for IDirect3DDevice failed, hr=0x{hr:X8}");
-                    return false;
-                }
-
-                _winrtDevice = (IDirect3DDevice)Marshal.GetObjectForIUnknown(d3dDeviceWinRT)!;
-                return true;
-            }
-            finally
-            {
-                Marshal.Release(dxgiDevice);
-            }
+            // The IInspectable pointer is already an IDirect3DDevice; the
+            // projection AddRefs internally, so drop ours afterwards.
+            _winrtDevice = WinRT.MarshalInterface<IDirect3DDevice>.FromAbi(iinspectable);
+            Marshal.Release(iinspectable);
+            return true;
         }
         finally
         {
-            Marshal.Release(nativeDevice);
+            Marshal.Release(dxgiDevice);
         }
     }
 
     // ── Display Enumeration ──
 
-    private static DisplayId? GetPrimaryDisplayId()
+    private static readonly Guid GraphicsCaptureItemGuid =
+        new("79C3F95B-31F7-4EC2-A464-632EF5D30760");
+
+    /// <summary>
+    /// Create a GraphicsCaptureItem from an HMONITOR via
+    /// IGraphicsCaptureItemInterop::CreateForMonitor (works without the
+    /// newer DisplayId-based API).
+    /// </summary>
+    private static GraphicsCaptureItem? CreateItemForMonitor(nint hMonitor)
     {
-        DisplayId? result = null;
-
-        EnumDisplayMonitors(nint.Zero, nint.Zero,
-            (hMonitor, hdc, rc, lParam) =>
+        try
+        {
+            var factory = WinRT.ActivationFactory.Get(
+                "Windows.Graphics.Capture.GraphicsCaptureItem");
+            var interop = factory.AsInterface<IGraphicsCaptureItemInterop>();
+            int hr = interop.CreateForMonitor(hMonitor, GraphicsCaptureItemGuid, out nint itemPointer);
+            if (hr < 0 || itemPointer == nint.Zero)
             {
-                MonitorInfoEx info = default;
-                info.Size = (uint)Marshal.SizeOf<MonitorInfoEx>();
-                if (GetMonitorInfoW(hMonitor, ref info))
-                {
-                    if ((info.Flags & MONITORINFOF_PRIMARY) != 0)
-                    {
-                        result = new DisplayId((ulong)hMonitor.ToInt64());
-                        return false;
-                    }
-                }
-                return true;
-            },
-            nint.Zero);
-
-        return result;
+                Log.Error($"WGC: CreateForMonitor hr=0x{hr:X8}");
+                return null;
+            }
+            var item = GraphicsCaptureItem.FromAbi(itemPointer);
+            Marshal.Release(itemPointer);
+            return item;
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"WGC: CreateForMonitor failed: {ex.Message}");
+            return null;
+        }
     }
+
+    private record DisplayIdInfo(nint HMonitor);
+
+    private static DisplayIdInfo? GetPrimaryDisplayId()
+    {
+        var hmon = MonitorFromWindow(GetDesktopWindow(), MONITOR_DEFAULTTOPRIMARY);
+        return hmon != nint.Zero ? new DisplayIdInfo(hmon) : null;
+    }
+
+    private const uint MONITOR_DEFAULTTOPRIMARY = 1;
+
+    [DllImport(User32)]
+    private static extern nint MonitorFromWindow(nint hwnd, uint flags);
+
+    [DllImport(User32)]
+    private static extern nint GetDesktopWindow();
 
     // ── Native P/Invoke ──
     private const string D3d11 = "d3d11.dll";
@@ -334,7 +362,7 @@ public class WgcCapture : ICapture
         D3D11_CREATE_DEVICE_BGRA_SUPPORT = 0x20,
     }
 
-    [DllImport(D3d11)]
+    [DllImport(D3d11, EntryPoint = "D3D11CreateDevice")]
     private static extern int NativeD3D11CreateDevice(
         nint pAdapter,
         D3D_DRIVER_TYPE driverType,
@@ -405,4 +433,27 @@ internal interface IDirect3DDxgiInterfaceAccessNative
     int GetInterface(
         [In] in Guid iid,
         [Out] out IntPtr pInterface);
+}
+
+/// <summary>
+/// Windows.Graphics.Capture.IGraphicsCaptureItemInterop for creating capture
+/// items from native handles (works on Windows 10 1903+).
+/// GUID: 3628E81B-3CAC-4C60-B7F4-23CE0E0C3356
+/// </summary>
+[ComImport]
+[Guid("3628E81B-3CAC-4C60-B7F4-23CE0E0C3356")]
+[InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
+internal interface IGraphicsCaptureItemInterop
+{
+    [PreserveSig]
+    int CreateForWindow(
+        nint window,
+        ref Guid iid,
+        out nint item);
+
+    [PreserveSig]
+    int CreateForMonitor(
+        nint hmonitor,
+        ref Guid iid,
+        out nint item);
 }

@@ -23,7 +23,7 @@ public class AppFixture : IDisposable
         var solutionDir = FindSolutionDirectory();
         var exePath = Path.Combine(
             solutionDir,
-            "src", "UniLinker.WinUI", "bin", "Debug", "net9.0-windows10.0.19041.0", "win-x64",
+            "src", "UniLinker.WinUI", "bin", "Debug", "net9.0-windows10.0.22621.0", "win-x64",
             "UniLinker.WinUI.exe");
 
         if (!File.Exists(exePath))
@@ -42,7 +42,7 @@ public class AppFixture : IDisposable
                 FileName = exePath,
                 UseShellExecute = true,
                 CreateNoWindow = false,
-                WindowStyle = ProcessWindowStyle.Minimized
+                WindowStyle = ProcessWindowStyle.Normal
             }
         };
 

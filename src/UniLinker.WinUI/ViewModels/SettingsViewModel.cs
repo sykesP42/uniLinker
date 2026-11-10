@@ -1,6 +1,7 @@
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.UI.Xaml;
+using Microsoft.Win32;
 using System.Text.Json;
 using UniLinker.WinUI.Services;
 
@@ -8,6 +9,9 @@ namespace UniLinker.WinUI.ViewModels;
 
 public partial class SettingsViewModel : ObservableObject
 {
+    private const string RunKeyPath = @"Software\Microsoft\Windows\CurrentVersion\Run";
+    private const string RunValueName = "UniLinker";
+
     [ObservableProperty] private string _deviceName = Environment.MachineName;
     [ObservableProperty] private int _httpPort = 9527;
     [ObservableProperty] private bool _autoStart = true;
@@ -27,14 +31,15 @@ public partial class SettingsViewModel : ObservableObject
         {
             if (SetProperty(ref _themeIndex, value))
             {
-                HasUnsavedChanges = true;
-                // Apply theme immediately
+                MarkDirty();
                 ApplyTheme(value);
             }
         }
     }
 
-    // Language display names for UI
+    private bool _isLoading;
+    private bool _loadedOnce;
+
     public string[] Languages => ["English", "中文"];
 
     private readonly WebBridge? _bridge;
@@ -55,9 +60,9 @@ public partial class SettingsViewModel : ObservableObject
 
     public void LoadSettings()
     {
+        _isLoading = true;
         try
         {
-            // Load local settings
             if (File.Exists(_configPath))
             {
                 var json = File.ReadAllText(_configPath);
@@ -68,21 +73,36 @@ public partial class SettingsViewModel : ObservableObject
                     HttpPort = settings.HttpPort > 0 ? settings.HttpPort : 9527;
                     AutoStart = settings.AutoStart;
                     MinimizeToTray = settings.MinimizeToTray;
-                    ThemeIndex = settings.ThemeIndex;
                     DefaultResolution = settings.DefaultResolution;
                     DefaultFps = settings.DefaultFps;
                     DefaultBitrate = settings.DefaultBitrate;
                     LanguageIndex = settings.LanguageIndex;
-
-                    // Apply loaded theme and language
-                    ApplyTheme(ThemeIndex);
-                    LocalizationService.Instance.SetLanguage(LanguageIndex);
+                    ThemeIndex = settings.ThemeIndex;
                 }
             }
+
+            // Reflect the actual registry autostart state.
+            AutoStart = IsRegisteredForAutostart();
+
+            LocalizationService.Instance.SetLanguage(LanguageIndex);
+            _loadedOnce = true;
+            HasUnsavedChanges = false;
         }
         catch
         {
             // Use defaults if load fails
+        }
+        finally
+        {
+            _isLoading = false;
+        }
+    }
+
+    private void MarkDirty()
+    {
+        if (!_isLoading && _loadedOnce)
+        {
+            HasUnsavedChanges = true;
         }
     }
 
@@ -98,7 +118,7 @@ public partial class SettingsViewModel : ObservableObject
     }
 
     [RelayCommand]
-    private void SaveSettings()
+    private async Task SaveSettingsAsync()
     {
         try
         {
@@ -115,71 +135,114 @@ public partial class SettingsViewModel : ObservableObject
                 LanguageIndex = LanguageIndex
             };
 
-            // Save local settings
             Directory.CreateDirectory(Path.GetDirectoryName(_configPath)!);
             var json = JsonSerializer.Serialize(settings, new JsonSerializerOptions { WriteIndented = true });
             File.WriteAllText(_configPath, json);
 
-            // Update platform config via bridge
-            var platformConfig = JsonSerializer.Serialize(new
+            SetAutostartRegistration(AutoStart);
+
+            // Push device name / port into the running platform (recreates
+            // discovery and restarts the signaling server when needed).
+            if (_bridge != null)
             {
-                DeviceName,
-                HttpPort,
-                AutoStartPlugins = true
-            });
-            _bridge?.SaveConfig(platformConfig);
+                await App.ApplyRuntimeSettingsAsync(DeviceName, HttpPort);
+            }
 
-            // Update localization
-            LocalizationService.Instance.SetLanguage(LanguageIndex);
-
-            StatusMessage = LanguageIndex == 0 ? "Settings saved successfully" : "设置已保存";
+            var loc = LocalizationService.Instance;
+            StatusMessage = loc.SettingsSaved;
             HasUnsavedChanges = false;
         }
         catch (Exception ex)
         {
-            StatusMessage = LanguageIndex == 0 ? $"Failed to save: {ex.Message}" : $"保存失败: {ex.Message}";
+            StatusMessage = $"Save failed: {ex.Message}";
         }
     }
 
     [RelayCommand]
     private void ResetSettings()
     {
-        DeviceName = Environment.MachineName;
-        HttpPort = 9527;
-        AutoStart = true;
-        MinimizeToTray = true;
-        ThemeIndex = 2; // System
-        DefaultResolution = 0;
-        DefaultFps = 0;
-        DefaultBitrate = 1;
-        LanguageIndex = 0;
+        _isLoading = true;
+        try
+        {
+            DeviceName = Environment.MachineName;
+            HttpPort = 9527;
+            AutoStart = true;
+            MinimizeToTray = true;
+            DefaultResolution = 0;
+            DefaultFps = 0;
+            DefaultBitrate = 1;
+            LanguageIndex = 0;
+            ThemeIndex = 2; // System
+        }
+        finally
+        {
+            _isLoading = false;
+        }
 
-        // Apply default theme and language
         ApplyTheme(ThemeIndex);
         LocalizationService.Instance.SetLanguage(LanguageIndex);
 
-        StatusMessage = LanguageIndex == 0 ? "Settings reset to defaults" : "设置已重置为默认值";
+        StatusMessage = LocalizationService.Instance.SettingsReset;
         HasUnsavedChanges = true;
     }
 
     [ObservableProperty] private string _statusMessage = "";
     [ObservableProperty] private bool _hasUnsavedChanges = false;
 
-    // Called when any setting changes
-    partial void OnDeviceNameChanged(string value) => HasUnsavedChanges = true;
-    partial void OnHttpPortChanged(int value) => HasUnsavedChanges = true;
-    partial void OnAutoStartChanged(bool value) => HasUnsavedChanges = true;
-    partial void OnMinimizeToTrayChanged(bool value) => HasUnsavedChanges = true;
-    partial void OnDefaultResolutionChanged(int value) => HasUnsavedChanges = true;
-    partial void OnDefaultFpsChanged(int value) => HasUnsavedChanges = true;
-    partial void OnDefaultBitrateChanged(int value) => HasUnsavedChanges = true;
+    partial void OnDeviceNameChanged(string value) => MarkDirty();
+    partial void OnHttpPortChanged(int value) => MarkDirty();
+    partial void OnAutoStartChanged(bool value) => MarkDirty();
+    partial void OnMinimizeToTrayChanged(bool value) => MarkDirty();
+    partial void OnDefaultResolutionChanged(int value) => MarkDirty();
+    partial void OnDefaultFpsChanged(int value) => MarkDirty();
+    partial void OnDefaultBitrateChanged(int value) => MarkDirty();
     partial void OnLanguageIndexChanged(int value)
     {
-        HasUnsavedChanges = true;
-        // Update localization service immediately
+        MarkDirty();
+        // Localization applies immediately so the UI reflects the choice.
         LocalizationService.Instance.SetLanguage(value);
-        // Update status message to new language
-        StatusMessage = "";
+    }
+
+    // ── Autostart registry helpers ──
+
+    private static bool IsRegisteredForAutostart()
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.OpenSubKey(RunKeyPath);
+            var value = key?.GetValue(RunValueName) as string;
+            return !string.IsNullOrEmpty(value);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static void SetAutostartRegistration(bool enabled)
+    {
+        try
+        {
+            using var key = Registry.CurrentUser.CreateSubKey(RunKeyPath);
+            if (key == null) return;
+
+            if (enabled)
+            {
+                var exePath = Environment.ProcessPath;
+                if (!string.IsNullOrEmpty(exePath))
+                {
+                    key.SetValue(RunValueName, $"\"{exePath}\"");
+                }
+            }
+            else
+            {
+                key.DeleteValue(RunValueName, throwOnMissingValue: false);
+            }
+        }
+        catch
+        {
+            // Registry access is best effort.
+        }
     }
 }
 

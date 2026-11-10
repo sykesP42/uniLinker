@@ -399,7 +399,7 @@
                         CornerRadius="{ThemeResource OverlayCornerRadius}"
                         Padding="20">
                     <StackPanel Spacing="12">
-                        <TextBlock Text="UniLinker v3.0.0-alpha"
+                        <TextBlock Text="UniLinker v3.1.0"
                                    FontWeight="SemiBold"
                                    FontSize="16"/>
                         <TextBlock Text="{Binding Loc.Version}"

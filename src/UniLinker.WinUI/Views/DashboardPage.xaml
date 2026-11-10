@@ -8,26 +8,26 @@
     Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
 
     <ScrollViewer>
-        <StackPanel Padding="32,32,32,48" Spacing="24">
+        <StackPanel Padding="32,32,32,48" Spacing="24" MaxWidth="1000" HorizontalAlignment="Stretch">
+
             <!-- Header Section -->
             <StackPanel Spacing="8">
                 <TextBlock Text="{Binding Loc.Dashboard}" Style="{StaticResource PageHeaderStyle}"/>
-                <TextBlock Text="Monitor your connections and system status"
+                <TextBlock Text="{Binding Loc.DashboardSubtitle}"
                            Style="{StaticResource DescriptionTextStyle}"
                            FontSize="14"/>
             </StackPanel>
 
             <!-- Status Banner -->
             <InfoBar
-                x:Name="SystemStatusInfoBar"
                 Severity="Success"
                 IsOpen="True"
                 IsClosable="False"
                 Title="{Binding Loc.SystemReady}"
                 Margin="0,0,0,8">
                 <InfoBar.Content>
-                    <TextBlock x:Name="SystemStatusText"
-                               Text="Device: UniLinker-PC | Connections: 0 active"
+                    <TextBlock Text="{Binding DeviceInfo, Mode=OneWay}"
+                               Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                Margin="0,4,0,0"/>
                 </InfoBar.Content>
             </InfoBar>
@@ -50,8 +50,7 @@
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                        FontSize="13"/>
                         </StackPanel>
-                        <TextBlock x:Name="DiscoveredCount"
-                                   Text="0"
+                        <TextBlock Text="{Binding Dashboard.DiscoveredDevices, Mode=OneWay}"
                                    Style="{StaticResource TitleLargeTextBlockStyle}"
                                    FontWeight="Bold"/>
                         <TextBlock Text="{Binding Loc.DevicesLower}"
@@ -70,8 +69,7 @@
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                        FontSize="13"/>
                         </StackPanel>
-                        <TextBlock x:Name="ActiveCount"
-                                   Text="0"
+                        <TextBlock Text="{Binding Dashboard.ActiveConnections, Mode=OneWay}"
                                    Style="{StaticResource TitleLargeTextBlockStyle}"
                                    FontWeight="Bold"/>
                         <TextBlock Text="{Binding Loc.Connections}"
@@ -90,8 +88,7 @@
                                        Foreground="{ThemeResource TextFillColorSecondaryBrush}"
                                        FontSize="13"/>
                         </StackPanel>
-                        <TextBlock x:Name="ShareCount"
-                                   Text="0"
+                        <TextBlock Text="{Binding Share.ViewerCount, Mode=OneWay}"
                                    Style="{StaticResource TitleLargeTextBlockStyle}"
                                    FontWeight="Bold"/>
                         <TextBlock Text="{Binding Loc.Session}"
@@ -107,9 +104,31 @@
                            Style="{StaticResource SettingsSectionHeaderStyle}"
                            Margin="0,8,0,0"/>
 
+                <!-- Empty state -->
+                <Border Padding="32,28"
+                        Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"
+                        BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}"
+                        BorderThickness="1"
+                        CornerRadius="{ThemeResource OverlayCornerRadius}"
+                        Visibility="{Binding Devices.HasNoDevices, Mode=OneWay}">
+                    <StackPanel HorizontalAlignment="Center" Spacing="8">
+                        <FontIcon Glyph="&#xE970;" FontSize="32"
+                                  Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                  HorizontalAlignment="Center"/>
+                        <TextBlock Text="{Binding Loc.NoDevicesFound}"
+                                   FontWeight="SemiBold"
+                                   HorizontalAlignment="Center"/>
+                        <TextBlock Text="{Binding Loc.NoDevicesHint}"
+                                   Foreground="{ThemeResource TextFillColorTertiaryBrush}"
+                                   FontSize="12"
+                                   HorizontalAlignment="Center"/>
+                    </StackPanel>
+                </Border>
+
                 <ListView x:Name="RecentDevicesList"
                           ItemsSource="{Binding Devices.Devices, Mode=OneWay}"
-                          SelectionMode="None">
+                          SelectionMode="None"
+                          Visibility="{Binding Devices.HasDevices, Mode=OneWay}">
                     <ListView.ItemContainerStyle>
                         <Style TargetType="ListViewItem">
                             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
@@ -156,18 +175,21 @@
                                     <Border Grid.Column="2"
                                             Background="{ThemeResource SystemFillColorSuccessBrush}"
                                             CornerRadius="4"
-                                            Padding="12,4"
-                                            VerticalAlignment="Center">
-                                        <TextBlock Text="Online"
-                                                   Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"
-                                                   FontSize="11"
-                                                   FontWeight="Medium"/>
+                                            Padding="8,4"
+                                            VerticalAlignment="Center"
+                                            ToolTipService.ToolTip="{Binding State}">
+                                        <FontIcon Glyph="&#xE73E;" FontSize="12"
+                                                  Foreground="{ThemeResource TextOnAccentFillColorPrimaryBrush}"/>
                                     </Border>
 
                                     <!-- Action Button -->
                                     <Button Grid.Column="3"
-                                            Content="View"
-                                            VerticalAlignment="Center"/>
+                                            Tag="{Binding}"
+                                            Click="DeviceView_Click"
+                                            VerticalAlignment="Center"
+                                            ToolTipService.ToolTip="Details">
+                                        <FontIcon Glyph="&#xE8A7;" FontSize="14"/>
+                                    </Button>
                                 </Grid>
                             </Border>
                         </DataTemplate>
