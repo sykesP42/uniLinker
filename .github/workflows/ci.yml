@@ -1,0 +1,30 @@
+name: CI
+
+on:
+  push:
+    branches: [main, "dev/**", "fix/**"]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build (Windows)
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup .NET 9
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Setup MSBuild
+        uses: microsoft/setup-msbuild@v2
+
+      - name: Restore
+        run: dotnet restore UniLinker.sln
+
+      - name: Build
+        run: msbuild UniLinker.sln -p:Configuration=Debug -m -v:minimal -nologo

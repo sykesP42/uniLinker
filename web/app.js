@@ -356,5 +356,13 @@ document.addEventListener('keydown', (e) => {
     }
 });
 
+// Enter in the host field connects directly.
+hostInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+        e.preventDefault();
+        connect();
+    }
+});
+
 // Initialize
 setStatus('', '已断开');

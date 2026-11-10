@@ -137,7 +137,7 @@ public class SignalingServer : IDisposable
                 await WriteJsonAsync(stream, 200, new
                 {
                     name = GetDeviceName(),
-                    version = "3.1.0",
+                    version = UniLinkerInfo.Version,
                     capabilities = _capabilities,
                     status = "available",
                 });
@@ -147,7 +147,7 @@ public class SignalingServer : IDisposable
                 await WriteJsonAsync(stream, 200, new
                 {
                     deviceName = GetDeviceName(),
-                    version = "3.1.0",
+                    version = UniLinkerInfo.Version,
                     port = _port,
                     peers = _peerMesh.ConnectedPeers.Count,
                     status = IsRunning ? "running" : "stopped",

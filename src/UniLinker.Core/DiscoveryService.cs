@@ -6,8 +6,8 @@ namespace UniLinker.Core;
 
 public class DiscoveryService : IDeviceDiscovery, IDisposable
 {
-    private const string ServiceType = "_unilinker._tcp.local.";
-    private const string ServiceName = "_unilinker._tcp";
+    private static readonly string ServiceType = UniLinkerInfo.ServiceType + ".local.";
+    private static readonly string ServiceName = UniLinkerInfo.ServiceType;
     private readonly string _deviceName;
     private readonly int _port;
     private readonly string _version;
@@ -26,7 +26,7 @@ public class DiscoveryService : IDeviceDiscovery, IDisposable
     public DiscoveryService(
         string deviceName = "",
         int port = 9527,
-        string version = "3.1.0",
+        string version = UniLinkerInfo.Version,
         string[]? capabilities = null)
     {
         _deviceName = string.IsNullOrEmpty(deviceName)

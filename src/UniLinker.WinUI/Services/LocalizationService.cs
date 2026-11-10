@@ -129,6 +129,27 @@ public partial class LocalizationService : ObservableObject
                 OnPropertyChanged(nameof(Size));
                 OnPropertyChanged(nameof(ClearCompleted));
                 OnPropertyChanged(nameof(SelectDeviceFirst));
+                OnPropertyChanged(nameof(AutoStartDesc));
+                OnPropertyChanged(nameof(Bitrate10M));
+                OnPropertyChanged(nameof(Bitrate15M));
+                OnPropertyChanged(nameof(Bitrate20M));
+                OnPropertyChanged(nameof(DefaultBitrateDesc));
+                OnPropertyChanged(nameof(DefaultFrameRateDesc));
+                OnPropertyChanged(nameof(DefaultResolutionDesc));
+                OnPropertyChanged(nameof(DeviceNameDesc));
+                OnPropertyChanged(nameof(Fps30));
+                OnPropertyChanged(nameof(Fps60));
+                OnPropertyChanged(nameof(GitHubRepository));
+                OnPropertyChanged(nameof(HttpPortDesc));
+                OnPropertyChanged(nameof(LanguageDesc));
+                OnPropertyChanged(nameof(MinimizeToTrayDesc));
+                OnPropertyChanged(nameof(MitLicense));
+                OnPropertyChanged(nameof(RemoteInputDesc));
+                OnPropertyChanged(nameof(Resolution1080p));
+                OnPropertyChanged(nameof(Resolution2K));
+                OnPropertyChanged(nameof(Resolution4K));
+                OnPropertyChanged(nameof(ThemeDesc));
+                OnPropertyChanged(nameof(Version));
             }
         }
     }

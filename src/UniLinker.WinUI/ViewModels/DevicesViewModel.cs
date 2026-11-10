@@ -9,6 +9,12 @@ namespace UniLinker.WinUI.ViewModels;
 
 public partial class DevicesViewModel : ObservableObject
 {
+    /// <summary>
+    /// Master device list; Devices is the filtered view bound to the UI.
+    /// </summary>
+    private readonly List<PeerInfo> _allDevices = new();
+    private readonly object _deviceGate = new();
+
     [ObservableProperty] private string _searchText = "";
     [ObservableProperty] private bool _isScanning = false;
     [ObservableProperty] private string _statusMessage = "";
@@ -37,24 +43,29 @@ public partial class DevicesViewModel : ObservableObject
         _discovery.DeviceLost += OnDeviceLost;
 
         // Load existing devices
-        foreach (var device in _discovery.KnownDevices)
+        lock (_deviceGate)
         {
-            Devices.Add(device);
+            _allDevices.AddRange(_discovery.KnownDevices);
         }
+        ApplyFilter();
 
         UpdateStatus();
     }
+
+    partial void OnSearchTextChanged(string value) => ApplyFilter();
 
     private void OnDeviceFound(PeerInfo peer)
     {
         _dispatcherQueue.TryEnqueue(() =>
         {
-            // Avoid duplicates
-            if (!Devices.Any(d => d.Id == peer.Id))
+            lock (_deviceGate)
             {
-                Devices.Add(peer);
-                UpdateStatus();
+                // Avoid duplicates
+                if (_allDevices.Any(d => d.Id == peer.Id)) return;
+                _allDevices.Add(peer);
             }
+            ApplyFilter();
+            UpdateStatus();
         });
     }
 
@@ -62,22 +73,53 @@ public partial class DevicesViewModel : ObservableObject
     {
         _dispatcherQueue.TryEnqueue(() =>
         {
-            var existing = Devices.FirstOrDefault(d => d.Id == peer.Id);
-            if (existing != null)
+            lock (_deviceGate)
             {
-                Devices.Remove(existing);
-                UpdateStatus();
+                var existing = _allDevices.FirstOrDefault(d => d.Id == peer.Id);
+                if (existing == null) return;
+                _allDevices.Remove(existing);
             }
+            ApplyFilter();
+            UpdateStatus();
         });
+    }
+
+    /// <summary>
+    /// Rebuild the visible list from the master list, filtered by the
+    /// search text (matches device name or IP address).
+    /// </summary>
+    private void ApplyFilter()
+    {
+        List<PeerInfo> filtered;
+        lock (_deviceGate)
+        {
+            filtered = string.IsNullOrWhiteSpace(SearchText)
+                ? _allDevices.ToList()
+                : _allDevices
+                    .Where(d => (d.Name?.Contains(SearchText, StringComparison.OrdinalIgnoreCase) ?? false)
+                             || (d.IpAddress?.Contains(SearchText, StringComparison.OrdinalIgnoreCase) ?? false))
+                    .ToList();
+        }
+
+        Devices.Clear();
+        foreach (var device in filtered)
+        {
+            Devices.Add(device);
+        }
     }
 
     private void UpdateStatus()
     {
         var loc = LocalizationService.Instance;
+        int total;
+        lock (_deviceGate)
+        {
+            total = _allDevices.Count;
+        }
         HasDevices = Devices.Count > 0;
         HasNoDevices = Devices.Count == 0;
-        StatusMessage = Devices.Count > 0
-            ? string.Format(loc.DeviceCountFormat, Devices.Count)
+        StatusMessage = total > 0
+            ? string.Format(loc.DeviceCountFormat, total)
             : loc.ScanningForDevices;
     }
 
@@ -105,42 +147,42 @@ public partial class DevicesViewModel : ObservableObject
     {
         if (string.IsNullOrEmpty(ManualIp)) return;
 
-        if (int.TryParse(ManualPort, out var port))
-        {
-            // Probe the device's signaling server and add it to the list.
-            StatusMessage = string.Format(LocalizationService.Instance.DeviceCountFormat, Devices.Count);
-            try
-            {
-                using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(3) };
-                var json = await http.GetStringAsync($"http://{ManualIp}:{port}/info");
-                using var doc = System.Text.Json.JsonDocument.Parse(json);
-                var name = doc.RootElement.TryGetProperty("name", out var n)
-                    ? n.GetString() : ManualIp;
-
-                var peer = new PeerInfo
-                {
-                    Id = $"manual-{ManualIp}:{port}",
-                    Name = string.IsNullOrEmpty(name) ? ManualIp : name!,
-                    IpAddress = ManualIp,
-                    Port = port,
-                    State = PeerState.Discovered,
-                    LastSeen = DateTime.UtcNow,
-                };
-
-                if (!Devices.Any(d => d.Id == peer.Id))
-                {
-                    Devices.Add(peer);
-                }
-                UpdateStatus();
-            }
-            catch
-            {
-                StatusMessage = $"No response from {ManualIp}:{port}";
-            }
-        }
-        else
+        if (!int.TryParse(ManualPort, out var port))
         {
             StatusMessage = "Invalid port number";
+            return;
+        }
+
+        // Probe the device's signaling server and add it to the list.
+        try
+        {
+            using var http = new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(3) };
+            var json = await http.GetStringAsync($"http://{ManualIp}:{port}/info");
+            using var doc = System.Text.Json.JsonDocument.Parse(json);
+            var name = doc.RootElement.TryGetProperty("name", out var n)
+                ? n.GetString() : ManualIp;
+
+            var peer = new PeerInfo
+            {
+                Id = $"manual-{ManualIp}:{port}",
+                Name = string.IsNullOrEmpty(name) ? ManualIp : name!,
+                IpAddress = ManualIp,
+                Port = port,
+                State = PeerState.Discovered,
+                LastSeen = DateTime.UtcNow,
+            };
+
+            lock (_deviceGate)
+            {
+                if (_allDevices.Any(d => d.Id == peer.Id)) return;
+                _allDevices.Add(peer);
+            }
+            ApplyFilter();
+            UpdateStatus();
+        }
+        catch
+        {
+            StatusMessage = $"No response from {ManualIp}:{port}";
         }
     }
 
