@@ -1,0 +1,995 @@
+<!DOCTYPE html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>uniLinker · 三端 UI/UX 重构原型 v1.0</title>
+<style>
+/* ═══════════════ TOKENS · 与 06 §3 一一对应 ═══════════════ */
+:root{
+  --canvas:#121210; --surface:#1C1C18; --raised:#262620; --sunken:#0C0C0A;
+  --border:#2A2A26; --border-strong:#3A3A34;
+  --t1:#E8E6E0; --t2:#B8B6B0; --t3:#8A8880;
+  --accent:#C49A6C; --accent-h:#D6AE7E; --accent-p:#AC8557; --on-accent:#1A1A1A;
+  --ok:#7BA05B; --warn:#D4A84B; --danger:#E85D4C;
+  --r-xs:4px; --r-sm:8px; --r-md:12px; --r-lg:16px; --r-full:999px;
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s6:24px; --s8:32px; --s12:48px;
+  --e1:0 1px 2px rgba(0,0,0,.24);
+  --e2:0 8px 24px rgba(0,0,0,.32);
+  --e3:0 16px 48px rgba(0,0,0,.40);
+  --fast:100ms; --base:160ms; --panel:240ms;
+  --ease:cubic-bezier(.2,0,0,1);
+  --font:-apple-system,"Segoe UI Variable Text","Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;
+  --mono:ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+html[data-theme="light"]{
+  --canvas:#F4F2EE; --surface:#FFFFFF; --raised:#FFFFFF; --sunken:#E8E5DF;
+  --border:#E0DCD4; --border-strong:#C9C4BA;
+  --t1:#1A1A18; --t2:#55534E; --t3:#75726B;
+  --accent:#8A6A42; --accent-h:#A07C4F; --accent-p:#6F5433; --on-accent:#FFFFFF;
+  --ok:#4F7A34; --warn:#8A6A1E; --danger:#B33A2C;
+  --e1:0 1px 2px rgba(26,26,24,.06);
+  --e2:0 8px 24px rgba(26,26,24,.10);
+  --e3:0 16px 48px rgba(26,26,24,.14);
+}
+*{box-sizing:border-box;margin:0;padding:0}
+html,body{height:100%}
+body{
+  font-family:var(--font); background:var(--canvas); color:var(--t1);
+  font-size:14px; line-height:1.43; -webkit-font-smoothing:antialiased;
+  overflow:hidden;
+}
+button{font-family:inherit;font-size:inherit;color:inherit;background:none;border:none;cursor:pointer}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.sprite{position:absolute;width:0;height:0;overflow:hidden}
+.ic{width:18px;height:18px;stroke:currentColor;fill:none;stroke-width:1.6;stroke-linecap:round;stroke-linejoin:round;flex:0 0 auto}
+.ic.s{width:14px;height:14px}
+.ic.l{width:22px;height:22px}
+
+/* ═══════════════ SHELL ═══════════════ */
+.topbar{
+  display:flex;align-items:center;gap:var(--s4);
+  height:52px;padding:0 var(--s6);
+  border-bottom:1px solid var(--border);background:var(--surface);
+}
+.brand{display:flex;align-items:center;gap:var(--s2);font-weight:600;font-size:15px;letter-spacing:.2px}
+.brand .mark{color:var(--accent);font-size:13px}
+.brand .sub{font-weight:400;font-size:12px;color:var(--t3);margin-left:var(--s2)}
+.spacer{flex:1}
+.endtabs{display:flex;gap:2px;padding:2px;background:var(--sunken);border:1px solid var(--border);border-radius:var(--r-sm)}
+html[data-theme="light"] .endtabs{background:var(--canvas)}
+.endtabs button{padding:5px 12px;border-radius:6px;font-size:13px;color:var(--t2);transition:color var(--fast) var(--ease),background var(--fast) var(--ease)}
+.endtabs button:hover{color:var(--t1)}
+.endtabs button.on{background:var(--raised);color:var(--t1);box-shadow:var(--e1)}
+html[data-theme="light"] .endtabs button.on{background:#fff}
+.body{display:flex;height:calc(100% - 52px)}
+
+.rail{
+  width:248px;flex:0 0 248px;border-right:1px solid var(--border);
+  padding:var(--s4) var(--s3);overflow:auto;background:var(--surface);
+}
+.railtitle{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);margin:var(--s4) var(--s2) var(--s2)}
+.railtitle:first-child{margin-top:0}
+.rail button{
+  display:flex;align-items:center;gap:var(--s2);width:100%;
+  padding:8px 10px;border-radius:var(--r-sm);color:var(--t2);font-size:13px;
+  text-align:left;transition:background var(--fast) var(--ease),color var(--fast) var(--ease);
+}
+.rail button:hover{background:var(--raised);color:var(--t1)}
+.rail button.on{background:var(--raised);color:var(--t1);box-shadow:inset 2px 0 0 var(--accent)}
+.rail button .tag{margin-left:auto;font-size:11px;color:var(--t3);font-family:var(--mono)}
+
+.stage{
+  flex:1;overflow:auto;padding:var(--s8);display:flex;align-items:flex-start;justify-content:center;
+  background-image:radial-gradient(circle at 1px 1px, var(--border) 1px, transparent 0);
+  background-size:24px 24px;
+}
+.screen{display:none;width:100%;justify-content:center}
+.screen.active{display:flex}
+.screenwrap{display:flex;flex-direction:column;gap:var(--s3);align-items:center}
+.caption{font-size:12px;color:var(--t3);display:flex;gap:var(--s2);align-items:center}
+.caption b{color:var(--t2);font-weight:600}
+
+/* ═══════════════ 通用组件 ═══════════════ */
+.btn{
+  display:inline-flex;align-items:center;justify-content:center;gap:6px;
+  height:40px;padding:0 var(--s4);border-radius:var(--r-sm);
+  border:1px solid var(--border-strong);background:transparent;color:var(--t1);
+  font-size:13px;font-weight:500;
+  transition:background var(--fast) var(--ease),border-color var(--fast) var(--ease),transform var(--fast) var(--ease);
+}
+.btn:hover{background:var(--raised);border-color:var(--t3)}
+.btn:active{transform:scale(.985)}
+.btn.primary{background:var(--accent);border-color:var(--accent);color:var(--on-accent);font-weight:600}
+.btn.primary:hover{background:var(--accent-h);border-color:var(--accent-h)}
+.btn.primary:active{background:var(--accent-p)}
+.btn.danger{color:var(--danger);border-color:color-mix(in srgb,var(--danger) 40%,transparent);background:color-mix(in srgb,var(--danger) 12%,transparent)}
+.btn.sm{height:32px;padding:0 10px;font-size:12px}
+.btn.icon{width:36px;height:36px;padding:0}
+.btn.ghost{border-color:transparent}
+.btn.ghost:hover{background:var(--raised)}
+
+.dot{width:8px;height:8px;border-radius:var(--r-full);flex:0 0 auto;background:var(--t3)}
+.dot.on{background:var(--ok);box-shadow:0 0 0 3px color-mix(in srgb,var(--ok) 18%,transparent)}
+.dot.busy{background:var(--accent);animation:breathe 1.6s var(--ease) infinite}
+.dot.warn{background:var(--warn)}
+.dot.err{background:var(--danger)}
+@keyframes breathe{0%,100%{opacity:1}50%{opacity:.35}}
+
+.chip{display:inline-flex;align-items:center;gap:6px;height:24px;padding:0 9px;border-radius:var(--r-full);
+  background:var(--raised);border:1px solid var(--border);font-size:11px;color:var(--t2);white-space:nowrap}
+.chip.ok{color:var(--ok);border-color:color-mix(in srgb,var(--ok) 35%,transparent);background:color-mix(in srgb,var(--ok) 10%,transparent)}
+.chip.warn{color:var(--warn);border-color:color-mix(in srgb,var(--warn) 35%,transparent);background:color-mix(in srgb,var(--warn) 10%,transparent)}
+.chip.mono{font-family:var(--mono);letter-spacing:.02em}
+
+.card{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:var(--s4)}
+.card.pad6{padding:var(--s6)}
+.cardhead{display:flex;align-items:center;gap:var(--s2);margin-bottom:var(--s3)}
+.cardhead h3{font-size:14px;font-weight:600;letter-spacing:-.01em}
+.cardhead .hint{font-size:11px;color:var(--t3);margin-left:auto}
+.hr{height:1px;background:var(--border);margin:var(--s4) 0}
+
+.num{font-family:var(--mono);font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.muted{color:var(--t3)}
+.t2{color:var(--t2)}
+
+.switch{width:38px;height:22px;border-radius:var(--r-full);background:var(--border-strong);position:relative;transition:background var(--base) var(--ease);flex:0 0 auto}
+.switch::after{content:"";position:absolute;top:2px;left:2px;width:18px;height:18px;border-radius:var(--r-full);background:var(--t1);transition:transform var(--base) var(--ease)}
+.switch.on{background:var(--accent)}
+.switch.on::after{transform:translateX(16px);background:var(--on-accent)}
+
+.seg{display:flex;padding:3px;background:var(--sunken);border:1px solid var(--border);border-radius:var(--r-sm);gap:2px}
+html[data-theme="light"] .seg{background:var(--canvas)}
+.seg button{flex:1;height:30px;border-radius:6px;font-size:12px;color:var(--t2);transition:all var(--fast) var(--ease)}
+.seg button.on{background:var(--raised);color:var(--t1);box-shadow:var(--e1)}
+html[data-theme="light"] .seg button.on{background:#fff}
+
+.field{height:38px;display:flex;align-items:center;gap:var(--s2);padding:0 var(--s3);
+  background:var(--sunken);border:1px solid var(--border-strong);border-radius:var(--r-sm);color:var(--t2);font-size:13px}
+html[data-theme="light"] .field{background:#fff}
+
+.kv{display:flex;align-items:baseline;justify-content:space-between;gap:var(--s4);padding:6px 0}
+.kv span:first-child{color:var(--t3);font-size:12px}
+.kv span:last-child{font-size:13px}
+
+/* ═══════════════ WINDOWS 窗口 ═══════════════ */
+.win{
+  width:1180px;height:740px;border-radius:10px;overflow:hidden;
+  border:1px solid var(--border-strong);background:var(--canvas);
+  box-shadow:var(--e3);display:flex;flex-direction:column;
+}
+.win-title{height:38px;display:flex;align-items:center;gap:var(--s2);padding:0 var(--s3);background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;color:var(--t3);flex:0 0 auto}
+.win-title .appico{width:16px;height:16px;border-radius:3px;background:var(--accent);display:grid;place-items:center;color:var(--on-accent);font-size:9px;font-weight:700}
+.win-ctrl{margin-left:auto;display:flex;gap:2px}
+.win-ctrl i{display:block;width:36px;height:26px;border-radius:4px;display:grid;place-items:center;color:var(--t3);font-style:normal;font-size:10px}
+.win-ctrl i:hover{background:var(--raised)}
+.win-body{flex:1;display:flex;min-height:0}
+
+.nav{width:212px;flex:0 0 212px;background:var(--surface);border-right:1px solid var(--border);padding:var(--s3) var(--s2);display:flex;flex-direction:column}
+.navitem{display:flex;align-items:center;gap:10px;height:36px;padding:0 10px;border-radius:var(--r-sm);color:var(--t2);font-size:13px}
+.navitem.on{background:var(--raised);color:var(--t1);box-shadow:inset 2px 0 0 var(--accent)}
+.navitem:hover{background:var(--raised)}
+.navfoot{margin-top:auto;padding:var(--s3);border-radius:var(--r-sm);background:var(--sunken);font-size:11px;line-height:1.7;color:var(--t3)}
+html[data-theme="light"] .navfoot{background:var(--canvas)}
+.navfoot b{display:block;color:var(--t2);font-weight:600;font-size:12px;margin-bottom:2px}
+
+.page{flex:1;min-width:0;overflow:auto;padding:var(--s6) var(--s8)}
+.pagehd{display:flex;align-items:center;gap:var(--s3);margin-bottom:var(--s6)}
+.pagehd h1{font-size:20px;font-weight:600;letter-spacing:-.02em}
+.pagehd .desc{font-size:12px;color:var(--t3);margin-top:2px}
+
+.hero{display:grid;grid-template-columns:1.4fr 1fr;gap:var(--s4);margin-bottom:var(--s4)}
+.identity{background:linear-gradient(135deg,var(--surface),var(--raised));border:1px solid var(--border);border-radius:var(--r-md);padding:var(--s6);position:relative;overflow:hidden}
+.identity::after{content:"";position:absolute;right:-40px;top:-40px;width:180px;height:180px;border-radius:50%;background:radial-gradient(circle,color-mix(in srgb,var(--accent) 16%,transparent),transparent 70%)}
+.identity h2{font-size:17px;font-weight:600;margin-bottom:2px}
+.identity .sub{font-size:12px;color:var(--t3);margin-bottom:var(--s4)}
+.identity .ipline{display:flex;align-items:center;gap:var(--s2);font-family:var(--mono);font-size:15px;color:var(--t1);margin-bottom:var(--s4)}
+.copybtn{width:26px;height:26px;border-radius:6px;display:grid;place-items:center;color:var(--t3)}
+.copybtn:hover{background:var(--raised);color:var(--t1)}
+.toggleline{display:flex;align-items:center;gap:var(--s3);padding-top:var(--s4);border-top:1px solid var(--border)}
+.toggleline .lbl{font-size:13px}
+.toggleline .sml{font-size:11px;color:var(--t3)}
+
+.qrbox{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:var(--s4);display:flex;flex-direction:column;align-items:center;justify-content:center;gap:var(--s3)}
+.qr{width:132px;height:132px;border-radius:var(--r-sm);background:var(--sunken);border:1px solid var(--border);padding:8px;color:var(--t1)}
+.qr svg{width:100%;height:100%;display:block}
+
+.grid3{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s3)}
+
+.devcard{display:flex;align-items:center;gap:var(--s3);padding:14px var(--s4);background:var(--surface);
+  border:1px solid var(--border);border-radius:var(--s3);transition:all var(--fast) var(--ease);cursor:pointer}
+.devcard:hover{border-color:var(--border-strong);box-shadow:var(--e1)}
+.devcard.sel{border-color:color-mix(in srgb,var(--accent) 55%,transparent);box-shadow:inset 2px 0 0 var(--accent)}
+.devico{width:38px;height:38px;border-radius:10px;background:var(--raised);display:grid;place-items:center;color:var(--t2);flex:0 0 auto}
+.devmain{min-width:0;flex:1}
+.devname{font-size:13.5px;font-weight:600;display:flex;align-items:center;gap:6px}
+.devsub{font-size:11.5px;color:var(--t3);display:flex;gap:6px;align-items:center;margin-top:3px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.devact{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+
+.split{display:grid;grid-template-columns:1fr 340px;gap:var(--s6);align-items:start}
+.srcline{display:flex;gap:var(--s2);margin-bottom:var(--s4)}
+.thumbgrid{display:grid;grid-template-columns:repeat(3,1fr);gap:var(--s3)}
+.thumb{aspect-ratio:16/10;border-radius:var(--r-sm);border:1.5px solid var(--border);background:var(--sunken);position:relative;overflow:hidden;display:grid;place-items:center;color:var(--t3);font-size:11px;transition:all var(--fast) var(--ease)}
+.thumb:hover{border-color:var(--border-strong)}
+.thumb.sel{border-color:var(--accent);box-shadow:0 0 0 3px color-mix(in srgb,var(--accent) 16%,transparent)}
+.thumb.sel::after{content:"✓";position:absolute;right:6px;top:6px;width:16px;height:16px;border-radius:var(--r-full);background:var(--accent);color:var(--on-accent);font-size:10px;display:grid;place-items:center;font-weight:700}
+.miniwin{width:76%;height:56%;border-radius:4px;border:1px solid var(--border-strong);background:linear-gradient(180deg,var(--raised),var(--surface));display:flex;flex-direction:column;overflow:hidden}
+.miniwin i{display:block;height:5px;background:var(--border-strong);border-radius:2px;margin:3px 5px 0}
+.miniwin i:first-child{height:7px;margin:0 0 4px;border-radius:0;background:var(--border)}
+
+.opt{display:flex;align-items:center;gap:10px;padding:10px 12px;border-radius:var(--r-sm);border:1px solid transparent;cursor:pointer;transition:all var(--fast) var(--ease)}
+.opt:hover{background:var(--raised)}
+.opt .radio{width:16px;height:16px;border-radius:50%;border:1.5px solid var(--border-strong);flex:0 0 auto;display:grid;place-items:center}
+.opt.on .radio{border-color:var(--accent)}
+.opt.on .radio::after{content:"";width:8px;height:8px;border-radius:50%;background:var(--accent)}
+.opt .ol{flex:1}
+.opt .ot{font-size:13px}
+.opt .os{font-size:11px;color:var(--t3);font-family:var(--mono);margin-top:1px}
+
+/* 会话画面 */
+.session{position:relative;flex:1;display:flex;flex-direction:column;background:var(--sunken);overflow:hidden}
+.mirror{flex:1;display:grid;place-items:center;padding:0}
+.mirror-inner{width:min(78%,880px);aspect-ratio:16/9;border-radius:6px;overflow:hidden;
+  background:linear-gradient(140deg,#1b2230,#0e1319 55%,#141a24);position:relative;
+  box-shadow:0 0 0 1px rgba(255,255,255,.06),0 24px 60px rgba(0,0,0,.6)}
+.mirror-inner.portrait{width:auto;height:86%;aspect-ratio:9/19.2}
+.mirror-top{height:9%;display:flex;align-items:center;gap:8px;padding:0 12px;background:rgba(255,255,255,.04);border-bottom:1px solid rgba(255,255,255,.06)}
+.mirror-top i{width:7px;height:7px;border-radius:50%;background:#4a5568;display:block}
+.mirror-top span{margin-left:8px;font-size:10px;color:#8fa0b8;letter-spacing:.04em}
+.mirror-body{display:flex;height:91%}
+.mirror-side{width:16%;border-right:1px solid rgba(255,255,255,.05);padding:10px 8px;display:flex;flex-direction:column;gap:6px}
+.mirror-side i{height:6px;border-radius:3px;background:rgba(255,255,255,.10);display:block}
+.mirror-side i:first-child{background:rgba(196,154,108,.55);width:70%}
+.mirror-main{flex:1;padding:12px;display:grid;grid-template-columns:repeat(3,1fr);gap:8px;align-content:start}
+.mirror-card{height:46px;border-radius:5px;background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.06)}
+.mirror-card:first-child{grid-column:span 3;height:58px;background:linear-gradient(100deg,rgba(196,154,108,.18),rgba(255,255,255,.04))}
+/* 竖屏手机的镜像内容（保持原始宽高比） */
+.ph{display:flex;flex-direction:column;height:100%;background:linear-gradient(170deg,#171d27,#0d1117)}
+.ph-stat{height:26px;display:flex;align-items:center;justify-content:space-between;padding:0 12px;font-size:9px;color:#8fa0b8;flex:0 0 auto}
+.ph-hd{padding:4px 12px 10px;font-size:13px;font-weight:600;color:#e6ecf5;letter-spacing:-.01em}
+.ph-hd small{display:block;font-size:8.5px;font-weight:400;color:#7c8ba0;margin-top:2px}
+.ph-row{display:flex;align-items:center;gap:8px;padding:7px 12px}
+.ph-av{width:22px;height:22px;border-radius:6px;background:rgba(255,255,255,.09);flex:0 0 auto}
+.ph-av.c{background:rgba(196,154,108,.45)}
+.ph-txt{flex:1;display:flex;flex-direction:column;gap:4px}
+.ph-line{height:5px;border-radius:3px;background:rgba(255,255,255,.12)}
+.ph-line.s{width:46%;background:rgba(255,255,255,.07)}
+.ph-big{margin:6px 12px;height:52px;border-radius:8px;background:linear-gradient(100deg,rgba(196,154,108,.16),rgba(255,255,255,.04));border:1px solid rgba(255,255,255,.06)}
+.ph-nav{margin-top:auto;height:38px;display:flex;align-items:center;justify-content:space-around;border-top:1px solid rgba(255,255,255,.06);flex:0 0 auto}
+.ph-nav i{width:15px;height:15px;border-radius:4px;background:rgba(255,255,255,.10);display:block}
+.ph-nav i:first-child{background:rgba(196,154,108,.5)}
+.cbar{
+  position:absolute;top:10px;left:50%;transform:translateX(-50%);
+  display:flex;align-items:center;gap:var(--s2);padding:6px 8px 6px 12px;
+  background:color-mix(in srgb,var(--raised) 92%,transparent);backdrop-filter:blur(18px);
+  border:1px solid var(--border-strong);border-radius:var(--r-full);box-shadow:var(--e2);
+  transition:opacity var(--base) var(--ease),transform var(--base) var(--ease);
+}
+.cbar.hide{opacity:0;transform:translateX(-50%) translateY(-12px);pointer-events:none}
+.cbar .stat{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--t2);padding-right:var(--s2);border-right:1px solid var(--border);margin-right:2px}
+.sbar{
+  position:absolute;left:0;right:0;bottom:0;height:26px;display:flex;align-items:center;gap:var(--s3);
+  padding:0 var(--s4);font-size:11px;color:var(--t3);
+  background:linear-gradient(0deg,color-mix(in srgb,var(--sunken) 92%,transparent),transparent);
+}
+.sbar .right{margin-left:auto;display:flex;align-items:center;gap:6px}
+
+/* ═══════════════ ANDROID ═══════════════ */
+.phone{
+  width:376px;height:788px;border-radius:38px;overflow:hidden;position:relative;
+  background:var(--canvas);border:9px solid #0a0a09;
+  box-shadow:0 0 0 1px var(--border-strong),var(--e3);display:flex;flex-direction:column;
+}
+html[data-theme="light"] .phone{border-color:#d8d4cc}
+.statusbar{height:30px;display:flex;align-items:center;justify-content:space-between;padding:0 18px;font-size:11px;color:var(--t2);flex:0 0 auto}
+.statusbar .icons{display:flex;gap:5px;align-items:center;opacity:.85}
+.astage{flex:1;overflow:auto;padding:0 var(--s4)}
+.ahead{padding:var(--s3) 0 var(--s4)}
+.ahead h1{font-size:22px;font-weight:600;letter-spacing:-.02em}
+.ahead p{font-size:12px;color:var(--t3);margin-top:3px}
+.abottom{height:58px;border-top:1px solid var(--border);display:flex;align-items:center;justify-content:space-around;background:var(--surface);flex:0 0 auto}
+.abottom button{display:flex;flex-direction:column;align-items:center;gap:3px;font-size:10px;color:var(--t3);width:76px;padding-top:6px}
+.abottom button.on{color:var(--accent)}
+.abottom button.on .ic{stroke:var(--accent)}
+
+.selfcard{background:var(--surface);border:1px solid var(--border);border-radius:var(--r-md);padding:var(--s4);margin-bottom:var(--s4)}
+.selfrow{display:flex;align-items:center;gap:var(--s3)}
+.selfname{font-size:14px;font-weight:600}
+.selfip{font-size:11.5px;color:var(--t3);font-family:var(--mono);margin-top:2px}
+.sec{font-size:11px;letter-spacing:.08em;text-transform:uppercase;color:var(--t3);margin:var(--s4) 0 var(--s2)}
+.adev{display:flex;align-items:center;gap:var(--s3);padding:12px;border-radius:var(--r-sm);background:var(--surface);border:1px solid var(--border);margin-bottom:var(--s2)}
+.adev .devico{width:34px;height:34px;border-radius:9px}
+
+.empty{text-align:center;padding:var(--s8) var(--s4);color:var(--t3)}
+.empty .ic{width:38px;height:38px;opacity:.5;margin-bottom:var(--s3)}
+.empty p{font-size:12.5px;margin-bottom:var(--s4);line-height:1.6}
+
+.sheet{position:absolute;inset:0;background:rgba(6,6,5,.62);display:flex;flex-direction:column;justify-content:flex-end;backdrop-filter:blur(2px)}
+.sheetbox{background:var(--surface);border-radius:var(--r-lg) var(--r-lg) 0 0;padding:var(--s3) var(--s4) var(--s6);border-top:1px solid var(--border-strong)}
+.grab{width:36px;height:4px;border-radius:2px;background:var(--border-strong);margin:0 auto var(--s4)}
+
+.consent{position:absolute;inset:0;background:rgba(6,6,5,.72);backdrop-filter:blur(6px);display:grid;place-items:center;padding:var(--s4)}
+.consentcard{width:100%;background:var(--surface);border:1px solid var(--border-strong);border-radius:var(--r-lg);padding:var(--s6);box-shadow:var(--e3)}
+.fp{font-family:var(--mono);font-size:12px;color:var(--t2);background:var(--sunken);border:1px solid var(--border);border-radius:var(--r-sm);padding:8px 10px;text-align:center;letter-spacing:.14em}
+.code6{display:flex;gap:6px;justify-content:center;margin:var(--s4) 0}
+.code6 i{width:34px;height:44px;border-radius:var(--r-sm);background:var(--sunken);border:1px solid var(--border-strong);display:grid;place-items:center;font-family:var(--mono);font-size:19px;font-weight:600;font-style:normal;color:var(--t1)}
+
+/* ═══════════════ WEB ═══════════════ */
+.browser{width:1180px;height:720px;border-radius:10px;overflow:hidden;border:1px solid var(--border-strong);box-shadow:var(--e3);display:flex;flex-direction:column;background:var(--canvas)}
+.bchrome{height:40px;display:flex;align-items:center;gap:var(--s3);padding:0 var(--s4);background:var(--surface);border-bottom:1px solid var(--border);font-size:12px;color:var(--t3);flex:0 0 auto}
+.urlbar{flex:1;max-width:420px;height:26px;border-radius:var(--r-full);background:var(--sunken);border:1px solid var(--border);display:flex;align-items:center;padding:0 12px;font-family:var(--mono);font-size:11.5px;color:var(--t2)}
+.wtop{height:44px;display:flex;align-items:center;gap:var(--s3);padding:0 var(--s6);border-bottom:1px solid var(--border);background:var(--surface)}
+.wbody{flex:1;position:relative;display:flex;flex-direction:column;min-height:0}
+
+/* ═══════════════ 令牌面板 ═══════════════ */
+.spec{width:1100px;display:grid;grid-template-columns:repeat(2,1fr);gap:var(--s6)}
+.swatches{display:grid;grid-template-columns:repeat(2,1fr);gap:var(--s2)}
+.sw{display:flex;align-items:center;gap:10px;padding:8px;border-radius:var(--r-sm);border:1px solid var(--border)}
+.sw i{width:34px;height:34px;border-radius:6px;display:block;border:1px solid rgba(255,255,255,.08);flex:0 0 auto}
+.sw div{min-width:0}
+.sw b{display:block;font-size:12px;font-weight:600}
+.sw code{font-family:var(--mono);font-size:10.5px;color:var(--t3)}
+.trow{display:flex;align-items:baseline;gap:var(--s3);padding:7px 0;border-bottom:1px solid var(--border)}
+.trow .tn{width:110px;font-size:11px;color:var(--t3);font-family:var(--mono);flex:0 0 auto}
+.trow .tv{flex:1}
+.radii{display:flex;gap:var(--s3);align-items:flex-end}
+.radii div{text-align:center;font-size:10px;color:var(--t3)}
+.radii i{display:block;width:54px;height:54px;background:var(--raised);border:1px solid var(--border-strong);margin-bottom:6px}
+</style>
+</head>
+<body>
+
+<svg class="sprite" xmlns="http://www.w3.org/2000/svg">
+<symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2.5" y="3.5" width="19" height="13" rx="2"/><path d="M8 20.5h8M12 16.5v4"/></symbol>
+<symbol id="i-phone" viewBox="0 0 24 24"><rect x="6.5" y="2.5" width="11" height="19" rx="2.5"/><path d="M10 18.5h4"/></symbol>
+<symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="6.5"/><path d="M15.4 15.4 21 21"/></symbol>
+<symbol id="i-refresh" viewBox="0 0 24 24"><path d="M20.5 12a8.5 8.5 0 1 1-2.6-6.1"/><path d="M20.5 3.5v5h-5"/></symbol>
+<symbol id="i-link" viewBox="0 0 24 24"><path d="M10 13.5a4.5 4.5 0 0 0 6.4 0l2.3-2.3a4.5 4.5 0 0 0-6.4-6.4l-1 1"/><path d="M14 10.5a4.5 4.5 0 0 0-6.4 0l-2.3 2.3a4.5 4.5 0 0 0 6.4 6.4l1-1"/></symbol>
+<symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/><circle cx="9" cy="7" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="8" cy="17" r="2"/></symbol>
+<symbol id="i-folder" viewBox="0 0 24 24"><path d="M3 7a2 2 0 0 1 2-2h3.6l2 2H19a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></symbol>
+<symbol id="i-share" viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="13" rx="2"/><path d="M12 13.5V8M9 11l3-3 3 3"/></symbol>
+<symbol id="i-full" viewBox="0 0 24 24"><path d="M4 9V5.5A1.5 1.5 0 0 1 5.5 4H9M15 4h3.5A1.5 1.5 0 0 1 20 5.5V9M20 15v3.5a1.5 1.5 0 0 1-1.5 1.5H15M9 20H5.5A1.5 1.5 0 0 1 4 18.5V15"/></symbol>
+<symbol id="i-more" viewBox="0 0 24 24"><circle cx="5" cy="12" r="1.4"/><circle cx="12" cy="12" r="1.4"/><circle cx="19" cy="12" r="1.4"/></symbol>
+<symbol id="i-close" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+<symbol id="i-check" viewBox="0 0 24 24"><path d="M4.5 12.5l5 5 10-11"/></symbol>
+<symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3.5 21.5 20.5h-19z"/><path d="M12 9.5v5M12 17.5v.01"/></symbol>
+<symbol id="i-wifi" viewBox="0 0 24 24"><path d="M2.5 8.5a15 15 0 0 1 19 0M6 12.5a10 10 0 0 1 12 0M9.5 16.2a5 5 0 0 1 5 0"/><circle cx="12" cy="19.5" r="1"/></symbol>
+<symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 2.5 20 6v6c0 5-3.4 8.3-8 9.5-4.6-1.2-8-4.5-8-9.5V6z"/><path d="M8.5 12l2.5 2.5 4.5-5"/></symbol>
+<symbol id="i-qr" viewBox="0 0 24 24"><rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><path d="M14 14h3v3h-3zM20 14v.01M14 20h.01M20 20v.01M20 17v.01"/></symbol>
+<symbol id="i-play" viewBox="0 0 24 24"><path d="M7 4.5 19.5 12 7 19.5z"/></symbol>
+<symbol id="i-copy" viewBox="0 0 24 24"><rect x="8.5" y="8.5" width="12" height="12" rx="2"/><path d="M15.5 5.5v-.5a2 2 0 0 0-2-2h-8a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h.5"/></symbol>
+<symbol id="i-lock" viewBox="0 0 24 24"><rect x="4.5" y="10.5" width="15" height="10" rx="2"/><path d="M8 10.5V7a4 4 0 0 1 8 0v3.5"/></symbol>
+<symbol id="i-chev" viewBox="0 0 24 24"><path d="M9.5 5.5 16 12l-6.5 6.5"/></symbol>
+</svg>
+
+<div class="topbar">
+  <div class="brand"><span class="mark">◆</span>uniLinker<span class="sub">三端 UI/UX 重构原型 · v1.0</span></div>
+  <div class="spacer"></div>
+  <div class="endtabs" id="ends">
+    <button class="on" data-end="all">全部</button>
+    <button data-end="win">Windows</button>
+    <button data-end="and">Android</button>
+    <button data-end="web">Web</button>
+    <button data-end="spec">令牌</button>
+  </div>
+  <button class="btn ghost sm" id="themeBtn">浅色模式</button>
+</div>
+
+<div class="body">
+  <aside class="rail" id="rail">
+    <div class="railtitle" data-group="win">Windows · WinUI 3</div>
+    <button class="on" data-target="win-dashboard" data-end="win"><svg class="ic s"><use href="#i-monitor"/></svg>W1 概览<span class="tag">W1</span></button>
+    <button data-target="win-devices" data-end="win"><svg class="ic s"><use href="#i-wifi"/></svg>W2 设备<span class="tag">W2</span></button>
+    <button data-target="win-share" data-end="win"><svg class="ic s"><use href="#i-share"/></svg>W3 投屏<span class="tag">W3</span></button>
+    <button data-target="win-session" data-end="win"><svg class="ic s"><use href="#i-full"/></svg>W7 会话<span class="tag">W7</span></button>
+    <button data-target="win-settings" data-end="win"><svg class="ic s"><use href="#i-sliders"/></svg>W5 设置<span class="tag">W5</span></button>
+    <div class="railtitle" data-group="and">Android · Compose</div>
+    <button data-target="and-devices" data-end="and"><svg class="ic s"><use href="#i-phone"/></svg>A1 设备<span class="tag">A1</span></button>
+    <button data-target="and-share" data-end="and"><svg class="ic s"><use href="#i-share"/></svg>A3 投屏准备<span class="tag">A3</span></button>
+    <button data-target="and-consent" data-end="and"><svg class="ic s"><use href="#i-shield"/></svg>A4 被控授权<span class="tag">A4</span></button>
+    <button data-target="and-session" data-end="and"><svg class="ic s"><use href="#i-full"/></svg>A6 会话<span class="tag">A6</span></button>
+    <div class="railtitle" data-group="web">Web · 原生 JS</div>
+    <button data-target="web-connect" data-end="web"><svg class="ic s"><use href="#i-link"/></svg>X1 连接<span class="tag">X1</span></button>
+    <button data-target="web-session" data-end="web"><svg class="ic s"><use href="#i-play"/></svg>X2 会话<span class="tag">X2</span></button>
+    <div class="railtitle" data-group="spec">设计基础</div>
+    <button data-target="spec-tokens" data-end="spec"><svg class="ic s"><use href="#i-sliders"/></svg>令牌与排版<span class="tag">§3</span></button>
+  </aside>
+
+  <main class="stage" id="stage">
+
+    <!-- ══════ W1 ══════ -->
+    <section class="screen active" data-screen="win-dashboard" data-end="win">
+      <div class="screenwrap">
+        <div class="win">
+          <div class="win-title"><span class="appico">U</span>uniLinker<span style="margin-left:8px;color:var(--t3)">概览</span><div class="win-ctrl"><i>—</i><i>▢</i><i>✕</i></div></div>
+          <div class="win-body">
+            <div class="nav">
+              <div class="navitem on"><svg class="ic s"><use href="#i-monitor"/></svg>概览</div>
+              <div class="navitem"><svg class="ic s"><use href="#i-wifi"/></svg>设备</div>
+              <div class="navitem"><svg class="ic s"><use href="#i-share"/></svg>投屏</div>
+              <div class="navitem"><svg class="ic s"><use href="#i-folder"/></svg>文件</div>
+              <div class="navitem"><svg class="ic s"><use href="#i-sliders"/></svg>设置</div>
+              <div class="navfoot"><b>192.168.1.10</b>端口 9527 · Wi-Fi<br><span style="color:var(--ok)">●</span> 可被发现</div>
+            </div>
+            <div class="page">
+              <div class="pagehd"><div><h1>概览</h1><div class="desc">本机身份、最近设备与快速入口</div></div>
+                <div style="margin-left:auto;display:flex;gap:8px"><span class="chip ok"><svg class="ic s"><use href="#i-check"/></svg>仅局域网 · 公网 0 B</span></div>
+              </div>
+              <div class="hero">
+                <div class="identity">
+                  <h2>DESKTOP-8F2A</h2>
+                  <div class="sub">Windows 11 · 有线以太网</div>
+                  <div class="ipline"><svg class="ic"><use href="#i-link"/></svg>192.168.1.10:9527
+                    <button class="copybtn"><svg class="ic s"><use href="#i-copy"/></svg></button></div>
+                  <div class="toggleline">
+                    <div style="flex:1"><div class="lbl">允许被附近设备发现</div><div class="sml">通过 mDNS 广播，仅在当前网段生效</div></div>
+                    <div class="switch on"></div>
+                  </div>
+                </div>
+                <div class="qrbox">
+                  <div class="qr"><svg viewBox="0 0 21 21" fill="currentColor" shape-rendering="crispEdges" aria-label="连接二维码"><rect x="0" y="0" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="2" y="2" width="3" height="3"/><rect x="14" y="0" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="16" y="2" width="3" height="3"/><rect x="0" y="14" width="7" height="7" fill="none" stroke="currentColor" stroke-width="1.4"/><rect x="2" y="16" width="3" height="3"/><g><rect x="9" y="1" width="1" height="1"/><rect x="11" y="2" width="1" height="1"/><rect x="9" y="4" width="1" height="1"/><rect x="12" y="4" width="1" height="1"/><rect x="10" y="6" width="1" height="1"/><rect x="1" y="9" width="1" height="1"/><rect x="3" y="9" width="1" height="1"/><rect x="5" y="10" width="1" height="1"/><rect x="0" y="11" width="1" height="1"/><rect x="2" y="12" width="1" height="1"/><rect x="6" y="12" width="1" height="1"/><rect x="8" y="8" width="1" height="1"/><rect x="10" y="9" width="1" height="1"/><rect x="12" y="8" width="1" height="1"/><rect x="9" y="11" width="1" height="1"/><rect x="11" y="11" width="1" height="1"/><rect x="13" y="10" width="1" height="1"/><rect x="8" y="13" width="1" height="1"/><rect x="10" y="13" width="1" height="1"/><rect x="12" y="13" width="1" height="1"/><rect x="14" y="12" width="1" height="1"/><rect x="15" y="9" width="1" height="1"/><rect x="17" y="9" width="1" height="1"/><rect x="19" y="10" width="1" height="1"/><rect x="16" y="11" width="1" height="1"/><rect x="18" y="12" width="1" height="1"/><rect x="20" y="11" width="1" height="1"/><rect x="15" y="14" width="1" height="1"/><rect x="17" y="15" width="1" height="1"/><rect x="19" y="14" width="1" height="1"/><rect x="16" y="17" width="1" height="1"/><rect x="18" y="18" width="1" height="1"/><rect x="20" y="17" width="1" height="1"/><rect x="9" y="16" width="1" height="1"/><rect x="11" y="17" width="1" height="1"/><rect x="13" y="16" width="1" height="1"/><rect x="10" y="19" width="1" height="1"/><rect x="12" y="20" width="1" height="1"/><rect x="14" y="19" width="1" height="1"/><rect x="8" y="20" width="1" height="1"/></g></svg></div>
+                  <div style="text-align:center"><div style="font-size:12px">扫码连接</div><div style="font-size:11px;color:var(--t3);margin-top:2px">手机端「扫一扫」直接配对</div></div>
+                </div>
+              </div>
+              <div class="cardhead"><h3>最近设备</h3><span class="hint">3 台 · 2 台在线</span></div>
+              <div class="grid3" style="margin-bottom:var(--s4)">
+                <div class="devcard"><div class="devico"><svg class="ic"><use href="#i-phone"/></svg></div><div class="devmain"><div class="devname"><span class="dot on"></span>Pixel 7</div><div class="devsub">Android 14 · Wi-Fi · 2 秒前</div></div></div>
+                <div class="devcard"><div class="devico"><svg class="ic"><use href="#i-phone"/></svg></div><div class="devmain"><div class="devname"><span class="dot on"></span>Redmi K60</div><div class="devsub">Android 13 · Wi-Fi · 8 秒前</div></div></div>
+                <div class="devcard" style="opacity:.62"><div class="devico"><svg class="ic"><use href="#i-monitor"/></svg></div><div class="devmain"><div class="devname"><span class="dot"></span>DESKTOP-3C1B</div><div class="devsub">Windows 11 · 离线 · 2 小时前</div></div></div>
+              </div>
+              <div class="card" style="display:flex;align-items:center;gap:16px">
+                <div class="devico" style="background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent)"><svg class="ic"><use href="#i-share"/></svg></div>
+                <div style="flex:1"><div style="font-size:13.5px;font-weight:600">开始投屏</div><div style="font-size:11.5px;color:var(--t3);margin-top:2px">选择窗口或整个屏幕，对方无需安装客户端即可观看</div></div>
+                <button class="btn primary">选择共享内容</button>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="caption"><b>W1 概览</b>本机身份前置 · 零流量可见 · 空状态不留白</div>
+      </div>
+    </section>
+
+    <!-- ══════ W2 ══════ -->
+    <section class="screen" data-screen="win-devices" data-end="win">
+      <div class="screenwrap">
+        <div class="win">
+          <div class="win-title"><span class="appico">U</span>uniLinker<span style="margin-left:8px;color:var(--t3)">设备</span><div class="win-ctrl"><i>—</i><i>▢</i><i>✕</i></div></div>
+          <div class="win-body">
+            <div class="nav">
+              <div class="navitem"><svg class="ic s"><use href="#i-monitor"/></svg>概览</div>
+              <div class="navitem on"><svg class="ic s"><use href="#i-wifi"/></svg>设备</div>
+              <div class="navitem"><svg class="ic s"><use href="#i-share"/></svg>投屏</div>
+              <div class="navitem"><svg class="ic s"><use href="#i-folder"/></svg>文件</div>
+              <div class="navitem"><svg class="ic s"><use href="#i-sliders"/></svg>设置</div>
+              <div class="navfoot"><b>192.168.1.10</b>端口 9527 · Wi-Fi<br><span style="color:var(--ok)">●</span> 可被发现</div>
+            </div>
+            <div class="page">
+              <div class="pagehd"><div><h1>设备</h1><div class="desc">同一局域网内自动发现</div></div>
+                <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+                  <div class="field" style="width:190px"><svg class="ic s"><use href="#i-search"/></svg>搜索设备</div>
+                  <button class="btn icon"><svg class="ic s"><use href="#i-refresh"/></svg></button>
+                </div>
+              </div>
+              <div class="split">
+                <div>
+                  <div class="devcard sel" style="margin-bottom:8px">
+                    <div class="devico"><svg class="ic"><use href="#i-phone"/></svg></div>
+                    <div class="devmain"><div class="devname"><span class="dot on"></span>Pixel 7</div><div class="devsub">Android 14 · Wi-Fi 5GHz · 192.168.1.23:9527 · 2 秒前</div></div>
+                    <div class="devact"><button class="btn sm primary">连接</button><button class="btn sm icon ghost"><svg class="ic s"><use href="#i-more"/></svg></button></div>
+                  </div>
+                  <div class="devcard" style="margin-bottom:8px">
+                    <div class="devico"><svg class="ic"><use href="#i-phone"/></svg></div>
+                    <div class="devmain"><div class="devname"><span class="dot on"></span>Redmi K60</div><div class="devsub">Android 13 · Wi-Fi 2.4GHz · 192.168.1.31:9527 · 8 秒前</div></div>
+                    <div class="devact"><button class="btn sm">连接</button><button class="btn sm icon ghost"><svg class="ic s"><use href="#i-more"/></svg></button></div>
+                  </div>
+                  <div class="devcard" style="opacity:.62">
+                    <div class="devico"><svg class="ic"><use href="#i-monitor"/></svg></div>
+                    <div class="devmain"><div class="devname"><span class="dot"></span>DESKTOP-3C1B</div><div class="devsub">Windows 11 · 192.168.1.77:9527 · 离线（2 小时前）</div></div>
+                    <div class="devact"><button class="btn sm" disabled style="opacity:.45">连接</button></div>
+                  </div>
+                  <div class="hr"></div>
+                  <div style="display:flex;align-items:center;gap:12px">
+                    <span style="font-size:12px;color:var(--t3)">没有找到你的设备？</span>
+                    <button class="btn sm">手动输入 IP</button>
+                    <button class="btn sm">扫描二维码</button>
+                    <button class="btn sm ghost">检查防火墙</button>
+                  </div>
+                </div>
+                <div class="card pad6">
+                  <div style="display:flex;align-items:center;gap:10px;margin-bottom:14px">
+                    <div class="devico" style="width:44px;height:44px"><svg class="ic"><use href="#i-phone"/></svg></div>
+                    <div><div style="font-size:15px;font-weight:600">Pixel 7</div><div style="font-size:11.5px;color:var(--t3)">Android 14 · Google</div></div>
+                  </div>
+                  <div class="kv"><span>IP 地址</span><span class="num">192.168.1.23</span></div>
+                  <div class="kv"><span>端口</span><span class="num">9527</span></div>
+                  <div class="kv"><span>发现方式</span><span>mDNS</span></div>
+                  <div class="kv"><span>网络</span><span>Wi-Fi 5GHz</span></div>
+                  <div class="kv"><span>上次连接</span><span>今天 14:22</span></div>
+                  <div class="hr"></div>
+                  <div style="font-size:11px;color:var(--t3);line-height:1.7">连接分四步：发现 → 信令 → ICE → 媒体。<br>任一步失败会在对应阶段标红并给出原因。</div>
+                  <button class="btn primary" style="width:100%;margin-top:14px"><svg class="ic s"><use href="#i-link"/></svg>建立连接</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="caption"><b>W2 设备</b>列表 + 详情双栏 · 在线/离线用形状区分 · 排障入口替代空状态</div>
+      </div>
+    </section>
+
+    <!-- ══════ W3 ══════ -->
+    <section class="screen" data-screen="win-share" data-end="win">
+      <div class="screenwrap">
+        <div class="win">
+          <div class="win-title"><span class="appico">U</span>uniLinker<span style="margin-left:8px;color:var(--t3)">投屏</span><div class="win-ctrl"><i>—</i><i>▢</i><i>✕</i></div></div>
+          <div class="win-body">
+            <div class="nav">
+              <div class="navitem"><svg class="ic s"><use href="#i-monitor"/></svg>概览</div>
+              <div class="navitem"><svg class="ic s"><use href="#i-wifi"/></svg>设备</div>
+              <div class="navitem on"><svg class="ic s"><use href="#i-share"/></svg>投屏</div>
+              <div class="navitem"><svg class="ic s"><use href="#i-folder"/></svg>文件</div>
+              <div class="navitem"><svg class="ic s"><use href="#i-sliders"/></svg>设置</div>
+              <div class="navfoot"><b>192.168.1.10</b>端口 9527 · Wi-Fi<br><span style="color:var(--ok)">●</span> 可被发现</div>
+            </div>
+            <div class="page">
+              <div class="pagehd"><div><h1>选择共享内容</h1><div class="desc">选中即启动采集，右侧为实时预览</div></div></div>
+              <div class="split">
+                <div>
+                  <div class="seg srcline" style="max-width:280px"><button class="on">整个屏幕</button><button>窗口</button><button>区域</button></div>
+                  <div class="thumbgrid">
+                    <div class="thumb sel"><div class="miniwin"><i></i><i></i><i></i><i></i></div><span style="position:absolute;bottom:6px;left:8px;font-size:10.5px">屏幕 1 · 2560×1440</span></div>
+                    <div class="thumb"><div class="miniwin"><i></i><i></i><i></i></div><span style="position:absolute;bottom:6px;left:8px;font-size:10.5px">屏幕 2 · 1920×1080</span></div>
+                    <div class="thumb"><div class="miniwin"><i></i><i></i></div><span style="position:absolute;bottom:6px;left:8px;font-size:10.5px">Visual Studio</span></div>
+                    <div class="thumb"><div class="miniwin"><i></i><i></i><i></i></div><span style="position:absolute;bottom:6px;left:8px;font-size:10.5px">Chrome</span></div>
+                    <div class="thumb"><div class="miniwin"><i></i><i></i></div><span style="position:absolute;bottom:6px;left:8px;font-size:10.5px">终端</span></div>
+                    <div class="thumb" style="border-style:dashed;color:var(--t3)">从窗口列表拖入</div>
+                  </div>
+                  <div class="cardhead" style="margin-top:var(--s6)"><h3>画质</h3><span class="hint">档位显示真实参数，不用"高清/超清"</span></div>
+                  <div class="card" style="padding:8px">
+                    <div class="opt"><div class="radio"></div><div class="ol"><div class="ot">流畅</div><div class="os">720p · 30fps · 约 2.5 Mbps</div></div></div>
+                    <div class="opt on"><div class="radio"></div><div class="ol"><div class="ot">标准</div><div class="os">1080p · 30fps · 约 5 Mbps</div></div></div>
+                    <div class="opt"><div class="radio"></div><div class="ol"><div class="ot">高清</div><div class="os">1080p · 60fps · 约 8 Mbps</div></div></div>
+                  </div>
+                </div>
+                <div>
+                  <div class="card" style="padding:0;overflow:hidden;margin-bottom:var(--s3)">
+                    <div style="aspect-ratio:16/9;background:linear-gradient(140deg,#1b2230,#0e1319 60%,#141a24);position:relative;display:grid;place-items:center">
+                      <div style="text-align:center"><div class="dot busy" style="margin:0 auto 8px"></div><div style="font-size:11.5px;color:#8fa0b8">采集预览（已启动）</div></div>
+                      <div style="position:absolute;left:10px;top:10px" class="chip mono">2560×1440 · 30fps</div>
+                    </div>
+                  </div>
+                  <div class="kv"><span>编码</span><span class="num">H.264 · 硬编优先</span></div>
+                  <div class="kv"><span>状态</span><span style="color:var(--warn)">等待观看者</span></div>
+                  <div class="kv"><span>监听</span><span class="num">0.0.0.0:9527</span></div>
+                  <div class="hr"></div>
+                  <button class="btn primary" style="width:100%"><svg class="ic s"><use href="#i-play"/></svg>开始共享</button>
+                  <button class="btn ghost" style="width:100%;margin-top:6px">复制观看链接</button>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="caption"><b>W3 投屏</b>点击即采集并预览 —— 不再是"置一个布尔值"（修 Y-09）</div>
+      </div>
+    </section>
+
+    <!-- ══════ W7 ══════ -->
+    <section class="screen" data-screen="win-session" data-end="win">
+      <div class="screenwrap">
+        <div class="win">
+          <div class="win-title"><span class="appico">U</span>uniLinker<span style="margin-left:8px;color:var(--t3)">会话 · Pixel 7</span><div class="win-ctrl"><i>—</i><i>▢</i><i>✕</i></div></div>
+          <div class="session">
+            <div class="cbar" id="cbar">
+              <div class="stat"><span class="dot on"></span>已连接 <span class="num" style="color:var(--t1)">42 ms</span></div>
+              <button class="btn icon ghost"><svg class="ic s"><use href="#i-refresh"/></svg></button>
+              <button class="btn icon ghost"><svg class="ic s"><use href="#i-full"/></svg></button>
+              <button class="btn icon ghost"><svg class="ic s"><use href="#i-more"/></svg></button>
+            </div>
+            <div class="mirror">
+              <div class="mirror-inner portrait" style="height:94%">
+                <div class="ph">
+                  <div class="ph-stat"><span>9:41</span><span>Wi-Fi · 86%</span></div>
+                  <div class="ph-hd">消息<small>3 条未读</small></div>
+                  <div class="ph-big"></div>
+                  <div class="ph-row"><div class="ph-av c"></div><div class="ph-txt"><div class="ph-line"></div><div class="ph-line s"></div></div></div>
+                  <div class="ph-row"><div class="ph-av"></div><div class="ph-txt"><div class="ph-line"></div><div class="ph-line s"></div></div></div>
+                  <div class="ph-row"><div class="ph-av"></div><div class="ph-txt"><div class="ph-line"></div><div class="ph-line s"></div></div></div>
+                  <div class="ph-row"><div class="ph-av"></div><div class="ph-txt"><div class="ph-line"></div><div class="ph-line s"></div></div></div>
+                  <div class="ph-row"><div class="ph-av"></div><div class="ph-txt"><div class="ph-line"></div><div class="ph-line s"></div></div></div>
+                  <div class="ph-nav"><i></i><i></i><i></i></div>
+                </div>
+              </div>
+            </div>
+            <div class="sbar">
+              <span class="num">1080p 60fps</span><span>·</span><span class="num">8.2 Mbps</span><span>·</span><span class="num">丢包 0.3%</span><span>·</span><span class="num">编码 6 ms</span>
+              <div class="right"><span class="chip ok"><svg class="ic s"><use href="#i-shield"/></svg>仅局域网 · 公网 0 B</span></div>
+            </div>
+          </div>
+        </div>
+        <div class="caption"><b>W7 会话</b>命令条与状态条均为 overlay，不挤压视频 · <button class="btn sm ghost" id="cbarBtn" style="height:24px;padding:0 8px">演示 2.5s 自动隐藏</button></div>
+      </div>
+    </section>
+
+    <!-- ══════ W5 设置 ══════ -->
+    <section class="screen" data-screen="win-settings" data-end="win">
+      <div class="screenwrap">
+        <div class="win">
+          <div class="win-title"><span class="appico">U</span>uniLinker<span style="margin-left:8px;color:var(--t3)">设置</span><div class="win-ctrl"><i>—</i><i>▢</i><i>✕</i></div></div>
+          <div class="win-body">
+            <div class="nav">
+              <div class="navitem"><svg class="ic s"><use href="#i-monitor"/></svg>概览</div>
+              <div class="navitem"><svg class="ic s"><use href="#i-wifi"/></svg>设备</div>
+              <div class="navitem"><svg class="ic s"><use href="#i-share"/></svg>投屏</div>
+              <div class="navitem"><svg class="ic s"><use href="#i-folder"/></svg>文件</div>
+              <div class="navitem on"><svg class="ic s"><use href="#i-sliders"/></svg>设置</div>
+              <div class="navfoot"><b>192.168.1.10</b>端口 9527 · Wi-Fi<br><span style="color:var(--ok)">●</span> 可被发现</div>
+            </div>
+            <div class="page" style="max-width:820px">
+              <div class="pagehd"><div><h1>设置</h1><div class="desc">所有改动立即生效，无需重启</div></div></div>
+
+              <div class="cardhead"><h3>通用</h3></div>
+              <div class="card" style="margin-bottom:var(--s4)">
+                <div style="display:flex;align-items:center;gap:16px;padding:8px 0">
+                  <div style="flex:1"><div style="font-size:13px">外观</div><div style="font-size:11.5px;color:var(--t3);margin-top:2px">跟随系统 / 浅色 / 深色</div></div>
+                  <div class="seg" style="width:240px"><button class="on">跟随系统</button><button>浅色</button><button>深色</button></div>
+                </div>
+                <div class="hr"></div>
+                <div style="display:flex;align-items:center;gap:16px;padding:8px 0">
+                  <div style="flex:1"><div style="font-size:13px">语言</div><div style="font-size:11.5px;color:var(--t3);margin-top:2px">界面语言，切换后立即生效</div></div>
+                  <div class="field" style="width:160px">简体中文</div>
+                </div>
+                <div class="hr"></div>
+                <div style="display:flex;align-items:center;gap:16px;padding:8px 0">
+                  <div style="flex:1"><div style="font-size:13px">关闭窗口时最小化到托盘</div><div style="font-size:11.5px;color:var(--t3);margin-top:2px">保持后台可被发现</div></div>
+                  <div class="switch on"></div>
+                </div>
+              </div>
+
+              <div class="cardhead"><h3>网络</h3></div>
+              <div class="card" style="margin-bottom:var(--s4)">
+                <div class="kv"><span>本机地址</span><span class="num">192.168.1.10 · 端口 9527</span></div>
+                <div class="kv"><span>绑定网卡</span><span>有线以太网（已选）</span></div>
+                <div class="kv"><span>防火墙</span><span style="color:var(--ok)">9527 已放行</span></div>
+                <div class="hr"></div>
+                <div style="display:flex;align-items:center;gap:16px">
+                  <div style="flex:1"><div style="font-size:13px">检测到 3 个网络接口</div><div style="font-size:11.5px;color:var(--t3);margin-top:2px">已自动选择私有网段，避免虚拟网卡干扰</div></div>
+                  <button class="btn sm">更改</button>
+                </div>
+              </div>
+
+              <div class="cardhead"><h3>画质与性能</h3></div>
+              <div class="card">
+                <div style="display:flex;align-items:center;gap:16px;padding:8px 0">
+                  <div style="flex:1"><div style="font-size:13px">自动适应网络</div><div style="font-size:11.5px;color:var(--t3);margin-top:2px">网络不足时自动降码率，关闭后锁定当前档位会卡顿</div></div>
+                  <div class="switch on"></div>
+                </div>
+                <div class="hr"></div>
+                <div style="display:flex;align-items:center;gap:16px;padding:8px 0">
+                  <div style="flex:1"><div style="font-size:13px">硬件编码</div><div style="font-size:11.5px;color:var(--t3);margin-top:2px">优先使用 GPU 编码，失败自动回退软件编码</div></div>
+                  <div class="switch on"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="caption"><b>W5 设置</b>分组卡片 · 每项说明后果而不是只给开关</div>
+      </div>
+    </section>
+
+    <!-- ══════ A1 ══════ -->
+    <section class="screen" data-screen="and-devices" data-end="and">
+      <div class="screenwrap">
+        <div class="phone">
+          <div class="statusbar"><span class="num">9:41</span><div class="icons"><svg class="ic s"><use href="#i-wifi"/></svg><span class="num">86%</span></div></div>
+          <div class="astage">
+            <div class="ahead"><h1>设备</h1><p>同一局域网内自动发现</p></div>
+            <div class="selfcard">
+              <div class="selfrow">
+                <div class="devico"><svg class="ic"><use href="#i-phone"/></svg></div>
+                <div style="flex:1"><div class="selfname">Pixel 7</div><div class="selfip">192.168.1.23:9527</div></div>
+                <div class="switch on"></div>
+              </div>
+              <div style="display:flex;align-items:center;gap:6px;margin-top:12px;padding-top:12px;border-top:1px solid var(--border)">
+                <span class="chip ok"><svg class="ic s"><use href="#i-check"/></svg>可被发现</span>
+                <span class="chip mono">Wi-Fi · 5GHz</span>
+              </div>
+            </div>
+            <div style="display:flex;align-items:center"><div class="sec">附近设备 · 2</div><button class="btn sm ghost" style="margin-left:auto"><svg class="ic s"><use href="#i-refresh"/></svg>刷新</button></div>
+            <div class="adev"><div class="devico"><svg class="ic"><use href="#i-monitor"/></svg></div><div style="flex:1"><div class="devname" style="font-size:13px"><span class="dot on"></span>DESKTOP-8F2A</div><div class="devsub" style="font-size:11px;color:var(--t3);margin-top:2px">Windows 11 · 192.168.1.10</div></div><button class="btn sm primary">连接</button></div>
+            <div class="adev"><div class="devico"><svg class="ic"><use href="#i-phone"/></svg></div><div style="flex:1"><div class="devname" style="font-size:13px"><span class="dot on"></span>Redmi K60</div><div class="devsub" style="font-size:11px;color:var(--t3);margin-top:2px">Android 13 · 192.168.1.31</div></div><button class="btn sm">连接</button></div>
+            <div class="sec">其他方式</div>
+            <div class="adev" style="background:transparent;border-style:dashed"><svg class="ic" style="color:var(--t3)"><use href="#i-link"/></svg><div style="flex:1;font-size:12.5px;color:var(--t2)">手动输入 IP</div><svg class="ic s" style="color:var(--t3)"><use href="#i-chev"/></svg></div>
+            <div class="adev" style="background:transparent;border-style:dashed"><svg class="ic" style="color:var(--t3)"><use href="#i-qr"/></svg><div style="flex:1;font-size:12.5px;color:var(--t2)">扫描二维码</div><svg class="ic s" style="color:var(--t3)"><use href="#i-chev"/></svg></div>
+          </div>
+          <div class="abottom">
+            <button class="on"><svg class="ic"><use href="#i-phone"/></svg>设备</button>
+            <button><svg class="ic"><use href="#i-share"/></svg>投屏</button>
+            <button><svg class="ic"><use href="#i-sliders"/></svg>设置</button>
+          </div>
+        </div>
+        <div class="caption"><b>A1 设备</b>启动即扫描（修 Y-11）· 可被发现开关与状态合并为一张卡</div>
+      </div>
+    </section>
+
+    <!-- ══════ A3 ══════ -->
+    <section class="screen" data-screen="and-share" data-end="and">
+      <div class="screenwrap">
+        <div class="phone">
+          <div class="statusbar"><span class="num">9:41</span><div class="icons"><svg class="ic s"><use href="#i-wifi"/></svg><span class="num">86%</span></div></div>
+          <div class="astage">
+            <div class="ahead" style="display:flex;align-items:center;gap:10px"><svg class="ic" style="color:var(--t2)"><use href="#i-chev"/></svg><h1 style="font-size:18px">准备投屏</h1></div>
+            <div class="sec" style="margin-top:0">共享内容</div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:var(--s4)">
+              <div class="thumb sel" style="aspect-ratio:1.25;flex-direction:column;gap:6px"><svg class="ic l"><use href="#i-phone"/></svg><span style="font-size:11px">整个屏幕</span></div>
+              <div class="thumb" style="aspect-ratio:1.25;flex-direction:column;gap:6px"><svg class="ic l"><use href="#i-share"/></svg><span style="font-size:11px">单个应用</span></div>
+            </div>
+            <div class="sec">画质</div>
+            <div class="card" style="padding:6px;margin-bottom:var(--s4)">
+              <div class="opt"><div class="radio"></div><div class="ol"><div class="ot">流畅</div><div class="os">720p · 30fps</div></div></div>
+              <div class="opt on"><div class="radio"></div><div class="ol"><div class="ot">标准</div><div class="os">1080p · 30fps</div></div></div>
+              <div class="opt"><div class="radio"></div><div class="ol"><div class="ot">高清</div><div class="os">1080p · 60fps</div></div></div>
+            </div>
+            <div class="card" style="display:flex;gap:10px;align-items:flex-start;background:color-mix(in srgb,var(--warn) 8%,var(--surface));border-color:color-mix(in srgb,var(--warn) 28%,transparent)">
+              <svg class="ic s" style="color:var(--warn);margin-top:2px"><use href="#i-alert"/></svg>
+              <div style="font-size:11.5px;line-height:1.6;color:var(--t2)">点击后系统会弹出「开始录制或投放」授权框，这是 Android 的强制要求，每次投屏都需要确认。</div>
+            </div>
+            <div style="margin-top:var(--s6)"><button class="btn primary" style="width:100%;height:46px"><svg class="ic s"><use href="#i-play"/></svg>开始投屏</button></div>
+            <div style="text-align:center;font-size:11px;color:var(--t3);margin-top:10px">投屏期间保持本页在前台</div>
+          </div>
+        </div>
+        <div class="caption"><b>A3 投屏准备</b>授权前预告系统弹窗（P5）· 档位显示真实参数</div>
+      </div>
+    </section>
+
+    <!-- ══════ A4 ══════ -->
+    <section class="screen" data-screen="and-consent" data-end="and">
+      <div class="screenwrap">
+        <div class="phone">
+          <div class="statusbar"><span class="num">9:41</span><div class="icons"><svg class="ic s"><use href="#i-wifi"/></svg><span class="num">86%</span></div></div>
+          <div class="astage" style="filter:blur(1px);opacity:.5">
+            <div class="ahead"><h1>设备</h1><p>同一局域网内自动发现</p></div>
+            <div class="selfcard"><div class="selfrow"><div class="devico"><svg class="ic"><use href="#i-phone"/></svg></div><div style="flex:1"><div class="selfname">Pixel 7</div><div class="selfip">192.168.1.23:9527</div></div><div class="switch on"></div></div></div>
+          </div>
+          <div class="consent">
+            <div class="consentcard">
+              <div style="text-align:center;margin-bottom:var(--s4)">
+                <div class="devico" style="margin:0 auto 10px;width:44px;height:44px;color:var(--accent);background:color-mix(in srgb,var(--accent) 14%,transparent)"><svg class="ic"><use href="#i-shield"/></svg></div>
+                <div style="font-size:16px;font-weight:600">DESKTOP-8F2A 请求连接</div>
+                <div style="font-size:11.5px;color:var(--t3);margin-top:3px">Windows 11 · 192.168.1.10</div>
+              </div>
+              <div style="font-size:11px;color:var(--t3);text-align:center;margin-bottom:6px">核对码 · 请在两端核对一致</div>
+              <div class="code6"><i>4</i><i>7</i><i>2</i><i>9</i><i>1</i><i>6</i></div>
+              <div class="sec" style="margin-top:var(--s4)">允许范围</div>
+              <div class="card" style="padding:6px;margin-bottom:var(--s4)">
+                <div class="opt on"><div class="radio"></div><div class="ol"><div class="ot">仅观看</div><div class="os">对方只能看到画面，无法操作</div></div></div>
+                <div class="opt"><div class="radio"></div><div class="ol"><div class="ot">允许远控</div><div class="os">对方可点击、滑动、输入文字</div></div></div>
+              </div>
+              <div style="display:flex;gap:8px"><button class="btn" style="flex:1">仅本次</button><button class="btn" style="flex:1">始终允许</button></div>
+              <button class="btn ghost danger" style="width:100%;margin-top:8px">拒绝</button>
+            </div>
+          </div>
+        </div>
+        <div class="caption"><b>A4 被控授权</b>四要素可核对：设备名 / IP / 六位码 / 范围 · 默认仅观看 · 外部点击不可关闭</div>
+      </div>
+    </section>
+
+    <!-- ══════ A6 ══════ -->
+    <section class="screen" data-screen="and-session" data-end="and">
+      <div class="screenwrap">
+        <div class="phone" style="border-color:#000">
+          <div style="position:absolute;inset:0;background:#000;display:flex;flex-direction:column">
+            <div style="flex:1;display:grid;place-items:center;padding:10px 0">
+              <div class="mirror-inner" style="width:94%;box-shadow:none">
+                <div class="mirror-top"><i></i><i></i><i></i><span>DESKTOP-8F2A · 2560 × 1440</span></div>
+                <div class="mirror-body"><div class="mirror-side"><i></i><i></i><i></i><i></i></div><div class="mirror-main"><div class="mirror-card"></div><div class="mirror-card"></div><div class="mirror-card"></div><div class="mirror-card"></div></div></div>
+              </div>
+            </div>
+            <div class="cbar" style="position:absolute;top:26px;left:50%;transform:translateX(-50%)">
+              <div class="stat"><span class="dot on"></span>已连接 <span class="num" style="color:var(--t1)">42 ms</span></div>
+              <button class="btn icon ghost"><svg class="ic s"><use href="#i-full"/></svg></button>
+              <button class="btn icon ghost"><svg class="ic s"><use href="#i-close"/></svg></button>
+            </div>
+            <div style="position:absolute;bottom:26px;left:50%;transform:translateX(-50%)" class="chip mono">8.2 Mbps · 丢包 0.3%</div>
+            <div style="position:absolute;top:0;left:0;right:0;height:2px;background:var(--accent)"></div>
+          </div>
+        </div>
+        <div class="caption"><b>A6 会话</b>沉浸式 · 顶部下滑唤出工具栏 · 顶部 2px 铜金条为"正在被控"常驻指示</div>
+      </div>
+    </section>
+
+    <!-- ══════ X1 ══════ -->
+    <section class="screen" data-screen="web-connect" data-end="web">
+      <div class="screenwrap">
+        <div class="browser">
+          <div class="bchrome"><svg class="ic s"><use href="#i-close"/></svg><svg class="ic s"><use href="#i-chev"/></svg><div class="urlbar">http://192.168.1.10:9527/</div></div>
+          <div class="wbody">
+            <div class="wtop"><span style="color:var(--accent);font-weight:700;font-size:13px">◆</span><b style="font-size:13.5px">uniLinker</b><span style="color:var(--t3);font-size:12px;margin-left:6px">浏览器观看端</span>
+              <div style="margin-left:auto;display:flex;gap:10px;align-items:center"><span class="chip ok"><svg class="ic s"><use href="#i-shield"/></svg>仅局域网 · 公网 0 B</span></div>
+            </div>
+            <div style="flex:1;display:grid;place-items:center;padding:var(--s8)">
+              <div style="width:520px;text-align:center">
+                <div style="width:56px;height:56px;border-radius:16px;background:color-mix(in srgb,var(--accent) 14%,transparent);color:var(--accent);display:grid;place-items:center;margin:0 auto var(--s4)"><svg class="ic l"><use href="#i-monitor"/></svg></div>
+                <h2 style="font-size:20px;font-weight:600;letter-spacing:-.02em">DESKTOP-8F2A 正在共享</h2>
+                <p style="font-size:12.5px;color:var(--t3);margin-top:6px;line-height:1.7">对方已开启屏幕共享。点击下方按钮开始观看，画面通过局域网直连传输，不经过任何服务器。</p>
+                <div style="display:flex;gap:10px;justify-content:center;margin-top:var(--s6)">
+                  <button class="btn primary" style="height:44px;padding:0 24px"><svg class="ic s"><use href="#i-play"/></svg>观看屏幕</button>
+                  <button class="btn" style="height:44px">查看详情</button>
+                </div>
+                <div style="display:flex;gap:8px;justify-content:center;margin-top:var(--s6)">
+                  <span class="chip mono">2560×1440</span><span class="chip mono">H.264</span><span class="chip mono">≤ 40 ms</span>
+                </div>
+              </div>
+            </div>
+            <div style="height:30px;border-top:1px solid var(--border);display:flex;align-items:center;padding:0 var(--s6);font-size:11px;color:var(--t3)">
+              未连接 · <span style="margin-left:6px" class="num">192.168.1.10:9527</span>
+            </div>
+          </div>
+        </div>
+        <div class="caption"><b>X1 连接</b>三个动作（观看/详情/返回）· 零流量与画质参数前置，降低"这是不是要上传到云"的疑虑</div>
+      </div>
+    </section>
+
+    <!-- ══════ X2 ══════ -->
+    <section class="screen" data-screen="web-session" data-end="web">
+      <div class="screenwrap">
+        <div class="browser">
+          <div class="bchrome"><svg class="ic s"><use href="#i-close"/></svg><svg class="ic s"><use href="#i-chev"/></svg><div class="urlbar">http://192.168.1.10:9527/watch</div></div>
+          <div class="wtop"><span style="color:var(--accent);font-weight:700;font-size:13px">◆</span><b style="font-size:13.5px">uniLinker</b>
+            <span class="chip" style="margin-left:10px"><span class="dot on"></span>已连接</span>
+            <span style="font-size:12px;color:var(--t3);margin-left:4px">Pixel 7</span>
+            <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+              <span class="num" style="font-size:12px;color:var(--t2)">42 ms</span>
+              <span class="num" style="font-size:12px;color:var(--t2)">8.2 Mbps</span>
+              <button class="btn icon ghost"><svg class="ic s"><use href="#i-full"/></svg></button>
+            </div>
+          </div>
+          <div style="flex:1;position:relative;background:var(--sunken);display:grid;place-items:center">
+            <div class="mirror-inner portrait" style="height:76%">
+              <div class="ph">
+                <div class="ph-stat"><span>9:41</span><span>Wi-Fi · 86%</span></div>
+                <div class="ph-hd">消息<small>3 条未读</small></div>
+                <div class="ph-big"></div>
+                <div class="ph-row"><div class="ph-av c"></div><div class="ph-txt"><div class="ph-line"></div><div class="ph-line s"></div></div></div>
+                <div class="ph-row"><div class="ph-av"></div><div class="ph-txt"><div class="ph-line"></div><div class="ph-line s"></div></div></div>
+                <div class="ph-row"><div class="ph-av"></div><div class="ph-txt"><div class="ph-line"></div><div class="ph-line s"></div></div></div>
+                <div class="ph-row"><div class="ph-av"></div><div class="ph-txt"><div class="ph-line"></div><div class="ph-line s"></div></div></div>
+                <div class="ph-nav"><i></i><i></i><i></i></div>
+              </div>
+            </div>
+            <div style="position:absolute;left:50%;bottom:18px;transform:translateX(-50%);display:flex;gap:10px;align-items:center;padding:6px 12px;border-radius:var(--r-full);background:color-mix(in srgb,var(--raised) 90%,transparent);border:1px solid var(--border-strong);backdrop-filter:blur(16px);font-size:11.5px;color:var(--t2)">
+              <span class="num">1080×2400</span><span style="color:var(--border-strong)">|</span><span class="num">60 fps</span><span style="color:var(--border-strong)">|</span><span class="num">解码 7 ms</span><span style="color:var(--border-strong)">|</span><span class="chip ok" style="height:20px"><svg class="ic s"><use href="#i-shield"/></svg>公网 0 B</span>
+            </div>
+          </div>
+        </div>
+        <div class="caption"><b>X2 会话</b>只读观看 · HUD 浮层不占位 · 断线时保留最后一帧并显示重连计数</div>
+      </div>
+    </section>
+
+    <!-- ══════ TOKENS ══════ -->
+    <section class="screen" data-screen="spec-tokens" data-end="spec">
+      <div class="screenwrap">
+        <div class="spec">
+          <div class="card pad6">
+            <div class="cardhead"><h3>色彩令牌</h3><span class="hint">三端同源 · 对比度已核算</span></div>
+            <div class="swatches">
+              <div class="sw"><i style="background:var(--canvas)"></i><div><b>canvas</b><code>#121210</code></div></div>
+              <div class="sw"><i style="background:var(--surface)"></i><div><b>surface</b><code>#1C1C18</code></div></div>
+              <div class="sw"><i style="background:var(--raised)"></i><div><b>surface-raised</b><code>#262620</code></div></div>
+              <div class="sw"><i style="background:var(--sunken)"></i><div><b>surface-sunken</b><code>#0C0C0A</code></div></div>
+              <div class="sw"><i style="background:var(--accent)"></i><div><b>accent</b><code>#C49A6C · 7.3:1</code></div></div>
+              <div class="sw"><i style="background:var(--ok)"></i><div><b>success</b><code>#7BA05B · 6.2:1</code></div></div>
+              <div class="sw"><i style="background:var(--warn)"></i><div><b>warning</b><code>#D4A84B · 8.5:1</code></div></div>
+              <div class="sw"><i style="background:var(--danger)"></i><div><b>danger</b><code>#E85D4C · 5.4:1</code></div></div>
+              <div class="sw"><i style="background:var(--t1)"></i><div><b>text-primary</b><code>#E8E6E0 · 12.6:1</code></div></div>
+              <div class="sw"><i style="background:var(--t2)"></i><div><b>text-secondary</b><code>#B8B6B0 · 9.2:1</code></div></div>
+              <div class="sw"><i style="background:var(--t3)"></i><div><b>text-tertiary</b><code>#8A8880 · 5.2:1</code></div></div>
+              <div class="sw"><i style="background:var(--border-strong)"></i><div><b>border-strong</b><code>#3A3A34</code></div></div>
+            </div>
+          </div>
+
+          <div class="card pad6">
+            <div class="cardhead"><h3>排版阶梯</h3><span class="hint">Windows 14/20 起 · Android 12/16 起</span></div>
+            <div class="trow"><span class="tn">display 28/36</span><span class="tv" style="font-size:28px;font-weight:600;letter-spacing:-.02em">屏幕共享</span></div>
+            <div class="trow"><span class="tn">title 20/28</span><span class="tv" style="font-size:20px;font-weight:600">设备列表</span></div>
+            <div class="trow"><span class="tn">subtitle 16/22</span><span class="tv" style="font-size:16px;font-weight:600">Pixel 7</span></div>
+            <div class="trow"><span class="tn">body 14/20</span><span class="tv" style="font-size:14px">同一局域网内自动发现，无需登录</span></div>
+            <div class="trow"><span class="tn">caption 12/16</span><span class="tv" style="font-size:12px;color:var(--t3)">端口 9527 · Wi-Fi 5GHz</span></div>
+            <div class="trow" style="border:0"><span class="tn">mono 13/20</span><span class="tv num" style="font-size:13px">42 ms · 8.2 Mbps · 0.3%</span></div>
+          </div>
+
+          <div class="card pad6">
+            <div class="cardhead"><h3>圆角与间距</h3><span class="hint">4pt 网格</span></div>
+            <div class="radii">
+              <div><i style="border-radius:4px"></i>4 · xs</div>
+              <div><i style="border-radius:8px"></i>8 · sm</div>
+              <div><i style="border-radius:12px"></i>12 · md</div>
+              <div><i style="border-radius:16px"></i>16 · lg</div>
+              <div><i style="border-radius:999px"></i>full</div>
+            </div>
+            <div class="hr"></div>
+            <div style="display:flex;gap:6px;align-items:flex-end">
+              <div style="text-align:center;font-size:10px;color:var(--t3)"><div style="width:4px;height:32px;background:var(--accent)"></div>4</div>
+              <div style="text-align:center;font-size:10px;color:var(--t3)"><div style="width:8px;height:32px;background:var(--accent)"></div>8</div>
+              <div style="text-align:center;font-size:10px;color:var(--t3)"><div style="width:12px;height:32px;background:var(--accent)"></div>12</div>
+              <div style="text-align:center;font-size:10px;color:var(--t3)"><div style="width:16px;height:32px;background:var(--accent)"></div>16</div>
+              <div style="text-align:center;font-size:10px;color:var(--t3)"><div style="width:24px;height:32px;background:var(--accent)"></div>24</div>
+              <div style="text-align:center;font-size:10px;color:var(--t3)"><div style="width:32px;height:32px;background:var(--accent)"></div>32</div>
+              <div style="text-align:center;font-size:10px;color:var(--t3)"><div style="width:48px;height:32px;background:var(--accent)"></div>48</div>
+            </div>
+          </div>
+
+          <div class="card pad6">
+            <div class="cardhead"><h3>状态语义</h3><span class="hint">颜色 + 文字双通道</span></div>
+            <div style="display:flex;flex-direction:column;gap:10px">
+              <div style="display:flex;align-items:center;gap:10px"><span class="dot"></span><span style="font-size:13px">空闲 · 未连接</span><span class="chip" style="margin-left:auto">idle</span></div>
+              <div style="display:flex;align-items:center;gap:10px"><span class="dot busy"></span><span style="font-size:13px">正在连接 · 建立会话</span><span class="chip warn" style="margin-left:auto">connecting</span></div>
+              <div style="display:flex;align-items:center;gap:10px"><span class="dot on"></span><span style="font-size:13px">已连接 · 42 ms</span><span class="chip ok" style="margin-left:auto">connected</span></div>
+              <div style="display:flex;align-items:center;gap:10px"><span class="dot warn"></span><span style="font-size:13px">降级 · 丢包 4.2%</span><span class="chip warn" style="margin-left:auto">degraded</span></div>
+              <div style="display:flex;align-items:center;gap:10px"><span class="dot err"></span><span style="font-size:13px">连接中断 · 重连 2/5</span><span class="chip" style="margin-left:auto;color:var(--danger)">error</span></div>
+            </div>
+            <div class="hr"></div>
+            <div style="font-size:11.5px;color:var(--t3);line-height:1.7">UI 五态必须由会话层状态机派生，禁止在界面里自建布尔值（06 §12）。</div>
+          </div>
+        </div>
+        <div class="caption"><b>设计基础</b>令牌是唯一改版入口 · 业务代码禁止写十六进制</div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<script>
+(function(){
+  var screens = document.querySelectorAll('.screen');
+  var railBtns = document.querySelectorAll('#rail button');
+  var endBtns = document.querySelectorAll('#ends button');
+
+  function show(id){
+    screens.forEach(function(s){ s.classList.toggle('active', s.dataset.screen === id); });
+    railBtns.forEach(function(b){ b.classList.toggle('on', b.dataset.target === id); });
+    document.getElementById('stage').scrollTop = 0;
+    if(location.hash.slice(1) !== id) history.replaceState(null,'','#'+id);
+  }
+  railBtns.forEach(function(b){
+    b.addEventListener('click', function(){ show(b.dataset.target); });
+  });
+  endBtns.forEach(function(b){
+    b.addEventListener('click', function(){
+      endBtns.forEach(function(x){ x.classList.remove('on'); });
+      b.classList.add('on');
+      var end = b.dataset.end;
+      railBtns.forEach(function(r){
+        r.style.display = (end === 'all' || r.dataset.end === end) ? '' : 'none';
+      });
+      document.querySelectorAll('.railtitle').forEach(function(t){
+        t.style.display = (end === 'all' || t.dataset.group === end) ? '' : 'none';
+      });
+      var first = Array.prototype.find.call(railBtns, function(r){
+        return r.style.display !== 'none';
+      });
+      if(first) show(first.dataset.target);
+    });
+  });
+
+  var light = false;
+  document.getElementById('themeBtn').addEventListener('click', function(){
+    light = !light;
+    document.documentElement.setAttribute('data-theme', light ? 'light' : 'dark');
+    this.textContent = light ? '深色模式' : '浅色模式';
+  });
+
+  var cbar = document.getElementById('cbar');
+  var btn = document.getElementById('cbarBtn');
+  if(btn){ btn.addEventListener('click', function(){
+    cbar.classList.remove('hide');
+    clearTimeout(window.__t);
+    window.__t = setTimeout(function(){ cbar.classList.add('hide'); }, 800);
+  }); }
+
+  // 深链：#win-session / #and-consent / #spec-tokens
+  var deep = location.hash.slice(1);
+  if(deep){ show(deep); }
+})();
+</script>
+</body>
+</html>
