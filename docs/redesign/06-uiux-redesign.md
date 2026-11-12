@@ -110,7 +110,7 @@
 
 > 顺序很重要：**先删死代码，再改 UI**。否则会出现"花两小时美化了一个从未被调用的组件"。
 
-### 1.4 两条必须先在 UI 层纠正的"假状态"
+### 1.4 三条必须先在 UI 层纠正的"假状态"
 
 现状有三个核心动作的**名词与真实行为不一致**，这是比配色更严重的问题，UI 重构必须先统一心智模型：
 
@@ -166,11 +166,12 @@
 | `color.surface` | `#1C1C18` | 卡片、面板 |
 | `color.surface-raised` | `#262620` | 悬浮工具条、弹层 |
 | `color.surface-sunken` | `#0C0C0A` | 视频舞台底、凹陷区 |
-| `color.border-subtle` | `#2A2A26` | 分隔线、次级描边 |
-| `color.border-strong` | `#3A3A34` | 输入框、卡片描边 |
-| `color.text-primary` | `#E8E6E0` | 主文字（对比度 12.6:1 on canvas） |
+| `color.border-subtle` | `#2A2A26` | 分隔线、次级描边（装饰性） |
+| `color.border-strong` | `#3A3A34` | 卡片描边、悬停强调（**装饰性，不承担控件边界职责**） |
+| `color.border-control` | `#70706A` | **输入框/可交互控件的边界**。非文字需 ≥3:1，实测 3.4:1 on surface、3.1:1 on raised |
+| `color.text-primary` | `#E8E6E0` | 主文字（12.6:1 on canvas） |
 | `color.text-secondary` | `#B8B6B0` | 次文字（9.2:1） |
-| `color.text-tertiary` | `#8A8880` | 辅助文字（**由 `#7A7872` 上调**，5.2:1；原值仅 4.2:1 不达标） |
+| `color.text-tertiary` | `#949188` | 辅助文字。**实测 5.9:1 on canvas / 4.8:1 on raised**；原 `#8A8880` 在 `surface-raised` 上仅 **4.28:1**，不达标（C-17） |
 | `color.accent` | `#C49A6C` | 品牌铜金、主操作、焦点（7.3:1） |
 | `color.accent-hover` | `#D6AE7E` | 悬停 |
 | `color.accent-press` | `#AC8557` | 按下 |
@@ -188,21 +189,42 @@
 | `color.surface` | `#FFFFFF` | |
 | `color.surface-raised` | `#FFFFFF` | 用描边而非阴影区分 |
 | `color.surface-sunken` | `#E8E5DF` | |
-| `color.border-subtle` | `#E0DCD4` | |
-| `color.border-strong` | `#C9C4BA` | |
+| `color.border-subtle` | `#E0DCD4` | 装饰性分隔 |
+| `color.border-strong` | `#C9C4BA` | 卡片描边、悬停强调（**装饰性**） |
+| `color.border-control` | `#8A857A` | **控件边界**，实测 3.3:1 on canvas、3.7:1 on white |
 | `color.text-primary` | `#1A1A18` | |
 | `color.text-secondary` | `#55534E` | |
-| `color.text-tertiary` | `#75726B` | |
-| `color.accent` | `#8A6A42` | **浅色下铜金必须加深**，`#C49A6C` 在白底仅 2.4:1，不可用于文字 |
-| `color.on-accent` | `#FFFFFF` | 4.9:1 |
+| `color.text-tertiary` | `#66635B` | **实测 5.4:1 on canvas / 4.8:1 on sunken**；原 `#75726B` 为 4.29 / 3.82，不达标（C-17） |
+| `color.accent` | `#82613A` | **浅色下铜金必须加深**：`#C49A6C` 在白底仅 2.4:1；原 `#8A6A42` 在暖白底 4.45:1 仍差 0.05，现 **5.0:1** |
+| `color.on-accent` | `#FFFFFF` | 5.6:1 |
 | `color.accent-hover` | `#7A5C38` | 浅色悬停（6.2:1 on white） |
 | `color.accent-press` | `#6B4E2E` | 浅色按下（7.7:1） |
 | `color.success` | `#4A7530` | **由候选 `#4C7A32` 下调**：原值在 `#F4F2EE` 上仅 4.55:1，余量不足；现值 4.85:1 |
 | `color.warning` | `#856312` | **由候选 `#8C6A17` 下调**：原值 4.52:1；现值 4.95:1 |
 | `color.danger` | `#B23B2C` | 5.3:1 |
-| `color.focus-ring` | `#8A6A42` | 与 accent 同值，2px 环需 ≥3:1，实测 4.9:1 |
+| `color.focus-ring` | `#82613A` | 与 accent 同值，2px 环需 ≥3:1，实测 5.0:1 |
 
-> 浅色分支不能用深色值直接换算：`#C49A6C` 在白底仅 **2.4:1**、`#D4A84B`（深色 warning）在白底约 **2.0:1**，均不可用于文字。上表 6 个值为按同色相降明度后的实测结果，已计入 C-15 裁决。
+> 浅色分支不能用深色值直接换算：`#C49A6C` 在白底仅 **2.4:1**、`#D4A84B`（深色 warning）在白底约 **2.0:1**，均不可用于文字。
+
+#### 3.1.1 对比度实测（可复算 · C-17 修订）
+
+> QA 用 `08` §3 的 `UX-S1` 脚本对全量「文字色 × 背景色」组合做了遍历，发现初版有 **7 组不达标**。下表为实测与修订。**本文件的"已核算"从此指"由脚本遍历得出"，不再指"抽样目测"。**
+
+| 配对 | 初版实测 | 修订后 | 处理 |
+|---|---:|---:|---|
+| 深色 `text-tertiary` on `surface-raised` | 4.28 ❌ | **4.83** ✅ | `#8A8880` → `#949188` |
+| 浅色 `text-tertiary` on `canvas` | 4.29 ❌ | **5.37** ✅ | `#75726B` → `#66635B` |
+| 浅色 `text-tertiary` on `surface-sunken` | 3.82 ❌ | **4.77** ✅ | 同上 |
+| 浅色 `accent` on `canvas` | 4.45 ❌ | **5.05** ✅ | `#8A6A42` → `#82613A` |
+| 深色控件描边 on `surface` | 1.49 ❌ | **3.43** ✅ | 新增 `border-control #70706A` |
+| 深色控件描边 on `raised` | 1.33 ❌ | **3.05** ✅ | 同上 |
+| 浅色控件描边 on `white` | 1.74 ❌ | **3.67** ✅ | 新增 `border-control #8A857A` |
+
+三条规则：
+
+1. **描边分两类**：`border-subtle` / `border-strong` 是装饰（分隔线、卡片轮廓），不传递信息，不要求 3:1；**只有 `border-control`（输入框与可交互控件的边界）受 3:1 约束**。这样既满足 WCAG 1.4.11，又不至于让卡片描边重到难看。
+2. 任何新色值必须先用 `UX-S1` 复算通过，才允许写进三端令牌文件（`07` §A.5 的 V1~V7 已含此校验）。
+3. 初版 `#8A8880` **只在 canvas 上达标（5.28:1）**，在 raised 上只有 4.28:1 —— 这正是"只验主背景"会漏掉的典型错误，也是本轮把审计从抽样改为遍历的原因。
 
 **语义色使用规则（强制）**
 

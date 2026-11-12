@@ -8,8 +8,8 @@
 /* ═══════════════ TOKENS · 与 06 §3 一一对应 ═══════════════ */
 :root{
   --canvas:#121210; --surface:#1C1C18; --raised:#262620; --sunken:#0C0C0A;
-  --border:#2A2A26; --border-strong:#3A3A34;
-  --t1:#E8E6E0; --t2:#B8B6B0; --t3:#8A8880;
+  --border:#2A2A26; --border-strong:#3A3A34; --border-control:#70706A;
+  --t1:#E8E6E0; --t2:#B8B6B0; --t3:#949188;
   --accent:#C49A6C; --accent-h:#D6AE7E; --accent-p:#AC8557; --on-accent:#1A1A1A;
   --ok:#7BA05B; --warn:#D4A84B; --danger:#E85D4C;
   --r-xs:4px; --r-sm:8px; --r-md:12px; --r-lg:16px; --r-full:999px;
@@ -24,9 +24,9 @@
 }
 html[data-theme="light"]{
   --canvas:#F4F2EE; --surface:#FFFFFF; --raised:#FFFFFF; --sunken:#E8E5DF;
-  --border:#E0DCD4; --border-strong:#C9C4BA;
-  --t1:#1A1A18; --t2:#55534E; --t3:#75726B;
-  --accent:#8A6A42; --accent-h:#A07C4F; --accent-p:#6F5433; --on-accent:#FFFFFF;
+  --border:#E0DCD4; --border-strong:#C9C4BA; --border-control:#8A857A;
+  --t1:#1A1A18; --t2:#55534E; --t3:#66635B;
+  --accent:#82613A; --accent-h:#A07C4F; --accent-p:#6F5433; --on-accent:#FFFFFF;
   --ok:#4F7A34; --warn:#8A6A1E; --danger:#B33A2C;
   --e1:0 1px 2px rgba(26,26,24,.06);
   --e2:0 8px 24px rgba(26,26,24,.10);
@@ -145,7 +145,7 @@ html[data-theme="light"] .seg{background:var(--canvas)}
 html[data-theme="light"] .seg button.on{background:#fff}
 
 .field{height:38px;display:flex;align-items:center;gap:var(--s2);padding:0 var(--s3);
-  background:var(--sunken);border:1px solid var(--border-strong);border-radius:var(--r-sm);color:var(--t2);font-size:13px}
+  background:var(--sunken);border:1px solid var(--border-control);border-radius:var(--r-sm);color:var(--t2);font-size:13px}
 html[data-theme="light"] .field{background:#fff}
 
 .kv{display:flex;align-items:baseline;justify-content:space-between;gap:var(--s4);padding:6px 0}

@@ -30,6 +30,9 @@
 
 ## A.1 令牌清单与三端命名映射
 
+> **v1.1 修订（C-17，2026-11-12）**：`06` §3.1 有 7 组对比度实测不达标，色板已改：深色 `text-tertiary #949188 → #949188`、浅色 `text-tertiary #66635B → #66635B`、浅色 `accent`/`focus-ring #82613A → #82613A`；并**新增令牌 `border-control`**（深 `#70706A` / 浅 `#8A857A`），专门承担输入框等**可交互控件边界**的 3:1 要求。
+> 本文以下代码骨架中的对应色值已同步替换；**但 `border-strong`（`#3A3A34` / `#C9C4BA`）仍保留为装饰性描边**，凡骨架里把它用作输入框边界的地方，实现时须改用 `border-control`。校验规则见 `06` §3.1.1 与 `08` §B1。
+
 命名前缀统一：Windows `Ul`、Android `Ul`、Web `--ul-`（`06` §3.4 末注）。**旧常量（`Copper`/`BackgroundDeep`/`IndustrialDesign`）保留一版并标 `@Deprecated`，S2 阶段删除**（见 §E.1）。
 
 ### A.1.1 色彩（深色为默认值）
@@ -44,7 +47,7 @@
 | `color.border-strong` (:169) | `UlColorBorderStrong` | `.borderStrong` | `--ul-color-border-strong` | `#3A3A34` |
 | `color.text-primary` (:170) | `UlColorTextPrimary` | `.textPrimary` | `--ul-color-text-primary` | `#E8E6E0` |
 | `color.text-secondary` (:171) | `UlColorTextSecondary` | `.textSecondary` | `--ul-color-text-secondary` | `#B8B6B0` |
-| `color.text-tertiary` (:172) | `UlColorTextTertiary` | `.textTertiary` | `--ul-color-text-tertiary` | `#8A8880` |
+| `color.text-tertiary` (:172) | `UlColorTextTertiary` | `.textTertiary` | `--ul-color-text-tertiary` | `#949188` |
 | `color.accent` (:173) | `UlColorAccent` | `.accent` | `--ul-color-accent` | `#C49A6C` |
 | `color.accent-hover` (:174) | `UlColorAccentHover` | `.accentHover` | `--ul-color-accent-hover` | `#D6AE7E` |
 | `color.accent-press` (:175) | `UlColorAccentPress` | `.accentPress` | `--ul-color-accent-press` | `#AC8557` |
@@ -54,7 +57,7 @@
 | `color.danger` (:179) | `UlColorDanger` | `.danger` | `--ul-color-danger` | `#E85D4C` |
 | `color.focus-ring` (:180) | `UlColorFocusRing` | `.focusRing` | `--ul-color-focus-ring` | `#C49A6C` |
 
-> 与现状的**唯一**差异：`text-tertiary` 由 `#7A7872`（`Theme.kt:40`，4.2:1）上调为 `#8A8880`（5.2:1，`06` X-05 修正）。S1 的像素级回归必须**豁免**这一处（§E.2）。
+> 与现状的**唯一**差异：`text-tertiary` 由 `#7A7872`（`Theme.kt:40`，4.2:1）上调为 `#949188`（5.2:1，`06` X-05 修正）。S1 的像素级回归必须**豁免**这一处（§E.2）。
 
 ### A.1.2 排版
 
@@ -429,7 +432,7 @@ fun UniLinkerTheme(
   --ul-color-border-strong: #3A3A34;
   --ul-color-text-primary: #E8E6E0;
   --ul-color-text-secondary: #B8B6B0;
-  --ul-color-text-tertiary: #8A8880;
+  --ul-color-text-tertiary: #949188;
   --ul-color-accent: #C49A6C;
   --ul-color-accent-hover: #D6AE7E;
   --ul-color-accent-press: #AC8557;
@@ -499,15 +502,15 @@ fun UniLinkerTheme(
     --ul-color-border-strong: #C9C4BA;
     --ul-color-text-primary: #1A1A18;
     --ul-color-text-secondary: #55534E;
-    --ul-color-text-tertiary: #75726B;
-    --ul-color-accent: #8A6A42;     /* 浅色下铜金必须加深（06 §3.1 :195） */
+    --ul-color-text-tertiary: #66635B;
+    --ul-color-accent: #82613A;     /* 浅色下铜金必须加深（06 §3.1 :195） */
     --ul-color-accent-hover: #7A5C38;
     --ul-color-accent-press: #6B4E2E;
     --ul-color-on-accent: #FFFFFF;
     --ul-color-success: #4C7A32;
     --ul-color-warning: #8C6A17;
     --ul-color-danger: #B23B2C;
-    --ul-color-focus-ring: #8A6A42;
+    --ul-color-focus-ring: #82613A;
     --ul-color-skeleton-base: #E8E5DF;
     --ul-color-skeleton-sheen: rgba(255, 255, 255, .20);
   }
@@ -563,7 +566,7 @@ body {
 | N-5 | `dur.breathe`=1600ms / `dur.shimmer`=1500ms | 同左 | `06` §7.1 :546、§7.5 :622 给了值未给令牌 | 状态点呼吸、骨架 shimmer |
 | N-6 | `size.device-card-min-h`=72px | 72 | `06` §7.2 :556 写"高度 ≥72px" | 设备卡最小高度 |
 | N-7 | `z.hud`/`z.toolbar`/`z.sheet`/`z.toast` | 10/20/100/1000 | 三端均有遮挡问题，`06` 未定义 stacking 顺序 | Web/Compose 的 `zIndex`、XAML `Canvas.ZIndex` |
-| N-8 | 浅色分支补充 6 色：`accent-hover` `#7A5C38`、`accent-press` `#6B4E2E`、`success` `#4C7A32`、`warning` `#8C6A17`、`danger` `#B23B2C`、`focus-ring` `#8A6A42` | 同左 | `06` §3.1 浅色表（:184-196）只给了 11 个，缺这 6 个；直接沿用深色值在白底不达标（如 `warning #D4A84B` 在白底约 2.0:1） | 三个令牌文件的 Light 分支 |
+| N-8 | 浅色分支补充 6 色：`accent-hover` `#7A5C38`、`accent-press` `#6B4E2E`、`success` `#4C7A32`、`warning` `#8C6A17`、`danger` `#B23B2C`、`focus-ring` `#82613A` | 同左 | `06` §3.1 浅色表（:184-196）只给了 11 个，缺这 6 个；直接沿用深色值在白底不达标（如 `warning #D4A84B` 在白底约 2.0:1） | 三个令牌文件的 Light 分支 |
 | W-1 | 字面量白名单（唯一例外） | `UlEase*` 字符串令牌 | 缓动曲线无法作为 WinUI 资源类型安全实例化 | `Tokens.xaml` 末段 |
 
 > 🔶 **N-8 的 6 个浅色值是按同色相调整明度得到的候选值，目标 ≥4.5:1**，**必须**用对比度工具实测复核后才可定稿；`05`/`08` 的对比度用例应把它们列入。这是本文唯一"非 `06` 来源"的数值，已在此集中登记，避免散落。
@@ -1319,7 +1322,7 @@ fun VideoSurface(track: VideoTrack?, modifier: Modifier = Modifier) {
 
 | 端 | 为什么 S1 后像素不变 | 验证方法 | 需豁免的差异 |
 |---|---|---|---|
-| **Android** | `Tokens.kt` 的 20 个色值**逐字搬自** `Theme.kt:29-49`（`Copper/BackgroundDeep/...`），`ulTypography` 除 X-05 的两档上调外等同原值 | 同一设备、同一页面（Standby + WithDevices）改前改后截图，`compare` 逐像素比对 | **仅 `text-tertiary` `#7A7872 → #8A8880`**（A.1.1）与 `headlineLarge 18→32`、`labelSmall 10→11`（X-05）；这三处须在 diff 报告中显式列出并人工确认 |
+| **Android** | `Tokens.kt` 的 20 个色值**逐字搬自** `Theme.kt:29-49`（`Copper/BackgroundDeep/...`），`ulTypography` 除 X-05 的两档上调外等同原值 | 同一设备、同一页面（Standby + WithDevices）改前改后截图，`compare` 逐像素比对 | **仅 `text-tertiary` `#7A7872 → #949188`**（A.1.1）与 `headlineLarge 18→32`、`labelSmall 10→11`（X-05）；这三处须在 diff 报告中显式列出并人工确认 |
 | **Windows** | S1 只新建 `Tokens.xaml` + 把 6 个 `Style` 换成 `UlBrush*`（值 = 系统原本解析出的深色值近似），**不动任何页面 XAML** | 7 张基线截图（`gui-test-screenshots/`）重截比对 | 6 个 Style 的底色从"系统灰"改为"品牌暖灰"，会有**可预期的整体色偏**——这正是 S1 的交付目标（X-21），需人工确认"只偏色、不变形" |
 | **Web** | `tokens.css` 只承载变量 + 迁移内联 `<style>`，`styles.css` 改引用 | 截图比对 X1/X2 | 无（Web 的品牌色替换放在 S3 的 UI-06，S1 不换色） |
 
