@@ -13,8 +13,6 @@
 | 边界 | **只新建本文档**。未修改 `06`/`05`/`03`/`04`，未改 `src/`、`android/`、`web/`、`tests/` 任何源码，未新建测试代码文件，未做 git 操作 |
 | 上游追溯 | `00` C1~C5 / 判据 A~F；`01` R0-01~15；`03` §6 M0~M8；`05` §5 TC-001~085（功能侧）、§11.2（出口条件） |
 
----
-
 ## 0. 这份文档解决什么问题
 
 `06` 给出了设计规格（1 套设计语言 + 15 个界面 + 6 条流程），但它**不含验收手段**；`05` 覆盖的是功能与合规判据，UX 部分只有 §4.7 的 W-01~W-14 人工走查，粒度到不了「三端色值是否真的一致」「Start Share 是不是还在撒谎」。本文补这一层：
@@ -29,8 +27,6 @@
 1. **标记必须真实**：跑不了的脚本标 `[M]`，缺基础设施的标 `[X]`；**禁止把人工判定硬标成 `[A]`**。
 2. **通过标准必须有阈值**：禁止「显示正常」「符合设计」这类无量化表述（`05` §1.4）。
 3. **`[P]` 只能得出「降级提示已验证（非功能通过）」**，`06` §8/§2 中平台不可干预项（系统栏图标、厂商 ROM 通知栏、`FLAG_SECURE`）一律按此处理，严禁写「功能通过」。
-
----
 
 ## 1. 标记体系与本文增量规则
 
@@ -53,8 +49,6 @@
 | R4 | **色值断言只认取样均值** | 单像素受抗锯齿/次像素渲染影响，一律取 7×7 patch 均值（本文脚本 S2 已实现） |
 | R5 | **「令牌已落地」的静态门禁** | 业务代码出现裸十六进制色值或裸字号即判不通过（`06` §3.3 令牌制），例外须在 `06` §3.3 白名单登记 |
 | R6 | **`06` 未定义的令牌不算实现缺陷** | 例如浅色主题缺 `success/warning/danger/focus-ring`（见 §3.7 发现 F-2），此类先开文档缺陷（`DOC-*`），不判实现 Blocker |
-
----
 
 ## 2. A · UX 用例矩阵（UX-TC-001 ~ UX-TC-060）
 
@@ -197,8 +191,6 @@
 | UX-TC-058 | U10 数字与单位 | 三端 | 会话中 | 1. 提取全部「数值+单位」文本；2. 对照规范 | 统一格式：`42 ms`（数字与单位间 1 空格）、`8.2 Mbps`、`1080p 60`、`10:32`（时长）；不一致处 ≤0 | [A] | X-13 |
 | UX-TC-059 | U10 中英切换 | 三端 | 系统语言切到 en-US | 1. 切系统语言；2. 首屏截图；3. 找半中半英 | 首屏**无半中半英**混排（同一句内混用 = Major）；未翻译项显示英文而非中文残留；布局不溢出（en 文案更长时按钮不换行错位） | [A] | — |
 | UX-TC-060 | U10 错误文案结构 | 三端 | 构造 ≥5 类错误 | 1. 逐类触发；2. 按三件套核对 | 每条文案含「现象 + 原因 + 动作」三要素（同 TC-026 口径）；**禁止**技术错误码直出（`WebRTC error 0x2A` 类必须转人话 + 可展开原文） | [A] | Y-15 |
-
----
 
 ## 3. B · 五个可直接运行的验证脚本
 
@@ -440,20 +432,18 @@ esac
 
 ```bash
 # Windows 侧（需管理员 PowerShell / CMD）—— 该步为 [M]
-netsh interface show interface                      # 先取准确接口名
+netsh interface show interface                                     # 先取准确接口名
 netsh interface set interface "以太网" admin=disable
 netsh interface set interface "以太网" admin=enable
 ```
 
 ```bash
-# Web 侧（Playwright 1.48.0，setOffline 模拟断网）—— [A]
+# Web 侧（Playwright 1.48.0）—— [A]；必须系统 Edge，bundled Chromium 无 H264
 python3 - <<'PY'
 from playwright.sync_api import sync_playwright
 with sync_playwright() as p:
-    b = p.chromium.launch(channel="msedge", headless=True)   # 必须系统 Edge（bundled 无 H264）
-    pg = b.new_page(); pg.goto("http://localhost:9527")
-    print("online:", pg.evaluate("navigator.onLine"))
-    b.close()
+    pg = p.chromium.launch(channel="msedge", headless=True).new_page()
+    pg.goto("http://localhost:9527"); print("online:", pg.evaluate("navigator.onLine"))
 PY
 ```
 
@@ -465,23 +455,21 @@ PY
 #!/usr/bin/env bash
 # UX-S5a · 字体缩放（08 §3.5）
 set -uo pipefail
-ADB=${ADB:-adb}; SERIAL=${1:?用法: ./font_scale.sh <serial> <scale>}
-SCALE=$2; PKG=com.unilinker.android
+ADB=${ADB:-adb}; SERIAL=${1:?用法: ./font_scale.sh <serial> <scale>}; SCALE=$2
+PKG=com.unilinker.android
 $ADB -s "$SERIAL" shell settings put system font_scale "$SCALE"
 $ADB -s "$SERIAL" shell am force-stop $PKG
 $ADB -s "$SERIAL" shell am start -n $PKG/.MainActivity >/dev/null; sleep 4
 $ADB -s "$SERIAL" shell uiautomator dump /sdcard/ui.xml >/dev/null
 $ADB -s "$SERIAL" pull /sdcard/ui.xml "/tmp/ui-fs$SCALE.xml" >/dev/null
 python3 tools/ux/check_overlap.py "/tmp/ui-fs$SCALE.xml"
-# 复位
-$ADB -s "$SERIAL" shell settings put system font_scale 1.0
+$ADB -s "$SERIAL" shell settings put system font_scale 1.0     # 复位
 ```
 
 ```python
 #!/usr/bin/env python3
 """check_overlap.py · 字体放大后的结构性缺陷检测（[A] 部分）
-检测: ① 零尺寸文本节点 ② 兄弟节点 bounds 重叠 ③ 文本越出父容器
-不做: 视觉截断（省略号/裁字）判定 —— 属 [M] 目视
+检测: ① 零尺寸文本节点 ② 兄弟节点 bounds 重叠；不做视觉截断（省略号/裁字）→ 属 [M] 目视
 """
 import sys, re, xml.etree.ElementTree as ET
 
@@ -493,23 +481,18 @@ def overlap(a, b):
     return not (a[0] + a[2] <= b[0] or b[0] + b[2] <= a[0]
                 or a[1] + a[3] <= b[1] or b[1] + b[3] <= a[1])
 
-root = ET.parse(sys.argv[1]).getroot()
-bad = 0
+root = ET.parse(sys.argv[1]).getroot(); bad = 0
 for node in root.iter("node"):
-    txt = (node.get("text") or "").strip()
-    b = bounds(node.get("bounds"))
-    if not txt or not b:
-        continue
-    if b[2] <= 1 or b[3] <= 1:
+    txt, b = (node.get("text") or "").strip(), bounds(node.get("bounds"))
+    if txt and b and (b[2] <= 1 or b[3] <= 1):
         print(f"FAIL 零尺寸文本: '{txt[:24]}' {b}"); bad += 1
 for parent in root.iter("node"):
-    kids = [(k.get("text"), bounds(k.get("bounds"))) for k in parent
+    kids = [(k.get("text").strip(), bounds(k.get("bounds"))) for k in parent
             if (k.get("text") or "").strip()]
     kids = [(t, b) for t, b in kids if b]
-    for i in range(len(kids)):
-        for j in range(i + 1, len(kids)):
-            if overlap(kids[i][1], kids[j][1]):
-                print(f"FAIL 文本重叠: '{kids[i][0][:16]}' vs '{kids[j][0][:16]}'"); bad += 1
+    for i, j in ((i, j) for i in range(len(kids)) for j in range(i + 1, len(kids))):
+        if overlap(kids[i][1], kids[j][1]):
+            print(f"FAIL 文本重叠: '{kids[i][0][:16]}' vs '{kids[j][0][:16]}'"); bad += 1
 print(f"结构违例: {bad}")
 sys.exit(1 if bad else 0)
 ```
@@ -526,17 +509,14 @@ adb -s "$SERIAL" shell settings put global window_animation_scale 0
 ```python
 # UX-S5c · 减少动画（Web，Playwright reduced_motion）—— [A]
 from playwright.sync_api import sync_playwright
+JS = """() => [...document.querySelectorAll('*')].map(e => [e.tagName,
+  getComputedStyle(e).transitionDuration, getComputedStyle(e).animationDuration])
+  .filter(([, t, a]) => (parseFloat(t) || 0) > 0.1 || (parseFloat(a) || 0) > 0.1)"""
 with sync_playwright() as p:
     b = p.chromium.launch(channel="msedge", headless=True)
-    ctx = b.new_context(reduced_motion="reduce")
-    pg = ctx.new_page(); pg.goto("http://localhost:9527")
-    long_trans = pg.evaluate("""() => [...document.querySelectorAll('*')]
-        .map(e => [e.tagName, getComputedStyle(e).transitionDuration,
-                          getComputedStyle(e).animationDuration])
-        .filter(([, t, a]) => (parseFloat(t) || 0) > 0.1 || (parseFloat(a) || 0) > 0.1)""")
-    print(f"仍带 >100ms 动画的元素数: {len(long_trans)}")
-    for row in long_trans[:20]:
-        print("  ", row)
+    pg = b.new_context(reduced_motion="reduce").new_page(); pg.goto("http://localhost:9527")
+    rows = pg.evaluate(JS)
+    print(f"仍带 >100ms 动画的元素数: {len(rows)}"); [print("  ", r) for r in rows[:20]]
     b.close()
 ```
 
@@ -591,8 +571,6 @@ with sync_playwright() as p:
 | **F-2** | 浅色分支缺 6 个令牌定义：`accent-hover`、`accent-press`、`focus-ring`、`success`、`warning`、`danger` | 浅色主题下状态色与悬停/焦点态**无权威值**，三端会各写一套（违反「三端不得各写一套」） | 请 UX 在 `06` §3.1 补齐浅色 6 令牌；补齐前 TC-008/009/011 的浅色部分记 `[X]`（令牌未定义） | Major（文档） |
 | **F-3** | Windows/Android 侧无 UI 自动化基础设施（`UniLinker.E2E.Tests.csproj:12-19` 仅 Playwright/xunit/FluentAssertions） | U9 全组 + TC-010/024/035/042/048 只能 `[M]`，回归成本高 | 若要转 `[A]`：引入 FlaUI（Win）/ 保持 `uiautomator`（And）；属新增依赖，需主理人批准 | 建议（不阻塞） |
 
----
-
 ## 4. C · 现状缺陷回归基线（15 条，改后必须「不复现」）
 
 > **这一节是本轮最容易漏的地方**：功能用例全绿、但「Start Share 还是假的」，等于没改。下表 15 条必须在**每个 UX 里程碑出口前重跑一遍**，并逐条勾选「已消失 / 仍存在」。
@@ -622,8 +600,6 @@ with sync_playwright() as p:
 1. 每条**必须**在改动前后各跑一次，报告写「前：存在 / 后：已消失」，**不允许只写「后：正常」**。
 2. 任一 REG 项「仍存在」→ 该里程碑 UX 出口**不得签字**（与 `05` §11.5 一票否决同源）。
 3. **REG-01/02/08 是「假状态」三兄弟**，优先级最高：功能演示再漂亮，这三条不复现即整体不通过。
-
----
 
 ## 5. D · 里程碑出口与报告
 
@@ -671,16 +647,12 @@ with sync_playwright() as p:
 
 ### 5.4 UX-RPT 报告模板（沿用 `05` §13 风格）
 
-```
-UX-RPT-<里程碑>-<YYYYMMDD>-<序号>        例：UX-RPT-M5-20261112-001
-```
+**报告号格式**：`UX-RPT-<里程碑>-<YYYYMMDD>-<序号>`，例 `UX-RPT-M5-20261112-001`。
 
 | 字段 | 内容要求 |
 |---|---|
 | **报告号 / 里程碑 / 日期 / 构建号** | 构建号取 git short sha + 构建时间；三端构建号分别列（Win/And/Web） |
-| **设备与系统版本** | Win 版本号（`winver`）；Android 型号 + ROM + API level；浏览器名 + 版本（Edge/Chrome） |
-| **屏幕分辨率与 DPI** | 每台：像素分辨率 + `densityDpi` + 缩放比（Win 125%/150%） |
-| **字体缩放** | Android `font_scale` 值；Win 文本缩放；Web `zoom` |
+| **设备与系统 / 屏幕 / 缩放** | 每台一行：Win 版本（`winver`）/ Android 型号 + ROM + API level / 浏览器名+版本；像素分辨率 + `densityDpi` + Win 缩放比（125%/150%）；Android `font_scale`、Win 文本缩放、Web `zoom` |
 | **主题** | 深色 / 浅色（两者若都跑则分行） |
 | **用例通过率** | `UX-TC` 60 条：通过/失败/阻塞数；分 U1~U10 小节汇总；`[A]/[M]/[P]/[X]` 各多少条 |
 | **未通过项 + 缺陷等级** | 每条：用例号 / 期望 / 实测 / 等级（Blocker/Major/Minor，`05` §11.3）/ 责任端 / 责任里程碑 |
@@ -697,7 +669,6 @@ UX-RPT-<里程碑>-<YYYYMMDD>-<序号>        例：UX-RPT-M5-20261112-001
 ```csv
 case_id,end,theme,font_scale,resolution,dpi,file,result
 UX-TC-001,WIN,dark,1.0,1920x1080,150%,artifacts/ux/20261112/UX-WIN-001-20261112-01.png,PASS
-UX-TC-001,AND,dark,1.0,1080x2400,420,artifacts/ux/20261112/UX-AND-001-20261112-01.png,PASS
 UX-TC-001,WEB,dark,1.0,1440x900,100%,artifacts/ux/20261112/UX-WEB-001-20261112-01.png,FAIL
 ```
 
@@ -712,8 +683,6 @@ UX-TC-001,WEB,dark,1.0,1440x900,100%,artifacts/ux/20261112/UX-WEB-001-20261112-0
 | **D-5** | Edge（系统安装） | Edge ≥ 120 或 Chrome ≥ 120 | **Playwright bundled Chromium 无 H264**，浏览器观看端与视频相关断言必须走系统 channel（`05` §2.4、`CLAUDE.md:23-24`） | TC-001/006/013/055/059 |
 
 > **不允许的替代**：Android 模拟器**不可**用于 U7 授权、U6 chrome 隐藏、U3 首屏时间、U8 断线恢复的真机判定（`05` §12.3 已定；模拟器的 MediaProjection 弹窗、系统栏、ROM 行为与真机不一致）。
-
----
 
 ## 6. E · 盲点声明（这套 UX 验收测不到什么）
 
@@ -730,8 +699,6 @@ UX-TC-001,WEB,dark,1.0,1440x900,100%,artifacts/ux/20261112/UX-WEB-001-20261112-0
 
 > **盲区不是免责声明**：B-3 与 B-6 已触及「用户能否发现被控」与「残障用户能否使用」，属**必须在报告中显式声明并请用户确认接受**的项，不能只在文末写一句「未覆盖」。
 
----
-
 ## 7. 与 `05` 的追溯关系（避免两套口径）
 
 | 本文内容 | `05` 对应 | 关系 |
@@ -739,11 +706,7 @@ UX-TC-001,WEB,dark,1.0,1440x900,100%,artifacts/ux/20261112/UX-WEB-001-20261112-0
 | UX-TC-001~060 | `05` §5 TC-001~085 | **不重叠**：`05` 测功能与合规判据，本文测视觉/交互/感知；唯一交叉是 `05` §4.7 的 W-01~W-14 人工走查，本文将其 UX 部分细化并补自动化 |
 | REG-01~15 | `05` §2 现状盘点、§14 RK-12 | 本文把「现状缺陷」从盘点变成**可回归的清单** |
 | `UX-RPT-*` | `05` §13.5 `MIL-*` | `UX-RPT` 是 `MIL-*` 的**子报告**，报告号在 `MIL-*` 的「证据报告号清单」中被引用 |
-| `[A]/[M]/[P]/[X]` | `05` §1.2 | **完全沿用**，无新增语义 |
-| 判据/里程碑编号 | `05` §11.2、`03` §6 | **完全沿用** M1/M4/M5，无新增里程碑 |
-| 缺陷分级 | `05` §11.3 | Blocker / Major / Minor，无新增等级 |
-
----
+| `[A]/[M]/[P]/[X]` / 里程碑 / 缺陷分级 | `05` §1.2、§11.2、§11.3、`03` §6 | **完全沿用**：无新增标记语义、无新增里程碑、无新增缺陷等级 |
 
 ## 附录 A · 用例号速查
 
@@ -762,41 +725,25 @@ UX-TC-001,WEB,dark,1.0,1440x900,100%,artifacts/ux/20261112/UX-WEB-001-20261112-0
 
 ## 附录 B · 缺陷编号反查（本文引用到的现状缺陷）
 
-| 缺陷号 | `06` 位置 | 涉及用例 | 回归条目 |
-|---|---|---|---|
-| X-01 / X-21 品牌缺失 | §1.1 | TC-001/003/007/009/013 | REG-13 |
-| X-02 圆角不统一 | §1.1（引 `Theme.kt:208` `CORNER_RADIUS = 4`） | TC-002 | — |
-| X-04 / X-08 字体 | §1.1 | TC-004 | — |
-| X-06 无浅色 | §1.1 | TC-008/014 | REG-14 |
-| X-09 装饰性信号格 | §1.1（引 `web/styles.css:57-72`） | TC-005/028 | REG-09 |
-| X-12 无空状态 | §1.1 | TC-017/019 | REG-10 |
-| X-13 英文残留 | §1.1 | TC-057/058 | — |
-| X-14 状态反馈不一致 | §1.1 | TC-005/023/024/047 | REG-11 |
-| X-19 emoji 图标 | §1.1 | TC-006 | — |
-| X-20 冷启动闪色 | §1.1 | TC-015/016/017 | REG-12 |
-| Y-02 零流量无证据 | §1.2 | TC-027/028/030 | REG-15 |
-| Y-09 Start Share 假状态 | §1.4-①（引 `ShareViewModel.cs:132`） | TC-023 | REG-01 |
-| Y-10 Connect 假连接 | §1.4-② | TC-023 | REG-02 |
-| Y-11 必然「未发现设备」 | §1.2 | TC-019 | REG-04 |
-| Y-12 无返回/非沉浸 | §1.2 | — | REG-05 |
-| Y-13 InfoBar 遮挡 + 托盘假开关 | §1.2 | — | REG-06 |
-| Y-14 硬件状态写死 | §1.2 | — | REG-07 |
-| Y-15 Web 状态不复位 | §1.2（引 `web/app.js:130-141,198-200`） | TC-026/040/046/048/057/060 | REG-08 |
-| §1.4-③ 投屏 Tab 名实不符 | §1.4-③ | — | REG-03 |
+| 缺陷主题 | 缺陷号 | `06` 位置（证据行） | 涉及用例 | 回归条目 |
+|---|---|---|---|---|
+| 品牌/色板/圆角 | X-01、X-21、X-02、X-06 | §1.1（引 `Theme.kt:208` `CORNER_RADIUS = 4`） | TC-001/002/003/007/008/009/013/014 | REG-13、REG-14 |
+| 字体 / 图标 | X-04、X-08、X-19 | §1.1 | TC-004/006 | — |
+| 状态反馈 / 空态 / 冷启动 | X-09、X-12、X-14、X-20 | §1.1（引 `web/styles.css:57-72`） | TC-005/015/016/017/019/023/024/028/047 | REG-09~12 |
+| 文案与 Web 状态复位 | X-13、Y-15 | §1.1 / §1.2（引 `web/app.js:130-141,198-200`） | TC-026/040/046/048/057/058/060 | REG-08 |
+| **「假状态」三兄弟** | Y-09、Y-10、§1.4-③ | §1.4（引 `ShareViewModel.cs:132`） | TC-023 | REG-01、REG-02、REG-03 |
+| 零流量无证据 | Y-02 | §1.2 | TC-027/028/030 | REG-15 |
+| 发现 / 返回 / 托盘 / 硬件 | Y-11、Y-12、Y-13、Y-14 | §1.2 | TC-019 | REG-04~07 |
 
 ## 附录 C · 本文的证据与实测说明
 
 | 主题 | 证据 |
 |---|---|
-| 设计依据 | `docs/redesign/06-uiux-redesign.md`（v1.0，只读引用，未修改） |
-| 标记体系 / 报告格式 | `docs/redesign/05-test-strategy.md` §1.2、§13.5 |
-| 测试基础设施现状 | `tests/UniLinker.E2E.Tests/UniLinker.E2E.Tests.csproj:12-19`（Playwright 1.48.0 / xunit 2.9.2 / FluentAssertions 7.0.0，**无 FlaUI/WinAppDriver**，实测 grep 命中 0） |
-| Playwright 必须系统 channel | `tests/UniLinker.E2E.Tests/Fixtures/PlaywrightFixture.cs:22-50`；`CLAUDE.md:23-24` |
+| 设计依据 / 标记与报告格式 | `docs/redesign/06-uiux-redesign.md`（v1.0，只读引用，未修改）；`docs/redesign/05-test-strategy.md` §1.2、§13.5 |
+| 测试基础设施现状 | `tests/UniLinker.E2E.Tests/UniLinker.E2E.Tests.csproj:12-19`（Playwright 1.48.0 / xunit 2.9.2 / FluentAssertions 7.0.0，**无 FlaUI/WinAppDriver**，实测 grep 命中 0）；channel 要求见 `Fixtures/PlaywrightFixture.cs:22-50`、`CLAUDE.md:23-24` |
 | Android 包名/入口 | `android/app/build.gradle.kts:8,12`（`namespace`/`applicationId` = `com.unilinker.android`）；`AndroidManifest.xml:26`（`.MainActivity`） |
 | 现状缺陷源码行 | 本文引用处均标 `文件:行号`，其中 `Theme.kt:68,208`、`ShareViewModel.cs:132`、`web/app.js:130-141,198-200`、`web/styles.css:57-72` 经本轮 Read 实测确认 |
 | 对比度预核算 | 按 WCAG 2.2 相对亮度公式手算（sRGB 分量线性化阈值 0.04045、权重 0.2126/0.7152/0.0722），结果见 §3.7；**以脚本输出为最终依据** |
-
----
 
 > **状态**：v1.0（2026-11-12）。本文**只新建本文件**；未修改 `06`/`05`/`03`/`04`、未改 `src/`/`android/`/`web/`/`tests/` 任何源码、未新建测试代码文件、未做 git 操作、未与其他成员直连。
 > **生效前提**：`06` 为唯一设计依据；若 `06` 修订，`06` §3.1 令牌表、§6 F1~F6、§9 U1~U10 的变更须同步回本文（§3.1 脚本常量、§2 用例、§5 出口）。

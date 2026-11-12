@@ -838,7 +838,7 @@ graph LR
 |---|---|---|---|---|---|---|---|
 | **UI-00** | **令牌层 + 死代码清理** | —（**可与 T01 并行**） | 新：`src/UniLinker.WinUI/Styles/Tokens.xaml`、`android/.../ui/theme/Tokens.kt`、`web/tokens.css`；改：`src/UniLinker.WinUI/Styles/AppStyles.xaml`、`android/.../ui/theme/Theme.kt`、`web/styles.css`、`web/index.html`、`android/.../res/values/themes.xml` | ① **第 0 步删死代码**（`06` §1.3，含 `ConnectionMethodPicker.kt`/`DeviceListView.kt`/重复的 `SignalIndicator.kt`，保留 `ErrorBanner`/`StatsOverlay` 的模型与布局）；② 三端令牌文件由 `06` §3 表**同一份数值**派生，文件头注明「派生自 `06` §3，禁止手改」；③ Windows 用 `ThemeDictionaries` 给 Light/Dark 并**显式覆盖系统强调色**（修 X-21，否则 Windows 永远是系统蓝）；④ Android 补齐 M3 全角色（含 `surfaceContainer*`/`tertiary`，修 X-03 潜在「脏紫」）、`onSurface` 改为主文字（修 X-02）、字号上移到官方下限（修 X-05）、补 light 分支（修 X-06）、圆角分级（修 X-07）；⑤ Web 把 `index.html:8-175` 内联 `<style>` 迁入 `tokens.css`+`styles.css` 并删内联（修 X-18 两套样式源）；⑥ 冷启动底色对齐 `color.canvas`（修 X-20）；⑦ 旧常量标 `@Deprecated` 过渡一版 | 三端业务代码 **0 处** `#RRGGBB` / `FontSize=` / `fontSize =` 字面量（lint 通过，白名单仅令牌文件）；**U1** 三端取样差异 ≤2 色值；**U2** §3.1 全部文字/背景组合 ≥4.5:1、图形/边框 ≥3:1（脚本遍历，不靠目视）；死代码删除后三端可正常构建 | U1 / U2 | M1 前（与 T01 并行） |
 | **UI-01** | **基础组件层（三端同名同义）** | UI-00 | 新：`src/UniLinker.WinUI/Controls/`（`StatusDot` / `DeviceCard` / `LinkHud` / `LanBoundaryCard` / `EmptyState` / `ErrorBanner` / `SkeletonBars` / `ToastHost`）；新：`android/.../ui/components/`（同名 8 个 `.kt`）；改：`web/styles.css` + `web/ui/state.js`（复用既有 Toast 引擎 `web/app.js:27-48`） | ① **状态点严格按 §11.3 五态**，禁止装饰性信号格（修 X-09：现状四格绿→黄→红与链路无关，属误导性 UI）；② `ErrorBanner` 三件套「现象+原因+动作」（`06` P3），四级严重度只用图标与 2px 左边着色；③ 空状态（图标+一句说明+一个主操作，永不留白）与骨架屏（不出现布局跳动）；④ 设备卡高度自适应、长名 2 行截断 + tooltip（修 X-10 固定 220×160）；⑤ 链路卡四项真实数值 30 点 sparkline + **L1/L2/L3 分层延迟**（`06` §7.4.1）；⑥ 局域网边界卡「公网连接 0」判据来自真实出站计数 | 三端同名组件视觉一致（U1 取样）；每个组件 ≥5 态可预览（Windows 设计态 / Android `@Preview` / Web 独立 demo 页）；**HUD 数值一律等宽**（修 X-04） | U1 / U10 | M1 |
-| **UI-02** | **Windows 壳层重构（W1·W2·W4·W5·W6）** | UI-01 | 改：`src/UniLinker.WinUI/MainWindow.xaml(.cs)`、`Views/DashboardPage.xaml(.cs)`、`Views/DevicesPage.xaml(.cs)`、`Views/FileTransferPage.xaml(.cs)`、`Views/SettingsPage.xaml(.cs)`；新：`Views/OnboardingWindow.xaml(.cs)`（W6）；改：`Services/LocalizationService.cs` 仅接令牌与文案占位（i18n 抽取归 UI-08） | ① `NavigationView` Left 可折叠 + 三断点（641 / 1008 px）；② W2 设备列表改双栏（Expanded 右侧详情常驻）+ 在线/离线**不同形状**（实心圆+铜金左描边 vs 空心圆+「15s 前（可能离线）」）；③ **手动 IP / 扫码从并列 Tab 降为「没找到？」的降级路径**（修 Y-03），空状态直接给三个排障入口；④ W6 三步引导：局域网原理 → 防火墙放行 → 完整自检（修 Y-01）；⑤ 修 Y-14（Dashboard `IsOpen="True"` 永远 "System Ready"、侧栏状态点永远绿——**故障时必须显示故障**）、Y-13（InfoBar 不盖窗口右上角、关闭确认读「最小化到托盘」设置）、Y-07（快捷键 + 焦点环）、Y-08（最小尺寸 + `VisualStateManager`/`AdaptiveTrigger`）；⑥ **修 Y-10**：设备卡主操作改为「建立会话」（走 F2 四阶段可定位流程），「在浏览器中打开」降为次操作——**禁止**再以弹出 `ContentDialog` + 内嵌 WebView2 打开对方网页冒充「已连接」 | **U3** 冷启动到可操作 ≤3s（录屏逐帧）；**U9** Windows 段纯键盘可达；空状态/离线态/失败态三态可复现；**文案不得撒谎**：`Start Share` 未连接观众时显示「等待观看者」而非「正在共享」（行为侧由 T02 修 Y-09，UI-02 只负责文案与状态呈现一致）；设备卡点击后出现在场证据（F2 四阶段至少推进到「信令」）而非仅打开网页 | U3 / U9 | M1 |
+| **UI-02** | **Windows 壳层重构（W1·W2·W3·W4·W5·W6）** | UI-01 | 改：`src/UniLinker.WinUI/MainWindow.xaml(.cs)`、`Views/DashboardPage.xaml(.cs)`、`Views/DevicesPage.xaml(.cs)`、`Views/SharePage.xaml(.cs)`、`Views/FileTransferPage.xaml(.cs)`、`Views/SettingsPage.xaml(.cs)`；新：`Views/OnboardingWindow.xaml(.cs)`（W6）；改：`Services/LocalizationService.cs` 仅接令牌与文案占位（i18n 抽取归 UI-08） | ① `NavigationView` Left 可折叠 + 三断点（641 / 1008 px）；② W2 设备列表改双栏（Expanded 右侧详情常驻）+ 在线/离线**不同形状**（实心圆+铜金左描边 vs 空心圆+「15s 前（可能离线）」）；③ **手动 IP / 扫码从并列 Tab 降为「没找到？」的降级路径**（修 Y-03），空状态直接给三个排障入口；④ W6 三步引导：局域网原理 → 防火墙放行 → 完整自检（修 Y-01）；⑤ 修 Y-14（Dashboard `IsOpen="True"` 永远 "System Ready"、侧栏状态点永远绿——**故障时必须显示故障**）、Y-13（InfoBar 不盖窗口右上角、关闭确认读「最小化到托盘」设置）、Y-07（快捷键 + 焦点环）、Y-08（最小尺寸 + `VisualStateManager`/`AdaptiveTrigger`）；⑥ **修 Y-10**：设备卡主操作改为「建立会话」（走 F2 四阶段可定位流程），「在浏览器中打开」降为次操作——**禁止**再以弹出 `ContentDialog` + 内嵌 WebView2 打开对方网页冒充「已连接」；⑦ **W3 源选择网格重做**（`06` §10 未指派，本节并入 UI-02，见 §5.7.4 偏差说明）：整屏 / 窗口 / 区域三选一改为**带真实缩略图的网格**，画质档显示真实参数副行，开始前给**真实首帧预览**（承接 Y-09 的「点击即启动采集」），未选源时主按钮禁用而非静默失败 | **U3** 冷启动到可操作 ≤3s（录屏逐帧）；**U9** Windows 段纯键盘可达；空状态/离线态/失败态三态可复现；**文案不得撒谎**：`Start Share` 未连接观众时显示「等待观看者」而非「正在共享」（行为侧由 T02 修 Y-09，UI-02 只负责文案与状态呈现一致）；设备卡点击后出现在场证据（F2 四阶段至少推进到「信令」）而非仅打开网页 | U3 / U9 | M1 |
 | **UI-03** | **Windows 会话窗口 W7** | UI-01、**T03** | 新：`src/UniLinker.WinUI/Views/SessionWindow.xaml(.cs)`、`ViewModels/SessionViewModel.cs`、`Ui/SessionStateSource.cs`、`Ui/LinkMetricsSource.cs`；复用：`Controls/{LinkHud,LanBoundaryCard}` | ① 会话页作**独立全屏窗口**（不嵌 `NavigationView`，避免裁剪与跨屏拖动失效）；② 命令条 **overlay 不占位**，鼠标静止 2.5s 隐藏、进入顶部 8px / `Ctrl+Shift+T` 唤出（修 P1「常驻工具栏遮挡」）；③ 状态条改自定义 **24px** `Grid`（不用 `CommandBar`，避免吃 48px）；④ 统计抽屉右侧滑出 320px：L1/L2/L3 堆叠条 + **网络丢包 vs 抖动丢包两个口径** + 局域网边界卡；⑤ F6 重连：黄条「连接中断，正在重连 (n/5)」+ 常驻「立即重连」「结束」两个按钮 + **保留最后一帧不黑屏**（修 Y-06）；⑥ Mica + 回退（关透明效果 / 节电 / 低端硬件 / Windows < 22000 → `SolidBackgroundFillBase`） | **U6** 2.5s 无操作后命令条完全隐藏且视频区域**像素级不变**；**U5** ≤2 次点击看到「公网连接 0」；**U9** 全键盘（`Ctrl+Shift+Q` 切画质 / `Ctrl+Shift+D` 断开 / `F11` / `Esc` 退全屏不断开）；拔网线 2s 保留最后一帧 | U5 / U6 | M2 |
 | **UI-04** | **Android 拆分 `ModernMainScreen` → A1·A2·A3·A5** | UI-01（**与 T02 同批做，共用一次重构**） | 改：`android/.../ui/ModernMainScreen.kt`（瘦身为导航壳）；新：`ui/screens/DeviceScreen.kt`(A1)、`ConnectionSheet.kt`(A2)、`SharePrepScreen.kt`(A3)、`SettingsScreen.kt`(A5)；改：`ui/UiPreviews.kt`、`ui/MainViewModel.kt`（仅新增 UiState/Intent，不改既有公开签名） | ① **按 §11.5 拆分**（834 行 → 壳 ≤80 行 + 4 屏 + 复用 `ui/components/`），业务状态**上移** `MainViewModel`，屏幕只收 `UiState` + `onIntent`（解除 X-11「UI 与状态强耦合」）；② A2 重做为 BottomSheet，局域网/手动 IP/扫码按**推荐度分层**而非并列（修 Y-03）；③ A3 新建：源选择 + 画质档**显示真实参数**（`720p·30fps` / `1080p·30fps` / `1080p·60fps`，不用「高清/超清」）+ **授权前预告系统弹窗**（`06` P5，修 Y-01）；④ A5 设置从内嵌改为独立入口 | `ModernMainScreen.kt` **≤80 行且零业务状态**；每屏 **≥3 个 `@Preview`**（空/加载/错误 + 关键态）；`MainViewModel` 公开 API **只增不改**（`git diff` 佐证）；**单 PR ≤3 个屏**（834 行一次搬完无法 review） | U3 / U10 | M1 |
 | **UI-05** | **Android 会话 A6 + 被控授权 A4** | UI-01、**T04** | 新：`ui/screens/SessionScreen.kt`(A6)、`ui/screens/ControlConsentScreen.kt`(A4)；改：`ui/components/StatsOverlay`（规整为链路卡）、`res/values/strings.xml`、`MainActivity.kt`（`enableEdgeToEdge` + `BackHandler`） | ① A6：`SurfaceView` 全屏 + Compose 覆盖层（**形态判定见 §11.6 L16 / RK-U1**）；边缘下滑 8dp 唤出工具栏、2.5s 隐；底部胶囊单击唤出统计、长按断开；系统栏进入即隐藏；**返回需二次确认**（2s 内再滑一次，修 Y-12）；② A4：全屏 60% scrim + **四项可核对信息**（设备名与平台 / 对端 IP / **六位核对码** / 操作范围），六位码由 `HMAC(sessionKey,"verify")` 前 6 位十进制派生——**仅供人眼比对、不参与认证、不新增协议字段**（与 §2.3 P0 `PairingProof.method="none"` 的 C-2 收敛一致）；③ 两段式选择（先范围「仅观看/可控制」，再时效「仅本次」主按钮 /「始终允许」次按钮），**外部点击不可关闭**；④ 授权后四边 2px 铜金呼吸边框 + 通知栏常驻「xxx 正在控制本机」+ 可拖动悬浮停止按钮，撤销 **≤1s** | **U7** 全通过（遮罩信息完整、外点不可关、撤销 ≤1s）；A6 覆盖层可见性与触控命中**真机结论归档**（RK-U1）；`SurfaceView`/`TextureView` 二选一有书面依据 | U7 | M4 |
@@ -895,6 +895,17 @@ graph LR
 #### 5.7.3 T06 总完成判据
 
 UI-00~UI-08 全部完成 + **U1~U10 全部通过**，按里程碑分批：**U1/U2/U3/U10 @ M1**、**U7 @ M4**、**U4/U5/U6/U8/U9 @ M5**（与 `06` §10 出口完全一致）。T06 任一子任务未完成，**不得**把 M1/M4/M5 判为通过——UI 交付是里程碑**退出条件的一部分**，不是可选项。
+
+#### 5.7.4 与 `06` §10 的两处偏差说明（**需主理人确认**）
+
+> 本节的 UI-00~UI-08 编号、依赖与里程碑落点**逐条对齐 `06` §10**，仅两处做了显式偏差，理由如下。若主理人/设计方裁定不采纳，撤销这两处即可，不影响其余任何内容。
+
+| # | 偏差 | `06` §10 原文 | 本节处理 | 理由 |
+|---|---|---|---|---|
+| **D-UI-1** | **W3（Windows 投屏 Share 页）无任务归属** | UI-02 = 「W1/W2/W4/W5 重排 + W6 引导」；UI-03 = W7。**W3 未被任何任务覆盖** | 把 **W3 并入 UI-02**（任务名改为 W1·W2·**W3**·W4·W5·W6，涉及文件加 `Views/SharePage.xaml`） | W3 是 **P0 发送链路唯一的源选择入口**（现状 `SharePage.xaml` 313 行）。无人认领意味着「Windows 端无法选源开投」，与 UI 拆分无关而是**功能缺失**；且它同属 Windows 壳层、同属 UI-01 依赖、同在 M1，并入 UI-02 不增加依赖复杂度。若设计方另有安排（如新开 UI-09），请指明，本节改为引用 |
+| **D-UI-2** | **UI-04 的依赖未写「与 T02 同批」** | UI-04 依赖仅写「UI-01」，口径栏另有「建议与 T02 的『双端收发能力补齐』同批做」 | 在 §5.1 与 §5.7.2 图中把 `T02 ⇢ UI-04` 标为**虚线（建议同批）**而非实线（硬依赖） | 保持 `06` 的「建议」语义不变，只让依赖图能表达「可并批」这一信息；若标实线会把 UI-04 变成 T02 的硬阻塞，反而拖慢 UI |
+
+> **不在本节处理**：`06` §10 未提 W3 之外的其他缺失；`06` §1.3 的死代码清理已收进 UI-00 第 0 步；`06` §8.2 的 `.resw` 不可用已落进 UI-08 与 §11.4。
 
 ---
 
@@ -1056,7 +1067,8 @@ UI-00~UI-08 全部完成 + **U1~U10 全部通过**，按里程碑分批：**U1/U
 
 > **本节职责**：把 `06-uiux-redesign.md` 的视觉与交互规格，落到**可测试的接口边界**上——只定义**数据流方向、状态来源、文件落位、拆分判据**；色值 / 字号 / 间距等像素级规格**仍以 `06` §3 为准**，此处不复制。
 > **一句话结论**：三端 UI 共享**一套语义**（令牌 + 五态 + 文案结构），**不共享渲染代码**；UI 层的状态**只有一个来源** `ISessionStateSource`，且该来源必须由**采集器 + 传输 + 会话**三者共同驱动——**任何布尔「意图标志」（如 `IsSharing`）不得充当 UI 状态源**。
-> **前置契约（`06` §12）**：本节全部接口**只读**订阅 §2 / §4 已有结构，**不新增协议消息、不新增协议字段**；唯一允许的回写是 `MediaCapability` 更新（§2.5 / `06` F4 画质切换）。
+> **前置契约（`06` §12 / 产品红线 **PR-8**）**：本节全部接口**只读**订阅 §2 / §4 已有结构，**不新增协议消息、不新增协议字段**；唯一允许的回写是 `MediaCapability` 更新（§2.5 / `06` F4 画质切换）。若某个 UI 状态确实缺数据，**先在 §2 增补契约，再由 UI 消费**，禁止在 UI 私造字段。
+> **与 PR-7 的关系**：产品红线 **PR-7**（界面指标不得使用装饰性 / 伪造数据）在架构上的落点就是本节 §11.1 R-UI-4 与 §11.3 (D)：状态点只由状态机驱动、指标只着色不改态、无样本显示 `—` 而非 `0`。
 
 ### 11.1 三端 UI 分层
 
@@ -1083,9 +1095,9 @@ flowchart TB
 | # | 规则 | 理由 / 对应现状问题 |
 |---|---|---|
 | R-UI-1 | 依赖**单向**：Screens → Primitives → Tokens；Screens → Presenters；Presenters → 协议层**只读**。协议层**不得**引用 UI 层任何类型 | 防 UI 与协议互相污染，保三端可独立替换 |
-| R-UI-2 | UI 对协议层的写入口**只有一个**：`MediaCapability` 更新（画质切换，`06` F4） | `06` §12「视觉层不得侵入协议层」 |
+| R-UI-2 | UI 对协议层的写入口**只有一个**：`MediaCapability` 更新（画质切换，`06` F4） | `06` §12「视觉层不得侵入协议层」= **PR-8**；如需新 UI 状态，先在 §2 增补契约再由 UI 消费 |
 | R-UI-3 | 令牌是**唯一**视觉真源，业务代码禁止硬编码色值/字号 | X-15（XAML 内联 `FontSize=` 117 处）、X-16（Compose 内联 60 处）、X-18（Web 两套样式源） |
-| R-UI-4 | 状态**只有一个来源**：`ISessionStateSource`；屏幕不得自行拼接状态、不得用布尔标志代表状态 | X-09（四格信号格与链路无关）、Y-14（`IsOpen="True"` 永远 System Ready）、**Y-09（`IsSharing` 置真但未采集）** |
+| R-UI-4 | 状态**只有一个来源**：`ISessionStateSource`；屏幕不得自行拼接状态、不得用布尔标志代表状态 | **PR-7**（界面不得使用装饰性/伪造数据）；X-09（四格信号格与链路无关）、Y-14（`IsOpen="True"` 永远 System Ready）、**Y-09（`IsSharing` 置真但未采集）** |
 | R-UI-5 | 三端**同一语义、不同密度**（`06` P6）：文案 / 图标语义 / 颜色含义一致，布局密度按平台惯例 | 现状三端像三个产品（`06` §0） |
 
 ### 11.2 状态源契约 —— `ISessionStateSource` / `ILinkMetricsSource`
@@ -1269,7 +1281,7 @@ export function createStateSource(pc /* RTCPeerConnection */) {
 | | L5.0 | `src/UniLinker.WinUI/Styles/AppStyles.xaml` | 🟡 | 改为引用 `Tokens.xaml`；删内联 117 处 `FontSize=`（X-15） |
 | | L5.1 | `src/UniLinker.WinUI/Controls/{StatusDot,DeviceCard,LinkHud,LanBoundaryCard,EmptyState,ErrorBanner,SkeletonBars,ToastHost}.xaml(.cs)` | 🆕 | 8 个基础组件，与 Android 同名同义 |
 | | L5.3 | `src/UniLinker.WinUI/Ui/{SessionStateSource,LinkMetricsSource,UiStateMapper}.cs` | 🆕 | 实现 §11.2；**订阅** `ITransport`/`PeerMesh`/`WgcCapture`，不反向依赖 |
-| | L5.2/L5.4 | `MainWindow.xaml(.cs)`、`Views/{DashboardPage,DevicesPage,FileTransferPage,SettingsPage}.xaml(.cs)` | 🟡 | W1/W2/W4/W5 + NavigationView 断点（UI-02） |
+| | L5.2/L5.4 | `MainWindow.xaml(.cs)`、`Views/{DashboardPage,DevicesPage,SharePage,FileTransferPage,SettingsPage}.xaml(.cs)` | 🟡 | W1/W2/**W3**/W4/W5 + NavigationView 断点（UI-02，W3 归属见 §5.7.4 D-UI-1） |
 | | L5.2 | `Views/{SessionWindow,OnboardingWindow}.xaml(.cs)`、`ViewModels/SessionViewModel.cs` | 🆕 | W7 会话窗（独立全屏）、W6 三步引导（UI-03） |
 | | L5.2 | `src/UniLinker.WinUI/Resources/i18n/{zh-CN,en-US}.json` + `Services/LocalizationService.cs` | 🆕/🟡 | **不用 `.resw`**：非打包 + `GeneratePri=false` / `EnableMrtTargets=false`，MRT 不可用（`06` §8.2） |
 | **Android** | L5.0 令牌 | `android/app/src/main/java/com/unilinker/android/ui/theme/Tokens.kt` | 🆕 | **新增令牌文件**；补齐 M3 全角色（X-03）、`onSurface` 主文字（X-02）、字号下限（X-05）、light 分支（X-06） |
