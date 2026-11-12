@@ -85,6 +85,8 @@ flowchart TB
   L2 -. ControlMessage .-> L4
 ```
 
+> **L5 已展开**：上图 L5 只画到「保留」粒度；用户追加 UI/UX 重构范围后，L5 的**内部分层（令牌 / 基础组件 / 屏幕 / 状态呈现 / 宿主壳）、状态源契约与三端文件落位**见 **§11**（新增），任务见 **§5.7 T06**。此处不重复展开，避免同一份分层图维护两处。
+
 ### 1.2 三端「保留 / 改造 / 新增」模块清单
 
 | 端 | 🟢 保留（不动或极小改） | 🟡 改造 | 🔵 新增 |
@@ -774,7 +776,8 @@ stateDiagram-v2
 ## 5. 有序任务分解（T01~T05）
 
 > **任务数上限说明**：遵循架构角色「不超过 5 个任务、每任务 ≥3 个相关文件、按层分组、首个任务为项目基础设施」的硬性约束，本轮压缩为 **5 个主任务**。阶段 2 工程师编写「详细开发文档」（任务 #5）时可再拆子任务，但不得改变此处依赖顺序与完成判据。
-> **编号口径**：「对应需求编号」列采用 PM `01` §3 的重编号（R0-xx / R1-xx / R2-xx），旧编号映射见 `01` §3 表头；产品红线 K1~K8 / PR-1~PR-6 / 门禁 G1 见 `01` §1.2 / §7 / §3.1。
+> **编号口径**：「对应需求编号」列采用 PM `01` §3 的重编号（R0-xx / R1-xx / R2-xx），旧编号映射见 `01` §3 表头；产品红线 K1~K8 / PR-1~PR-8 / 门禁 G1 见 `01` §1.2 / §8 / §3.1。
+> **本轮追加（用户拍板「方案 ② ＋ 不坚持单向角色（Q18 关闭）＋ 追加 UI/UX 重构范围」）**：在 T01~T05 之外追加 **T06 · UI/UX 重构（UI-00~UI-08）**，见 **§5.7**。T06 **不改变** T01~T05 的依赖顺序、范围与任何既有完成判据，只在 §6 的 M1/M4/M5 出口**追加** UI 交付项与 U 判据。
 
 | 任务 | 名称 | 依赖 | **对应需求编号（PM `01` §3）** | 涉及文件（相对路径） | 新增 / 修改点 | 完成判据 |
 |---|---|---|---|---|---|---|
@@ -803,15 +806,95 @@ graph LR
   T02 --> T05
   T04 --> T05
 
+  T06["T06 UI/UX 重构<br/>UI-00~UI-08（见 06 §10）"]
+  T01 -.->|"UI-00 可与 T01 并行"| T06
+  T02 -.->|"UI-04 与 T02 同批做"| T06
+  T03 --> T06
+  T04 --> T06
+
   classDef infra fill:#e8f0fe,stroke:#1a73e8;
   classDef core fill:#fff4e5,stroke:#e37400;
+  classDef ui fill:#e6f4ea,stroke:#137333;
   classDef gate fill:#fce8e6,stroke:#c5221f;
   class T01 infra;
   class T02,T03,T04,T05 core;
+  class T06 ui;
   class M0 gate;
 ```
 
 > 依赖设计要点：**T01 是唯一根节点**（项目基础设施，配置/Manifest/依赖声明/协议基座全部收拢）；T03 与 T04 只依赖 T01+T02，可并行；T05 收尾。避免过长线性链。
+> **T06 新增边（4 条）**：①`T01 ⇢ T06`（虚线＝UI-00 令牌层**可与 T01 并行**，不阻塞协议基座）；②`T02 ⇢ T06`（虚线＝UI-04 的 Android 拆分**与 T02 双端收发补齐同批做**，共用一次重构，`06` §10 工作量提示）；③`T03 → T06`（实线＝UI-03 Windows 会话窗 W7 需要链路质量 / ICE restart 状态才能验收 F6 重连与局域网边界卡）；④`T04 → T06`（实线＝UI-05 Android A6/A4 需控制授权状态机 `AuthState` 才能验收 U7）。T06 内部 UI-00~UI-08 的子依赖另见 §5.7.2 子依赖图。T06 **不被**任何功能任务依赖，避免 UI 反过来卡住功能排期。
+
+### 5.7 T06 · UI/UX 重构（UI-00~UI-08，追加任务包）
+
+> **本节编号说明**：按主理人要求新增小节编为 **§5.7**，**不重排既有 §1~§10**；`§5.2`~`§5.6` 不在本文件展开（`04-implementation-guide.md` 已用 `§5.6` 记录 `ITransport` 建议签名，交叉引用不冲突）。
+> **追加理由（对「≤5 个任务」硬约束的说明）**：§5 头部「不超过 5 个任务」用于**功能/架构**任务分组，目的是避免「一个文件一个任务」。UI/UX 重构已在 `06-uiux-redesign.md` 独立立项并通过（用户追加范围），按主理人裁决作为**第 6 个任务包**挂载。若不单列，UI 工作会被打散进 T02~T05，后果是**同一个屏被三个任务各改一次**，返工成本高于单列一个包。T06 **不改变** T01~T05 的范围、依赖顺序与判据。
+> **唯一设计依据**：`06-uiux-redesign.md`（视觉 / 交互 / 文案 / 无障碍 / U1~U10）。本节只定义**任务边界、依赖、文件落位与完成判据**，不复制 06 的视觉规格。冲突时：视觉与交互以 `06` 为准；协议与接口以本文件 §2 为准（`06` §12 前置契约「视觉层不得侵入协议层」）。
+> **执行顺序硬规则**：**先删死代码，再改 UI**（`06` §1.3，约 1500 行：Android 6 个模块 ~948 行、Web 无 DOM 的 CSS ~95 行、`webcodecs-decoder.js` 217 行、`ScreenMirrorTab.kt` 不可达分支 ~55 行）。此步骤收在 **UI-00 的第 0 步**，任何美化动作排在其后。
+
+#### 5.7.1 子任务表（UI-00~UI-08）
+
+| 子任务 | 名称 | 依赖 | 涉及文件（相对路径） | 新增 / 修改点 | 完成判据 | `06` §9 判据 | 里程碑 |
+|---|---|---|---|---|---|---|---|
+| **UI-00** | **令牌层 + 死代码清理** | —（**可与 T01 并行**） | 新：`src/UniLinker.WinUI/Styles/Tokens.xaml`、`android/.../ui/theme/Tokens.kt`、`web/tokens.css`；改：`src/UniLinker.WinUI/Styles/AppStyles.xaml`、`android/.../ui/theme/Theme.kt`、`web/styles.css`、`web/index.html`、`android/.../res/values/themes.xml` | ① **第 0 步删死代码**（`06` §1.3，含 `ConnectionMethodPicker.kt`/`DeviceListView.kt`/重复的 `SignalIndicator.kt`，保留 `ErrorBanner`/`StatsOverlay` 的模型与布局）；② 三端令牌文件由 `06` §3 表**同一份数值**派生，文件头注明「派生自 `06` §3，禁止手改」；③ Windows 用 `ThemeDictionaries` 给 Light/Dark 并**显式覆盖系统强调色**（修 X-21，否则 Windows 永远是系统蓝）；④ Android 补齐 M3 全角色（含 `surfaceContainer*`/`tertiary`，修 X-03 潜在「脏紫」）、`onSurface` 改为主文字（修 X-02）、字号上移到官方下限（修 X-05）、补 light 分支（修 X-06）、圆角分级（修 X-07）；⑤ Web 把 `index.html:8-175` 内联 `<style>` 迁入 `tokens.css`+`styles.css` 并删内联（修 X-18 两套样式源）；⑥ 冷启动底色对齐 `color.canvas`（修 X-20）；⑦ 旧常量标 `@Deprecated` 过渡一版 | 三端业务代码 **0 处** `#RRGGBB` / `FontSize=` / `fontSize =` 字面量（lint 通过，白名单仅令牌文件）；**U1** 三端取样差异 ≤2 色值；**U2** §3.1 全部文字/背景组合 ≥4.5:1、图形/边框 ≥3:1（脚本遍历，不靠目视）；死代码删除后三端可正常构建 | U1 / U2 | M1 前（与 T01 并行） |
+| **UI-01** | **基础组件层（三端同名同义）** | UI-00 | 新：`src/UniLinker.WinUI/Controls/`（`StatusDot` / `DeviceCard` / `LinkHud` / `LanBoundaryCard` / `EmptyState` / `ErrorBanner` / `SkeletonBars` / `ToastHost`）；新：`android/.../ui/components/`（同名 8 个 `.kt`）；改：`web/styles.css` + `web/ui/state.js`（复用既有 Toast 引擎 `web/app.js:27-48`） | ① **状态点严格按 §11.3 五态**，禁止装饰性信号格（修 X-09：现状四格绿→黄→红与链路无关，属误导性 UI）；② `ErrorBanner` 三件套「现象+原因+动作」（`06` P3），四级严重度只用图标与 2px 左边着色；③ 空状态（图标+一句说明+一个主操作，永不留白）与骨架屏（不出现布局跳动）；④ 设备卡高度自适应、长名 2 行截断 + tooltip（修 X-10 固定 220×160）；⑤ 链路卡四项真实数值 30 点 sparkline + **L1/L2/L3 分层延迟**（`06` §7.4.1）；⑥ 局域网边界卡「公网连接 0」判据来自真实出站计数 | 三端同名组件视觉一致（U1 取样）；每个组件 ≥5 态可预览（Windows 设计态 / Android `@Preview` / Web 独立 demo 页）；**HUD 数值一律等宽**（修 X-04） | U1 / U10 | M1 |
+| **UI-02** | **Windows 壳层重构（W1·W2·W4·W5·W6）** | UI-01 | 改：`src/UniLinker.WinUI/MainWindow.xaml(.cs)`、`Views/DashboardPage.xaml(.cs)`、`Views/DevicesPage.xaml(.cs)`、`Views/FileTransferPage.xaml(.cs)`、`Views/SettingsPage.xaml(.cs)`；新：`Views/OnboardingWindow.xaml(.cs)`（W6）；改：`Services/LocalizationService.cs` 仅接令牌与文案占位（i18n 抽取归 UI-08） | ① `NavigationView` Left 可折叠 + 三断点（641 / 1008 px）；② W2 设备列表改双栏（Expanded 右侧详情常驻）+ 在线/离线**不同形状**（实心圆+铜金左描边 vs 空心圆+「15s 前（可能离线）」）；③ **手动 IP / 扫码从并列 Tab 降为「没找到？」的降级路径**（修 Y-03），空状态直接给三个排障入口；④ W6 三步引导：局域网原理 → 防火墙放行 → 完整自检（修 Y-01）；⑤ 修 Y-14（Dashboard `IsOpen="True"` 永远 "System Ready"、侧栏状态点永远绿——**故障时必须显示故障**）、Y-13（InfoBar 不盖窗口右上角、关闭确认读「最小化到托盘」设置）、Y-07（快捷键 + 焦点环）、Y-08（最小尺寸 + `VisualStateManager`/`AdaptiveTrigger`）；⑥ **修 Y-10**：设备卡主操作改为「建立会话」（走 F2 四阶段可定位流程），「在浏览器中打开」降为次操作——**禁止**再以弹出 `ContentDialog` + 内嵌 WebView2 打开对方网页冒充「已连接」 | **U3** 冷启动到可操作 ≤3s（录屏逐帧）；**U9** Windows 段纯键盘可达；空状态/离线态/失败态三态可复现；**文案不得撒谎**：`Start Share` 未连接观众时显示「等待观看者」而非「正在共享」（行为侧由 T02 修 Y-09，UI-02 只负责文案与状态呈现一致）；设备卡点击后出现在场证据（F2 四阶段至少推进到「信令」）而非仅打开网页 | U3 / U9 | M1 |
+| **UI-03** | **Windows 会话窗口 W7** | UI-01、**T03** | 新：`src/UniLinker.WinUI/Views/SessionWindow.xaml(.cs)`、`ViewModels/SessionViewModel.cs`、`Ui/SessionStateSource.cs`、`Ui/LinkMetricsSource.cs`；复用：`Controls/{LinkHud,LanBoundaryCard}` | ① 会话页作**独立全屏窗口**（不嵌 `NavigationView`，避免裁剪与跨屏拖动失效）；② 命令条 **overlay 不占位**，鼠标静止 2.5s 隐藏、进入顶部 8px / `Ctrl+Shift+T` 唤出（修 P1「常驻工具栏遮挡」）；③ 状态条改自定义 **24px** `Grid`（不用 `CommandBar`，避免吃 48px）；④ 统计抽屉右侧滑出 320px：L1/L2/L3 堆叠条 + **网络丢包 vs 抖动丢包两个口径** + 局域网边界卡；⑤ F6 重连：黄条「连接中断，正在重连 (n/5)」+ 常驻「立即重连」「结束」两个按钮 + **保留最后一帧不黑屏**（修 Y-06）；⑥ Mica + 回退（关透明效果 / 节电 / 低端硬件 / Windows < 22000 → `SolidBackgroundFillBase`） | **U6** 2.5s 无操作后命令条完全隐藏且视频区域**像素级不变**；**U5** ≤2 次点击看到「公网连接 0」；**U9** 全键盘（`Ctrl+Shift+Q` 切画质 / `Ctrl+Shift+D` 断开 / `F11` / `Esc` 退全屏不断开）；拔网线 2s 保留最后一帧 | U5 / U6 | M2 |
+| **UI-04** | **Android 拆分 `ModernMainScreen` → A1·A2·A3·A5** | UI-01（**与 T02 同批做，共用一次重构**） | 改：`android/.../ui/ModernMainScreen.kt`（瘦身为导航壳）；新：`ui/screens/DeviceScreen.kt`(A1)、`ConnectionSheet.kt`(A2)、`SharePrepScreen.kt`(A3)、`SettingsScreen.kt`(A5)；改：`ui/UiPreviews.kt`、`ui/MainViewModel.kt`（仅新增 UiState/Intent，不改既有公开签名） | ① **按 §11.5 拆分**（834 行 → 壳 ≤80 行 + 4 屏 + 复用 `ui/components/`），业务状态**上移** `MainViewModel`，屏幕只收 `UiState` + `onIntent`（解除 X-11「UI 与状态强耦合」）；② A2 重做为 BottomSheet，局域网/手动 IP/扫码按**推荐度分层**而非并列（修 Y-03）；③ A3 新建：源选择 + 画质档**显示真实参数**（`720p·30fps` / `1080p·30fps` / `1080p·60fps`，不用「高清/超清」）+ **授权前预告系统弹窗**（`06` P5，修 Y-01）；④ A5 设置从内嵌改为独立入口 | `ModernMainScreen.kt` **≤80 行且零业务状态**；每屏 **≥3 个 `@Preview`**（空/加载/错误 + 关键态）；`MainViewModel` 公开 API **只增不改**（`git diff` 佐证）；**单 PR ≤3 个屏**（834 行一次搬完无法 review） | U3 / U10 | M1 |
+| **UI-05** | **Android 会话 A6 + 被控授权 A4** | UI-01、**T04** | 新：`ui/screens/SessionScreen.kt`(A6)、`ui/screens/ControlConsentScreen.kt`(A4)；改：`ui/components/StatsOverlay`（规整为链路卡）、`res/values/strings.xml`、`MainActivity.kt`（`enableEdgeToEdge` + `BackHandler`） | ① A6：`SurfaceView` 全屏 + Compose 覆盖层（**形态判定见 §11.6 L16 / RK-U1**）；边缘下滑 8dp 唤出工具栏、2.5s 隐；底部胶囊单击唤出统计、长按断开；系统栏进入即隐藏；**返回需二次确认**（2s 内再滑一次，修 Y-12）；② A4：全屏 60% scrim + **四项可核对信息**（设备名与平台 / 对端 IP / **六位核对码** / 操作范围），六位码由 `HMAC(sessionKey,"verify")` 前 6 位十进制派生——**仅供人眼比对、不参与认证、不新增协议字段**（与 §2.3 P0 `PairingProof.method="none"` 的 C-2 收敛一致）；③ 两段式选择（先范围「仅观看/可控制」，再时效「仅本次」主按钮 /「始终允许」次按钮），**外部点击不可关闭**；④ 授权后四边 2px 铜金呼吸边框 + 通知栏常驻「xxx 正在控制本机」+ 可拖动悬浮停止按钮，撤销 **≤1s** | **U7** 全通过（遮罩信息完整、外点不可关、撤销 ≤1s）；A6 覆盖层可见性与触控命中**真机结论归档**（RK-U1）；`SurfaceView`/`TextureView` 二选一有书面依据 | U7 | M4 |
+| **UI-06** | **Web X1 / X2 重做 + 令牌接入** | UI-00 | 改：`web/index.html`、`web/styles.css`、`web/app.js`；新：`web/ui/state.js`、`web/i18n/{zh-CN,en-US}.js`；删：`web/webcodecs-decoder.js` | ① X1 连接页重做（设备名 / 连接方式 / 错误三件套）；② X2 HUD 重做（顶部状态条 + 底部「1080p60 · H.264 · 仅局域网 · 公网流量 0 B」）；③ **修 Y-15**：`disconnected` 必须复位 UI（视频清除、按钮回「连接」）、`answer` 阶段**不得**提前把按钮改「断开」；④ 删除 `styles.css` 中无 DOM 对应的 ~95 行，保留 `:focus-visible`、`prefers-reduced-motion` 并入 `tokens.css`；⑤ **P0 明确不做控制**（`06` §5.5 / §11） | **K3 免安装观看不回归**；`ScreenMirrorTests.cs` SM01~SM05 全绿；U10 Web 段零违规；`useWebCodecs=false` 的死文件已删、无「加载了但永久关闭」的残留 | U1 / U10 | M1 |
+| **UI-07** | **无障碍补全** | UI-02~UI-06 | 改：`Styles/AppStyles.xaml`（焦点环）、`Controls/*`（`AutomationProperties.Name`）、`ui/components/*`（`contentDescription`/`semantics`）、`web/styles.css`；`MainWindow.xaml.cs`（快捷键注册） | ① 焦点环 2px `accent` + 2px 偏移，**禁止** `outline:none` 无替代；Tab 顺序 = 视觉顺序；② 图标按钮全部 `AutomationProperties.Name` / `contentDescription`；状态变化用 `liveRegion` / `AccessibilityLiveRegion` 播报（「已连接」「连接中断，正在重连」）；③ Windows 快捷键全集；④ 触控目标 Android ≥48×48dp、Windows ≥32×32px（主操作 ≥40px）；⑤ Windows 100%–200% 缩放不裁切、Android 系统字体放大 1.3× 不破版；⑥ `prefers-reduced-motion` / 系统「减少动画」→ 位移动画降级为 ≤100ms 透明度变化（视频画面本就禁动画，见 `06` §3.3） | **U9** 不用鼠标完成「连接设备 → 开始投屏 → 切画质 → 断开」；读屏走查无「未标注按钮」；缩放 200% / 字体 1.3× 截图无裁切 | U9 | M5 |
+| **UI-08** | **文案与 i18n 抽取（zh-CN / en-US）** | UI-02~UI-06 | 新：`src/UniLinker.WinUI/Resources/i18n/{zh-CN,en-US}.json`、`android/.../res/values-en/strings.xml`、`web/i18n/{zh-CN,en-US}.js`；改：`Services/LocalizationService.cs`（改字典查表）、`res/values/strings.xml` | ① 术语表 5 词三端统一（**投屏 / 观看 / 远控 / 可被发现 / 局域网直连**，禁用「共享屏幕·镜像·串流·接收·控制·P2P」）；② 文案结构固定「现象 + 原因 + 动作」；③ 数字与单位间加空格（`42 ms` / `8.2 Mbps` / `1080p 60`）；④ **Windows 不能用 `.resw`**：本项目**非打包（`WindowsPackageType=None`）+ 关 PRI（`GeneratePri=false` / `SkipMakePri=true` / `EnableMrtTargets=false`）**，MRT 链不可用 → 改 `Resources/i18n/*.json` 随输出复制 + 现有手写 `LocalizationService` 改字典查表，**并一并修掉「漏属性就半中半英」的结构性问题**；⑤ 首屏文案可切换，消灭 Android 现状硬编码 `LINKED/CONNECTING/ERROR/STANDBY/SCANNING` | **U10** 术语表 5 词三端零违规、0 处硬编码英文残留（词表 grep）；切 en-US 后首屏无中文残留、切回 zh-CN 无英文残留 | U10 | M5 |
+
+#### 5.7.2 子依赖图（UI-00~UI-08）
+
+```mermaid
+graph LR
+  UI0["UI-00 令牌层 + 删死代码"]
+  UI1["UI-01 基础组件"]
+  UI2["UI-02 Windows 壳层 W1·W2·W4·W5·W6"]
+  UI3["UI-03 Windows 会话窗 W7"]
+  UI4["UI-04 Android 拆分 A1·A2·A3·A5"]
+  UI5["UI-05 Android A6 会话 + A4 授权"]
+  UI6["UI-06 Web X1·X2"]
+  UI7["UI-07 无障碍"]
+  UI8["UI-08 文案与 i18n"]
+
+  T01["T01"] -.->|"UI-00 可与 T01 并行"| UI0
+  UI0 --> UI1
+  UI0 --> UI6
+  UI1 --> UI2
+  UI1 --> UI3
+  UI1 --> UI4
+  UI1 --> UI5
+  T02["T02"] -.->|"UI-04 与 T02 同批"| UI4
+  T03["T03"] --> UI3
+  T04["T04"] --> UI5
+  UI2 --> UI7
+  UI3 --> UI7
+  UI4 --> UI7
+  UI5 --> UI7
+  UI6 --> UI7
+  UI2 --> UI8
+  UI3 --> UI8
+  UI4 --> UI8
+  UI5 --> UI8
+  UI6 --> UI8
+
+  classDef token fill:#e6f4ea,stroke:#137333;
+  classDef screen fill:#fff4e5,stroke:#e37400;
+  classDef cross fill:#f3e8fd,stroke:#7b1fa2;
+  class UI0 token;
+  class UI1,UI2,UI3,UI4,UI5,UI6 screen;
+  class UI7,UI8 cross;
+```
+
+> **并行度**：UI-00 完成后 UI-01 单点阻塞三端，**UI-01 必须最先交付**（它同时卡住 UI-02~UI-06 五条支线）。UI-02/03/04/05/06 之间**互不依赖**，可按端并行；UI-07/08 是横切收尾（各端只改自己那份文件，不跨端写同一文件）。
+> **文件冲突规避**：UI-04 与 T02 都改 `ui/MainViewModel.kt`；UI-06 与 T01/T02 都改 `web/app.js`。约定：**文件内按区块划分**（T02 只动协议/状态区块，UI-04 只动 `UiState`/`Intent` 区块；`web/app.js` 顺序为 `T01 → UI-06 → T02`），提交时在 PR 描述里注明触及区块，避免「同一文件两侧同时重排」。
+
+#### 5.7.3 T06 总完成判据
+
+UI-00~UI-08 全部完成 + **U1~U10 全部通过**，按里程碑分批：**U1/U2/U3/U10 @ M1**、**U7 @ M4**、**U4/U5/U6/U8/U9 @ M5**（与 `06` §10 出口完全一致）。T06 任一子任务未完成，**不得**把 M1/M4/M5 判为通过——UI 交付是里程碑**退出条件的一部分**，不是可选项。
 
 ---
 
@@ -822,11 +905,11 @@ graph LR
 | 里程碑 | 可验证验收内容 | 对应任务 | 退出条件 |
 |---|---|---|---|
 | **M0 = 门禁 G1（最优先前置）** | **真机 PoC 回答 Q9**：Android（现有 v3.1 代码）→ Windows 现有 9527 是否能真实出帧；同时抓 SDP 比对 `fromPeerId`/`capability`/ICE candidate/`peerId` 关联、`profile-level-id`/`packetization-mode`；记录「可用 / 不可用 + 具体失败点」 | T01（前置门禁） | 结论归档到 `00-feasibility-baseline.md` 修订记录（含 PoC 报告号，供 `02` §6.4 证据列引用）；若「不可用」（PM 默认）则 T01 排期含协议对齐修复并重新验证；若「可用」则 T01 只做合规项。**未出结论不得进入 T02、不得给出 M1~M8 工期**（PR-5 / G1） |
-| **M1** | 双 Android **同一 Wi-Fi LAN** 单向投屏打通：v2 发现→**`sessionToken`/`sig` 鉴权**（P0 安全底线）→角色协商→授权→MediaProjection 采集→真机出帧，连续 10min 不中断、分辨率/帧率达最低档。**PIN/扫码完整配对按 PM §6 B8 / Q15 默认列 P1（R1-10，M7），不作 M1 退出条件** | T01+T02 | 真机出帧截图/录屏 + 10min 日志无断流；`ScreenMirrorTests.cs` SM01~SM05 不回归；抓包目的地址全私网；v1 浏览器观看仍可用 |
+| **M1** | 双 Android **同一 Wi-Fi LAN** 单向投屏打通：v2 发现→**`sessionToken`/`sig` 鉴权**（P0 安全底线）→角色协商→授权→MediaProjection 采集→真机出帧，连续 10min 不中断、分辨率/帧率达最低档。**PIN/扫码完整配对按 PM §6 B8 / Q15 默认列 P1（R1-10，M7），不作 M1 退出条件** | T01+T02（+**T06**：UI-00/01/02/04/06） | 真机出帧截图/录屏 + 10min 日志无断流；`ScreenMirrorTests.cs` SM01~SM05 不回归；抓包目的地址全私网；v1 浏览器观看仍可用；**UI 交付**：UI-00（三端令牌）/UI-01（基础组件）/UI-02（Windows 壳层 W1·W2·W4·W5·W6）/UI-04（Android 拆分 A1·A2·A3·A5）/UI-06（Web X1·X2）完成，**U1（品牌一致性）/U2（对比度）/U3（首屏 ≤3s）/U10（文案一致性）通过**（`06` §9/§10） |
 | **M2** | **无路由器直连**：**热点自组 LAN**（PM §6 A4 / Q11 默认）下双 Android 发现→连接→投屏→控制全通；飞行模式 + 无 SIM；链路切换触发 ICE restart 并恢复 | T01+T03 | 判据 A/C/D 全过（移动数据用量不增、拔 SIM 可用、抓包无公网 DNS/IP）；首次配对 ≤30s（R0-04）；`LinkManager` 自检输出仅私有/USB 网卡；**Wi-Fi Direct 按 Q11 默认降为 P1（R1-04 关联），不作 M2 退出条件**（若用户改判「必须 Wi-Fi Direct」则补回并触发 `02` §6.5 S5 复算） |
 | **M3** | 触控注入 + 坐标映射：4 种宽高比 × 横竖屏 0/90/180/270 各 20 次点击，落点误差 ≤1% 屏宽；`tap/long_press/swipe/pinch_zoom/scroll` 五类手势可用 | T04 | 自动化坐标落点报告（**80 组 = 16 组合 × 5 手势；320 次落点 = 16 × 20，要求 320/320 全 ≤1% 屏宽，不取平均、不剔离群点**，采用最严格口径，与 PM `01` R0-07 一致）；`FrameGeometry` 分辨率变化后自动重算验证通过；锁屏/`FLAG_SECURE` 明确降级为「提示用户自行操作」并写入文档 |
-| **M4** | 被控端显式授权（两套独立授权一次性引导，PR-4）+ **≤1s 撤销生效** + 常驻被控指示 + 超时断开；**P0 安全底线**：`sessionToken`/`sig` 鉴权与 9527 CORS 收敛；局域网内未授权设备无法注入 | T04（+T05 鉴权回归） | 撤销端到端计时报告 ≤1000ms；未授权注入尝试全部被拒；`sig`/`sessionToken` 重放与伪造测试通过；CORS 不再为 `*`（`SignalingServer.cs:515-519`）；**PIN/扫码完整配对按 PM §6 B8 / Q15 默认列 P1（R1-10，M7），不作 M4 退出条件**；DTLS-SRTP 保留（`WebRTCService.kt:61` 已开） |
-| **M5** | 质量达标：最低档端到端延迟 ≤150ms（采集帧时间戳→渲染完成打点）；3% 丢包自适应不花屏可恢复；目标档 1080p60/≤80ms 给出**明确结论**；全部判据 A~F 复核 | T05 | 延迟打点报告（用 `WgcCapture.cs:184-192 TimestampUs`）；ABR/PLI/FIR 日志；Q13 若判「硬性」则硬编层达标，否则书面记录「目标档不达标及原因」；E2E 扩展到 Android 互操作 |
+| **M4** | 被控端显式授权（两套独立授权一次性引导，PR-4）+ **≤1s 撤销生效** + 常驻被控指示 + 超时断开；**P0 安全底线**：`sessionToken`/`sig` 鉴权与 9527 CORS 收敛；局域网内未授权设备无法注入 | T04（+T05 鉴权回归）（+**T06**：UI-05） | 撤销端到端计时报告 ≤1000ms；未授权注入尝试全部被拒；`sig`/`sessionToken` 重放与伪造测试通过；CORS 不再为 `*`（`SignalingServer.cs:515-519`）；**PIN/扫码完整配对按 PM §6 B8 / Q15 默认列 P1（R1-10，M7），不作 M4 退出条件**；DTLS-SRTP 保留（`WebRTCService.kt:61` 已开）；**UI 交付**：UI-05（Android A6 会话 + A4 被控授权，含常驻被控指示、悬浮停止、≤1s 撤销）完成，**U7（被控授权完整性）通过**；A6 视频视图形态（`SurfaceView` → `TextureView` 降级门槛）在 M4 内出**实机结论**并归档（§11.6 L16，不靠猜） |
+| **M5** | 质量达标：最低档端到端延迟 ≤150ms（采集帧时间戳→渲染完成打点）；3% 丢包自适应不花屏可恢复；目标档 1080p60/≤80ms 给出**明确结论**；全部判据 A~F 复核 | T05（+**T06**：UI-07/08） | 延迟打点报告（用 `WgcCapture.cs:184-192 TimestampUs`）；ABR/PLI/FIR 日志；Q13 若判「硬性」则硬编层达标，否则书面记录「目标档不达标及原因」；E2E 扩展到 Android 互操作；**UI 交付**：UI-07（无障碍：焦点环 / 读屏标签 / 快捷键 / 缩放）/UI-08（文案与 i18n zh-CN·en-US）完成，**U4（连接可定位性）/U5（零流量可见性）/U6（会话 chrome 隐藏）/U8（断线恢复）/U9（键盘可达）通过**（`06` §9/§10） |
 | **M6（P1）** | ② Android→Windows 反向流（PC 作接收端）、③ Windows→Android 控制链路完善 | T02 延伸 | 场景 ② 真机出帧 |
 | **M7（P1）** | 双向/反向互投互控切换 <3s；系统键 + 鼠标键盘注入；剪贴板双向；文件互传校验；音频开关；多显示器/指定窗口 | T04+T05 延伸 | P1-2/P1-5/6/7/8/9 逐项验收 |
 | **M8（P1）** | 判据 E：USB 有线链路（`UsbTunnelTransport` / ADB reverse / RNDIS）；判据 A 在仅 USB 下复验 | T03 延伸（依赖 Q12） | 关 Wi-Fi 与蜂窝后仅 USB 可发现-连接-投屏-控制；若 Q12 不接受 ADB 依赖，则书面记录替代方案与代价 |
@@ -857,6 +940,8 @@ graph LR
 | 18 | 🟡 中 | **双端同时采集性能/发热**；AV1 在 `minSdk 26` 硬解覆盖不足 | `OpenH264Encoder.cs:45-50`；`build.gradle.kts:13`；R11（Pixel 8 功耗 +14%） | 目标档限制分辨率/帧率；AV1 仅 P1 可选；加 CPU/温度自适应 |
 | 19 | 🟢 低 | `addSink` 无 `removeSink`，长时可能泄漏/重复绑定 | `ScreenMirrorTab.kt:111` | T04 用 `DisposableEffect` 反注册；M1 10min 验证 |
 | 20 | 🟢 低 | 前沿技术误引入（RoQ / L4S / 神经编码 / 5G ProSe）导致返工 | `02-options-and-research.md` §5.6 | 明确列入「看着好但不该上」，阶段 2 开发文档必须锁定「只用成熟可落地项」 |
+| **RK-U1** | 🟠 高 | **Android 会话屏（A6）合成层遮挡**：Compose 中 `AndroidView` 包裹的 `SurfaceView` 运行在**独立合成层**，不受 Compose 的 `clip()`/`clipToOutline` 约束，且 z 序依赖 `setZOrderOnTop` 与机型实现 → 工具栏/统计胶囊/被控常驻指示可能被视频视图压住或触控不可达，直接使 UI-05 与 U7 失效 | `06-uiux-redesign.md` §5.4「技术约束」段；`ScreenMirrorTab.kt:103-112`（`AndroidView` + `SurfaceViewRenderer`）；§11.6 L16 | ① **先按 SurfaceView 全屏 + 覆盖层放在同一 Compose 层级、位于 `AndroidView` 之后**实现，并**禁用**对视频视图的任何圆角/缩放/透明度动画（`06` §3.3 亦已禁止动画化视频）；② 判定点在 **M4**：真机验证覆盖层可见性与触控命中（工具栏唤出区域、胶囊单击/长按、悬浮停止按钮可拖动），结论写入 `05` 验收报告；③ 若被遮挡 → 降级 `TextureView`（可裁切可动画，同分辨率像素处理成本约 **2×**），并在低端机上补一档帧率/分辨率回落验证；④ **不允许**「先在模拟器上试、真机再说」，也不允许为绕开问题改成常驻工具栏（违反 `06` P1） |
+| **RK-U2** | 🟡 中 | **令牌漂移**：三端三套令牌文件（`Tokens.xaml` / `Tokens.kt` / `tokens.css`）手工维护，任一端改值即三端不一致；且业务代码仍在**内联字面量**（现状已证：XAML 内联 `FontSize=` **117 处**、Compose 内联 `fontSize = N.sp` **60 处**、Web 两套样式源并存），令牌层建好也可能被绕开 | `06-uiux-redesign.md` §1.1 X-15/X-16/X-18、§3.4；§11.4/§11.6 L15 | ① **唯一真源 = `06` §3 令牌表**，三个文件头注明「派生自 `06` §3，禁止手改数值」；② CI 增加**令牌一致性校验脚本**：解析三端令牌文件 → 归一化（去 `Ul`/`ul-`/`UL` 前缀、hex 小写）→ 与 golden JSON 逐键比对，任一差异即失败（不在 CI 里就退化为 M1 出口的人工取样，不可接受）；③ lint 规则禁止业务代码出现 `#RRGGBB`、`Color(0x…)`、`FontSize=`、`fontSize =` 字面量（白名单仅三个令牌文件与调色板预览）；④ **U1（色值取样差异 ≤2）/U2（对比度）作为 M1 出口判据**，人眼评审不作唯一依据 |
 
 ---
 
@@ -914,9 +999,9 @@ graph LR
 | 用户把「成本+复用」权重抬到 D6≥30 | **翻转 ①**（`02` §6.5 S6）：T02/T03/T05 的结构性重构降级为后续演进，仅保留 T01/T04 的最小集 |
 | 用户要求「完全重写/换栈」 | 才切方案 ③；本文件作废，需另出架构（且必须先补 `02` R21 Rust/UniFFI 的一手可核查来源验证；③ 的 D1 待验证可能命中 V4 不得推荐） |
 
-### 9.2 与产品红线 PR-1~PR-6 / 兼容红线 K1~K8 的对齐
+### 9.2 与产品红线 PR-1~PR-8 / 兼容红线 K1~K8 的对齐
 
-> 来源：PM `01` §1.2（K1~K8）、§7（PR-1~PR-6）。工程实现时须逐条可验证。
+> 来源：PM `01` §1.2（K1~K8）、§8（PR-1~PR-8）。工程实现时须逐条可验证。
 
 | 红线 | 本方案（②）落点 | 可验证判据（写入阶段 2 开发文档） |
 |---|---|---|
@@ -926,6 +1011,8 @@ graph LR
 | **PR-4** 不以 ROOT/系统签名为 P0 控制唯一路径；两套独立授权一次性引导、可撤销、常驻可见 | §3.1 时序：`PairingManager` 一次性引导编排 MediaProjection + 无障碍；§4.3 `AuthState` 常驻指示 + `revoke` ≤1s + `SUSPENDED` 显式标注 00 §7 边界；P0 注入只用 `AccessibilityService.dispatchGesture`（R17） | M4 撤销计时 ≤1000ms、未授权注入全拒；**未命中 V5**；`AndroidManifest.xml` 补 `BIND_ACCESSIBILITY_SERVICE` |
 | **PR-5** Q9 PoC 未答不得排期；Q1~Q19 按默认答案并标注「基于默认假设」 | **M0 = 门禁 G1**（§6）；§8 全表按 PM `01` §6 默认答案，结论统一标注「基于默认假设」 | G1 PoC 报告号归档；`02` §6 全表标注「设计态打分，G1 结论若推翻则重打 D1/D6/D7/D9」 |
 | **PR-6** 前沿技术可插拔、可一键回退；Q13 未判硬性前软编保底不可废弃 | §1.1 `ITransport` + `MediaCapability` 抽象；`OpenH264Encoder.cs` **保留为 fallback 不删除**（D-07 条件性废弃）；AV1/QUIC 仅 P1 可选 | `02` §5.6「看着好但不该上」清单写入开发文档「明确不做」章节；软编保底路径一键回退演练 |
+| **PR-7** 界面指标不得使用装饰性 / 伪造数据（信号格、假进度、无来源数值）；所有展示数值须可回溯到真实测量，不可回溯者一律不显示 | **§11.1 R-UI-4**（状态只有一个来源 `ISessionStateSource`）+ **§11.3 (D)**（指标只着色不改状态点）+ **§11.3 硬规则**（`IsSharing` 等意图标志禁止充当状态源）；现状反例：X-09 四格信号格、Y-14 恒绿「Server Online」、Y-09 「Sharing Active」却未采集 | ① 链路卡/统计抽屉每个数值都能指到 `UiLinkMetrics` 的字段与来源（§11.2 表「来源」列）；② 无样本显示 `—` 而非 `0`；③ 代码中不存在无数据来源的装饰性指标组件（review 可判）；④ U5「公网连接 0」来自真实出站字节计数（`publicEgressBytes`），非占位符 |
+| **PR-8** 视觉层不得反向要求协议层新增字段；如需新的 UI 状态，先在 `03` §2 增补契约，再由 UI 消费，禁止在 UI 私造状态或字段 | **§11.1 R-UI-2**（UI 对协议层唯一写入口是 `MediaCapability` 更新）+ **§11.0 前置契约**（只读订阅 §2/§4，不新增消息名与字段）；`degraded` / `reconnecting` 是**呈现层派生态**，由既有 `TransportState` 与 `MediaFeedback` 计算 | §11.3 四个子表逐条核对「输入来源」列，**无一条需要新字段**；L17 golden 用例不引入协议字段；`04` 开发文档 UI 章节不得出现「新增 UI 状态字段」的协议改动；依赖方向双向即打回 |
 
 ---
 
@@ -938,7 +1025,8 @@ graph LR
 5. **硬约束清单见 §9**，逐条在开发文档「构建与约束」章节复述，尤其 `CLAUDE.md:66`（MF SinkWriter 不可复活）与 TFM 钉死 `net9.0-windows10.0.22621.0` + `WindowsSdkPackageVersion 10.0.22621.38`、必须 MSBuild、`dev/<feature>` 分支 + 英文 Conventional Commits + 不加 Co-Authored-By。
 6. **前沿技术白名单**：统一采用**决策 12 的 9 项** `R1 / R6 / R10 / R11 / R16 / R17 / R18 / R19 / R22`（与 `02` §6.6、§9、`04` §12.2 一致）；§5.6 的「看着好但不该上」清单原样写入开发文档的「明确不做」章节（PR-6）。**白名单语义＝可进入方案的技术候选，分级仍以 `02` §5 为准不升级**：R22 保留「需验证（二手社区实践）」、R11 保留「成熟可落地但仅 P1」、R19 保留「参考架构、不作默认路径」。
 7. **待决策 Q9 / Q11 / Q13 / Q14（及 Q18）为阻塞选型**，工程师不得自行假设；其余按 §8 默认建议推进并在文档标注「基于默认假设」（PR-5）。
-8. **产品红线 PR-1~PR-6 / K1~K8 逐条落到验收用例**（§9.2），尤其 R0-15「K1~K8 回归门禁」必须作为 M1/M5 的退出条件而非可选项。
+8. **产品红线 PR-1~PR-8 / K1~K8 逐条落到验收用例**（§9.2），尤其 R0-15「K1~K8 回归门禁」必须作为 M1/M5 的退出条件而非可选项。
+9. **UI/UX 层的契约边界见 §11**（状态源 `ISessionStateSource` / `ILinkMetricsSource`、UI 五态映射真值表、三端文件落位）；任务见 §5.7 T06（UI-00~UI-08）；其中 **L15 / L16 / L17** 三条必须在开发文档里锁定（令牌唯一真源与禁止字面量、A6 视频视图形态判定门槛、UI 五态映射 golden 用例）。**UI 层对协议层只读**，唯一允许的回写是 `MediaCapability` 更新（§2.5 / `06` F4 画质切换）。
 
 ### 10.1 阶段 2 工程师写「详细开发文档」时必须锁定的技术决策（供主理人转交）
 
@@ -958,6 +1046,285 @@ graph LR
 | L12 | **前沿技术白名单与回退开关**：统一为**决策 12 的 9 项** `R1 / R6 / R10 / R11 / R16 / R17 / R18 / R19 / R22`（补 R16，与 `02` §6.6 / §10 锚点 6 / `04` §12.2 对齐）；分级仍以 `02` §5 为准（R22 需验证、R11 仅 P1、R19 不作默认路径）；AV1/QUIC 为 P1 可插拔且一键回退 | PR-6；`02` §5.6「不该上」清单 |
 | L13 | **USB/判据 E 路径**（Q12 默认：允许 ADB/PC 辅助但不作普通用户默认路径）与 `UsbTunnelTransport` 接口 | M8 / R1-04；避免 P0 引入开发者选项门槛 |
 | L14 | **测试与构建口径**：MSBuild 命令、E2E 走 Playwright 已装 Edge/Chrome channel、`dotnet test --filter "Category=ScreenMirror"`、SM05 不可回归 | `CLAUDE.md:9-24`、`README.md:34-38,91-97` |
+| L15 | **三端令牌唯一真源 = `06` §3 令牌表**；`Tokens.xaml` / `Tokens.kt` / `tokens.css` 由同一张表派生，文件头注明「派生自 `06` §3，禁止手改数值」；业务代码禁止 `#RRGGBB` / `FontSize=` / `fontSize =` 字面量；Windows 必须**显式覆盖系统强调色**（`ThemeResource SystemAccentColor` 现状 → 永远系统蓝，X-21），不得依赖用户主题色 | 不锁则三端必然漂移（现状已内联 117 + 60 处字面量，X-15/X-16）；见 §11.6 / RK-U2 |
+| L16 | **A6 视频视图形态**：先 `SurfaceView` 全屏 + Compose 覆盖层（覆盖层同层级且在 `AndroidView` 之后、禁用对视频视图的 clip/动画）；**若真机验证覆盖层被遮挡或触控不可达 → 降级 `TextureView`**（像素处理成本约 2×，需补低端机帧率验证）。判定点 = **M4**，结论写入 `05` 验收报告 | `06` §5.4 技术约束 + RK-U1；不锁则 UI-05/U7 可能整体失效且无人定责 |
+| L17 | **UI 五态映射真值表以 §11.3 为唯一契约**，三端各写一份实现但必须与 golden 用例（`tests/ui-conformance/state-map.golden.json`）逐条一致；`degraded` / `reconnecting` 为**呈现层派生态**，**禁止**引入任何新协议消息或新协议字段 | `06` §12 前置契约；不锁则三端状态语义分叉，回到 X-09「装饰性信号格」老路 |
+
+---
+
+## 11. UI 层架构（三端）
+
+> **本节职责**：把 `06-uiux-redesign.md` 的视觉与交互规格，落到**可测试的接口边界**上——只定义**数据流方向、状态来源、文件落位、拆分判据**；色值 / 字号 / 间距等像素级规格**仍以 `06` §3 为准**，此处不复制。
+> **一句话结论**：三端 UI 共享**一套语义**（令牌 + 五态 + 文案结构），**不共享渲染代码**；UI 层的状态**只有一个来源** `ISessionStateSource`，且该来源必须由**采集器 + 传输 + 会话**三者共同驱动——**任何布尔「意图标志」（如 `IsSharing`）不得充当 UI 状态源**。
+> **前置契约（`06` §12）**：本节全部接口**只读**订阅 §2 / §4 已有结构，**不新增协议消息、不新增协议字段**；唯一允许的回写是 `MediaCapability` 更新（§2.5 / `06` F4 画质切换）。
+
+### 11.1 三端 UI 分层
+
+```mermaid
+flowchart TB
+  subgraph UI["L5 UI 层（三端各自渲染，语义一致）"]
+    P4["L5.4 宿主壳 Shell<br/>NavigationView(Win) · NavigationBar+enableEdgeToEdge(And) · 单页两面(Web)"]
+    P2["L5.2 屏幕层 Screens<br/>W1~W7 · A1~A6 · X1~X2（06 §4.2 共 15 屏）"]
+    P1["L5.1 基础组件 Primitives<br/>StatusDot / DeviceCard / LinkHud / LanBoundaryCard / EmptyState / ErrorBanner / SkeletonBars / ToastHost"]
+    P3["L5.3 状态呈现 Presenters<br/>ISessionStateSource / ILinkMetricsSource / UiStateMapper"]
+    P0["L5.0 令牌层 Tokens<br/>Tokens.xaml · Tokens.kt · tokens.css（派生自 06 §3）"]
+    P4 --> P2
+    P2 --> P1
+    P2 --> P3
+    P1 --> P0
+  end
+  PROTO["§2 协议层 / §4 状态机<br/>TransportState(§4.1) · MediaFeedback(§2.5) · ControlMessage(§2.4) · AuthState(§4.3)"]
+  P3 -->|"只读订阅（单向）"| PROTO
+  P2 -->|"唯一回写：MediaCapability 更新（06 F4）"| PROTO
+```
+
+**五条架构规则（违反即架构评审不通过）**
+
+| # | 规则 | 理由 / 对应现状问题 |
+|---|---|---|
+| R-UI-1 | 依赖**单向**：Screens → Primitives → Tokens；Screens → Presenters；Presenters → 协议层**只读**。协议层**不得**引用 UI 层任何类型 | 防 UI 与协议互相污染，保三端可独立替换 |
+| R-UI-2 | UI 对协议层的写入口**只有一个**：`MediaCapability` 更新（画质切换，`06` F4） | `06` §12「视觉层不得侵入协议层」 |
+| R-UI-3 | 令牌是**唯一**视觉真源，业务代码禁止硬编码色值/字号 | X-15（XAML 内联 `FontSize=` 117 处）、X-16（Compose 内联 60 处）、X-18（Web 两套样式源） |
+| R-UI-4 | 状态**只有一个来源**：`ISessionStateSource`；屏幕不得自行拼接状态、不得用布尔标志代表状态 | X-09（四格信号格与链路无关）、Y-14（`IsOpen="True"` 永远 System Ready）、**Y-09（`IsSharing` 置真但未采集）** |
+| R-UI-5 | 三端**同一语义、不同密度**（`06` P6）：文案 / 图标语义 / 颜色含义一致，布局密度按平台惯例 | 现状三端像三个产品（`06` §0） |
+
+### 11.2 状态源契约 —— `ISessionStateSource` / `ILinkMetricsSource`
+
+> **核心设计（回应 Y-09 / Y-14）**：现有 Windows 侧「共享」与「会话」是**解耦**的——`ViewModels/ShareViewModel.cs:112-146` 点「Start Share」只写配置并把 `IsSharing` 置真（`:132`），**真正采集要等 viewer 发请求**才在 `Plugins.ScreenMirror/ScreenMirrorPlugin.cs:36-58` 启动。因此 **`IsSharing` 这类"我要共享"的意图标志与"正在采集/正在被观看"是两件事**，用布尔值驱动 UI 必然导致「界面显示 Sharing Active 却没在采集」这类信任问题。
+> 故 `ISessionStateSource` 暴露的是**三个正交子状态**，UI 五态由它们的**组合**派生（§11.3），**不得**由单一布尔值代表。
+
+**共享类型（三端一致）**
+
+| 类型 | 取值 / 字段 | 来源（唯一） |
+|---|---|---|
+| `CaptureState` | `Idle` / `Starting` / `Capturing` / `Failed` | **采集器真实状态**：Windows `WgcCapture.cs` 的 `_isCapturing` 与首帧事件；Android `MediaProjection` + `MediaCodec` 启动结果（`ScreenCaptureSource.kt`） |
+| `SessionPhase` | `None` / `AwaitingViewer` / `Active` | **会话层真实连接观众数**：`PeerMesh` 的 peer 计数（`PeerMesh.cs`）与 `ControlMessage`/`sess` 生命周期；**不得**由 `IsSharing` 推出 |
+| `HostState` | `Idle` / `Starting` / `Listening` / `Failed` | **本机信令服务真实状态**（Windows `SignalingServer.cs` / Android `AndroidSignalingServer.kt` 的启动结果）。**专治 Y-14**：侧栏「Server Online」与 Dashboard「System Ready」目前写死 `IsOpen="True"`、恒绿，`App.xaml.cs:64-71,83-90` 的启动失败被吞 |
+| `TransportState` | 见 §4.1（`Idle` … `Closed`） | **传输层**：`ITransport.StateChanged`（§2.6），底层为 ICE/DTLS 真实状态 |
+| `AuthState` | 见 §4.3（被控侧） | **授权状态机**（§4.3 / `AuthorizationManager`） |
+| `SessionSnapshot` | `{ Transport, Capture, Phase, Auth, Host }` | 以上五者合成；**UI 只读它** |
+
+**C# 契约**
+
+```csharp
+public sealed record SessionSnapshot
+{
+    public required TransportState Transport { get; init; }
+    public required CaptureState   Capture   { get; init; }
+    public required SessionPhase   Phase     { get; init; }
+    public required AuthState      Auth      { get; init; }
+    public required HostState      Host      { get; init; }   // 本机信令服务，专治 Y-14
+}
+
+public sealed record UiLinkMetrics
+{
+    public double? LatencyMs        { get; init; }   // 总延迟 = renderCompleteAtUs − frameTimestampUs（§2.5 同一单调域）
+    public double? NetworkMs        { get; init; }   // L1：由 rttMs / 到达时差折算
+    public double? DecodeMs         { get; init; }   // L2：MediaFeedback.decodeMs（既有字段）
+    public double? RenderMs         { get; init; }   // L3：接收端本地计算，不占协议字段
+    public int?    BitrateKbps      { get; init; }
+    public double? LossPercent      { get; init; }
+    public int?    Width            { get; init; }
+    public int?    Height           { get; init; }
+    public int?    Fps              { get; init; }
+    public int     PublicEgressCount{ get; init; }   // 局域网边界卡：仅 0 才显示绿勾
+    public long    SessionBytes     { get; init; }
+    public long    SampledAtUs      { get; init; }   // 单调时基，与 §2.5 同域
+}
+// 说明：全部字段可为 null —— 无样本时 UI 显示「—」，禁止用 0 冒充（0 会被读成"很好"）
+
+public interface ISessionStateSource
+{
+    SessionSnapshot Current { get; }
+    UiConnectionState Ui { get; }                       // = UiStateMapper.Map(Current)，唯一实现
+    event Action<SessionSnapshot>? SnapshotChanged;
+}
+
+public interface ILinkMetricsSource
+{
+    UiLinkMetrics Current { get; }
+    IReadOnlyList<UiLinkMetrics> Recent { get; }        // HUD sparkline 30 点环形缓冲
+    event Action<UiLinkMetrics>? MetricsUpdated;
+}
+
+public static class UiStateMapper                               // 三端同真值表（§11.3）
+{
+    public static UiConnectionState Map(SessionSnapshot s);
+    public static bool IsReconnecting(SessionSnapshot s);       // degraded 的「重连中」变体
+}
+```
+
+**Kotlin 契约（Android，同名同义）**
+
+```kotlin
+data class SessionSnapshot(
+    val transport: TransportState,
+    val capture: CaptureState,
+    val phase: SessionPhase,
+    val auth: AuthState,
+    val host: HostState,            // 本机信令服务，专治 Y-14
+)
+
+interface ISessionStateSource {
+    val current: StateFlow<SessionSnapshot>
+    val ui: StateFlow<UiConnectionState>        // = UiStateMapper.map(current.value)
+}
+interface ILinkMetricsSource {
+    val current: StateFlow<UiLinkMetrics>
+    val recent: StateFlow<List<UiLinkMetrics>>  // 30 点
+}
+object UiStateMapper {                          // 与 C# 逐条一致（golden 用例校验）
+    fun map(s: SessionSnapshot): UiConnectionState
+    fun isReconnecting(s: SessionSnapshot): Boolean
+}
+```
+
+**Web 契约（观看端，只读）**
+
+```javascript
+// web/ui/state.js
+export const UiConnectionState = Object.freeze({
+  Idle: 'idle', Connecting: 'connecting', Connected: 'connected',
+  Degraded: 'degraded', Error: 'error',
+});
+export function mapSnapshot(s) { /* 与 §11.3 真值表逐条一致 */ }
+export function createStateSource(pc /* RTCPeerConnection */) {
+  // pc.connectionState + pc.iceConnectionState → Transport 等价态
+  // 观看端无采集器：Capture 恒为 Idle，Phase 由连接是否 established 推出
+  return { get ui() {}, get metrics() {}, subscribe(fn) {} };
+}
+```
+
+**`ISessionStateSource` 的五条硬规则（Y-09 / Y-10 / Y-14 的架构级纠正）**
+
+| # | 规则 | 为什么必须写死 |
+|---|---|---|
+| SR-1 | 状态**必须由「采集 + 传输 + 会话 + 宿主」四源合流**产出（`SessionSnapshot` 五字段缺一不可），**不得**由任何单一布尔值代表 | 现状「共享」与「会话」解耦（`ShareViewModel.cs:112-146` 置 `IsSharing=true`，采集却要等 `ScreenMirrorPlugin.cs:36-58` 被请求才启动）→ 一个布尔值同时冒充「用户意图」与「运行事实」，UI 只能撒谎（Y-09） |
+| SR-2 | **`IsSharing` 这类「意图标志」禁止作为 UI 状态源**：实现时**删除**，或降级为 `SharingIntent`，仅作命令参数传给 `ScreenMirrorPlugin`，**不进 `SessionSnapshot`** | 「正在共享」必须是 `Capture == Capturing && Phase == Active` 算出来的，不是按钮点出来的；`Capture == Capturing && Phase == AwaitingViewer` 必须显示**「等待观看者」**（`06` §1.3） |
+| SR-3 | 「已连接」必须由 `Transport == Connected` **且**完成 `Signaling → Connecting → Connected` 推出；**禁止**以「弹出 `ContentDialog` 打开了对方网页」推导已连接 | Y-10：`DevicesPage.xaml.cs:36-50` → `DeviceDetailsDialog.xaml.cs:33-34` 现在只是内嵌 WebView2，「观看网页」必须降级为独立次操作（`06` §1.3） |
+| SR-4 | 本机信令服务状态进 `Host`，**启动失败必须显示失败**，禁止吞异常后仍显示「Server Online / System Ready」 | Y-14：`DashboardPage.xaml:22-33` 的 `InfoBar IsOpen="True" Severity="Success"` 与 `MainWindow.xaml:177-183` 的侧栏常绿；`App.xaml.cs:64-71,83-90` 失败被吞。**故障时显示正常，比没有状态更糟** |
+| SR-5 | 屏幕组件**禁止**持有业务状态（`isConnected` / `isSharing` / `isLoading` 等局部布尔）；仅接收 `uiState` + `onIntent` | X-11「UI 与状态强耦合」；局部布尔一旦存在，SR-1~SR-4 立刻被绕过 |
+
+> **三端一致性校验**：`tests/ui-conformance/state-map.golden.json` 枚举**等价类**（按 §11.3 A 表优先级划分，约 15 类；**不做 10×4×3×4×4 全笛卡尔积**）及其期望 UI 五态，三端各跑一份单测对照，**任一端不一致即构建失败**（L17）。Web 端无采集器与信令服务端，`Capture ≡ Idle`、`Auth ≡ Idle`、`Host ≡ Listening`，只覆盖降维后的子集。
+
+### 11.3 `SessionState` / ICE → UI 五态映射（唯一真值表）
+
+> **派生顺序（必须按此顺序，先命中者胜）**：① 宿主与错误优先（`Host=Failed` / `Capture=Failed` / `Auth` 异常）→ ② 传输层 → ③ 采集与会话层 → ④ 指标只着色不改态。
+> **零新增协议**：下表所有输入均来自 §2.5 `MediaFeedback`（`fractionLost` / `rttMs` / `estimatedBitrateKbps` / `framesDecoded` / `decodeMs`）、§4.1 `TransportState`、ICE 状态、§4.3 `AuthState`、本机信令服务启动结果与**本地**字节/渲染计时；`degraded` 与 `reconnecting` 均为**呈现层派生态**，**不新增消息名、不新增字段**。
+
+**(A) 传输层（权威来源：`ITransport.StateChanged` / §4.1）**
+
+| `TransportState` | UI 五态 | StatusDot（`06` §7.1） | 文案 / 变体 |
+|---|---|---|---|
+| `Idle` | `idle` | 灰实心 | 「未连接」 |
+| `Discovered` | `idle` | 灰实心 | 「已发现 · 未连接」 |
+| `Pairing` | `connecting` | 铜金呼吸 | 「配对中」· 四阶段点 ① |
+| `Signaling` | `connecting` | 铜金呼吸 | 「正在建立会话」· 四阶段点 ②（`06` F2） |
+| `Connecting` | `connecting` | 铜金呼吸 | 「正在连接」· 四阶段点 ③ |
+| `Connected` | `connected` | 绿实心 + 20% 外圈 | 「已连接」· 四阶段点 ④ |
+| `Degraded` | `degraded` | 黄实心 | 「画质降级」（`variant = degraded`） |
+| `Reconnecting` | `degraded` | 黄实心（**不呼吸**） | 「连接中断，正在重连 (n/5)」（`variant = reconnecting`，`06` F6 黄条） |
+| `Failed` | `error` | 红实心 | 原因分类 + 两个按钮（`variant = failed`） |
+| `Closed` | `idle` | 灰实心 | 「会话已结束」（保留最后一帧 3s 后归 `idle`） |
+
+**(B) ICE 状态（`PeerConnection.cs:297-305` / `RTCIceConnectionState` / `pc.iceConnectionState`）**
+
+| ICE 取值 | UI 五态 | 说明 |
+|---|---|---|
+| `new` / `checking` | `connecting` | 仅在 `Transport ∈ {Signaling, Connecting}` 时生效；`Connected` 之后 ICE 回到 `checking`（ICE restart）→ **强制降为 `connecting`**（§3.2） |
+| `connected` / `completed` | `connected` | 与 `Transport=Connected` 同向 |
+| `disconnected` | `degraded`（`variant = reconnecting`） | **不直接判 `error`**：0.5s 宽限后进 `RECONNECTING`，避免瞬时抖动闪红（`06` F6） |
+| `failed` | `error` | 重连超时（默认 10s）后由 `Transport=Failed` 覆盖 |
+| `closed` | `idle` | 会话正常结束 |
+
+**(C) 采集与会话层（本表是 Y-09 / Y-14 的修复核心）**
+
+| 组合 | UI 五态 | 文案 | 说明 |
+|---|---|---|---|
+| `Host=Failed` | `error` | 「本机服务未启动：<原因>」+「重试」 | **Y-14 修复点**：`SignalingServer` / `AndroidSignalingServer` 启动失败**必须**盖过一切其他状态，侧栏状态点与 Dashboard 概览同步转红，禁止仍显示「Server Online」 |
+| `Host=Starting` | `connecting` | 「正在启动本机服务…」 | 冷启动期，避免一闪而过的「未连接」 |
+| `Capture=Starting` | `connecting` | 「正在启动采集…」 | 授权弹窗前后（Android MediaProjection / Windows WGC 首帧） |
+| `Capture=Capturing` ∧ `Phase=AwaitingViewer` ∧ `Transport ∈ {Idle, Discovered}` | **`idle`** | **「等待观看者（本机正在采集）」** | **Y-09 修复点**：状态点保持灰（确无对端），但**文案严禁写「正在共享/Sharing Active」**；点击即出**真实首帧预览** |
+| `Capture=Capturing` ∧ `Phase=Active` ∧ `Transport=Connected` | `connected` | 「已连接 · 正在投屏」 | P0 主路径 |
+| `Capture=Failed` | `error` | 「采集失败：<原因>」+ 重试 | 采集失败比连接失败更严重（用户看不到任何画面），**必须**盖过 `Transport=Connected` |
+| `Auth=ACTIVE`（被控侧） | `connected` | 「正在被远程控制」+ 常驻指示 | 被控侧视角；撤销后回 `idle`（§4.3 `REVOKING → REVOKED`） |
+| `Auth=SUSPENDED` | `degraded` | 「当前界面不可注入，请自行操作」 | 锁屏 / `FLAG_SECURE` / 系统弹窗（基线 §7 平台边界，**不报错**） |
+
+**(D) 指标派生规则（`ILinkMetricsSource` + `06` §7.4 阈值）**
+
+| 条件 | 对 UI 五态的影响 | 对视觉的影响 |
+|---|---|---|
+| 延迟 > 120ms ∧ ≤ 250ms，或 丢包 > 2% ∧ ≤ 5%，或 码率 < 档位目标 60%，或 实际分辨率/帧率 < 目标 80% | **仅在当前为 `connected` 时升为 `degraded`**；其余态**不变** | 数值转黄 |
+| 延迟 > 250ms，或 丢包 > 5% | **不翻转状态点**（仍 `degraded`） | 数值转红 + sparkline 变色 |
+| 连续重连失败 5 次 | 由 `Transport=Failed` 判 `error`（**不是指标判的**） | 红 |
+
+> **硬规则（防 X-09 复活）**：**状态点只由状态机驱动，指标只驱动数值与颜色，绝不驱动状态点**。派生只允许「保持或恶化一档」：`connected → degraded` 允许；**禁止** `error → degraded` 回退、**禁止** `idle → degraded`（无会话即无指标）。
+> **`IsSharing` 的合法用途**：仅可作为**用户意图**用于按钮文案与重启后恢复上次选择；**禁止**参与 §11.3 任一格的派生（R-UI-4 / Y-09）。同理，Windows「Connect」不得以「已打开网页」推导 `Transport=Connected`（Y-10）。
+
+### 11.4 三端文件落位表
+
+| 端 | 层 | 文件（相对路径） | 新/改 | 说明 |
+|---|---|---|---|---|
+| **Windows** | L5.0 令牌 | `src/UniLinker.WinUI/Styles/Tokens.xaml` | 🆕 | **新增令牌文件**；`ThemeDictionaries` 提供 Light/Dark；**显式覆盖系统强调色**（不依赖 `SystemAccentColor`，X-21 / L15） |
+| | L5.0 | `src/UniLinker.WinUI/Styles/AppStyles.xaml` | 🟡 | 改为引用 `Tokens.xaml`；删内联 117 处 `FontSize=`（X-15） |
+| | L5.1 | `src/UniLinker.WinUI/Controls/{StatusDot,DeviceCard,LinkHud,LanBoundaryCard,EmptyState,ErrorBanner,SkeletonBars,ToastHost}.xaml(.cs)` | 🆕 | 8 个基础组件，与 Android 同名同义 |
+| | L5.3 | `src/UniLinker.WinUI/Ui/{SessionStateSource,LinkMetricsSource,UiStateMapper}.cs` | 🆕 | 实现 §11.2；**订阅** `ITransport`/`PeerMesh`/`WgcCapture`，不反向依赖 |
+| | L5.2/L5.4 | `MainWindow.xaml(.cs)`、`Views/{DashboardPage,DevicesPage,FileTransferPage,SettingsPage}.xaml(.cs)` | 🟡 | W1/W2/W4/W5 + NavigationView 断点（UI-02） |
+| | L5.2 | `Views/{SessionWindow,OnboardingWindow}.xaml(.cs)`、`ViewModels/SessionViewModel.cs` | 🆕 | W7 会话窗（独立全屏）、W6 三步引导（UI-03） |
+| | L5.2 | `src/UniLinker.WinUI/Resources/i18n/{zh-CN,en-US}.json` + `Services/LocalizationService.cs` | 🆕/🟡 | **不用 `.resw`**：非打包 + `GeneratePri=false` / `EnableMrtTargets=false`，MRT 不可用（`06` §8.2） |
+| **Android** | L5.0 令牌 | `android/app/src/main/java/com/unilinker/android/ui/theme/Tokens.kt` | 🆕 | **新增令牌文件**；补齐 M3 全角色（X-03）、`onSurface` 主文字（X-02）、字号下限（X-05）、light 分支（X-06） |
+| | L5.0 | `.../ui/theme/Theme.kt`、`res/values/themes.xml` | 🟡 | 引用 `Tokens.kt`；冷启动底色对齐（X-20）；删内联 60 处字号（X-16） |
+| | L5.1 | `.../ui/components/{StatusDot,DeviceCard,LinkHud,LanBoundaryCard,EmptyState,ErrorBanner,SkeletonBars,QualitySegmented}.kt` | 🆕 | 8+1 个组件 |
+| | L5.3 | `.../ui/state/{SessionStateSource,LinkMetricsSource,UiStateMapper}.kt` | 🆕 | 同 §11.2 Kotlin 契约 |
+| | L5.2 | `.../ui/screens/{DeviceScreen,ConnectionSheet,SharePrepScreen,SessionScreen,ControlConsentScreen,SettingsScreen}.kt` | 🆕 | A1/A2/A3/A6/A4/A5（§11.5） |
+| | L5.4 | `.../ui/ModernMainScreen.kt` | 🟡 | 瘦身为导航壳 ≤80 行（§11.5） |
+| | L5.2 | `.../res/values/strings.xml`、`res/values-en/strings.xml` | 🟡/🆕 | 消灭硬编码 `LINKED/CONNECTING/ERROR/STANDBY/SCANNING`（UI-08） |
+| **Web** | L5.0 令牌 | `web/tokens.css` | 🆕 | **新增令牌文件**；承载 `index.html:8-175` 迁出的内联样式（X-18） |
+| | L5.0 | `web/styles.css`、`web/index.html` | 🟡 | 删无 DOM 的 ~95 行、删内联 `<style>` |
+| | L5.3 | `web/ui/state.js` | 🆕 | 订阅 `RTCPeerConnection` 状态 |
+| | L5.2 | `web/app.js` | 🟡 | X1/X2 重做 + Y-15 状态复位；**P0 不做控制** |
+| | L5.2 | `web/i18n/{zh-CN,en-US}.js` | 🆕 | 纯前端查表 |
+| | — | `web/webcodecs-decoder.js` | ❌ 删 | 217 行死代码（`useWebCodecs=false` 且无切换入口） |
+
+> **禁止**：在上述**待删死代码**（`06` §1.3 约 1500 行）上做任何改造。删除必须先行（UI-00 第 0 步），否则会出现「美化了一个从不渲染的组件」的无效工作。
+
+### 11.5 `ModernMainScreen.kt` 834 行拆分方案
+
+> **现状问题（`06` X-11）**：`android/.../ui/ModernMainScreen.kt` 834 行，一个文件同时承载 A1/A2/A5/A6 四个界面、无障碍弹窗、设备列表、统计浮层与 7 个 `@Preview`；业务状态与 Composable 强耦合 → 任何 UI 改动都要在 834 行里找锚点，且无法单屏预览。
+
+**拆分边界（按「屏幕」切，不按「组件」切）**
+
+| 目标文件 | 承担内容 | 行数预算 |
+|---|---|---|
+| `ui/ModernMainScreen.kt` | **仅导航壳**：`Scaffold` + `NavigationBar`（3 项）+ `NavHost` | **≤ 80** |
+| `ui/screens/DeviceScreen.kt` | A1 首页：可被发现开关、附近设备、手动入口、空状态 | ≤ 250 |
+| `ui/screens/ConnectionSheet.kt` | A2 连接方式 BottomSheet（局域网/手动 IP/扫码，按推荐度分层） | ≤ 220 |
+| `ui/screens/SharePrepScreen.kt` | A3 投屏准备：源选择、画质档**真实参数**、授权前预告 | ≤ 220 |
+| `ui/screens/SessionScreen.kt` | A6 会话：`SurfaceView` + 覆盖层 + 统计胶囊 + 悬浮停止 | ≤ 250 |
+| `ui/screens/ControlConsentScreen.kt` | A4 被控授权：遮罩 + 四项可核对 + 两段式选择 | ≤ 180 |
+| `ui/screens/SettingsScreen.kt` | A5 设置 | ≤ 200 |
+| `ui/components/*.kt` | 8+1 个基础组件（UI-01 交付） | 每个 ≤ 150 |
+
+**状态提升规则（解除 X-11 的关键）**
+
+1. 所有**业务状态**（设备列表、选中设备、会话快照、授权态）上移到 `MainViewModel`，并以 `StateFlow<XxxUiState>` 暴露；
+2. 屏幕 Composable **只接收** `uiState: XxxUiState` + `onIntent: (XxxIntent) -> Unit`，**不得**自己持有 `mutableStateOf` 业务状态；
+3. 会话快照统一走 §11.2 `ISessionStateSource`，屏幕不直接读 `WebRTCService` / `PeerMesh`；
+4. **`MainViewModel` 的公开 API 只增不改**（`git diff` 佐证），保证 T02/T03 的行为修复不被 UI 拆分挡住。
+
+**拆分验收判据**
+
+| # | 判据 |
+|---|---|
+| 1 | `ModernMainScreen.kt` ≤ 80 行且**零业务状态**（仅导航与依赖装配） |
+| 2 | 每屏 **≥3 个 `@Preview`**（空 / 加载 / 错误 + 关键态），`UiPreviews.kt` 现有 7 个 preview 全部保留并归属到对应屏 |
+| 3 | 拆分**单 PR ≤ 3 个屏**（834 行一次搬完无法 review，也无法二分定位回归） |
+| 4 | 拆分**不改业务逻辑**：Y-11（启动不自动扫描）、`loadActiveStrategy()` 行为修正归 **T02/T03**，**禁止**混入 UI-04 的 PR |
+| 5 | 拆分前后 `MainViewModel` 公开方法签名集合不变；`ScreenMirrorTests.cs` SM01~SM05 不受影响 |
+
+### 11.6 交给阶段 2 的 UI 锁定项
+
+已并入 §10.1：**L15**（令牌唯一真源 + 禁止字面量 + Windows 显式覆盖强调色）、**L16**（A6 视频视图 `SurfaceView` → `TextureView` 判定门槛，M4 出结论）、**L17**（UI 五态映射 golden 用例 + `degraded`/`reconnecting` 不得新增协议字段）。工程师编写 `04-implementation-guide.md` 的 UI 章节时须逐条复述，且**不得**把 UI 层对协议层的依赖方向写成双向。
 
 ---
 
