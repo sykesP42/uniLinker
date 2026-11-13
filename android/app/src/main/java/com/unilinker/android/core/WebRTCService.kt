@@ -71,11 +71,11 @@ class WebRTCService(
     }
 
     private fun createPeerConnection() {
-        val rtcConfig = PeerConnection.RTCConfiguration(
-            listOf(
-                PeerConnection.IceServer.builder("stun:stun.l.google.com:19302").createIceServer()
-            )
-        ).apply {
+        // No STUN servers. uniLinker is a LAN-only connector (C2/C3): host
+        // candidates cover same-subnet Wi-Fi, hotspot and Wi-Fi Direct, while a
+        // public STUN URL would send traffic outside the LAN and stall ICE
+        // gathering until it times out. See C-22.
+        val rtcConfig = PeerConnection.RTCConfiguration(emptyList()).apply {
             tcpCandidatePolicy = PeerConnection.TcpCandidatePolicy.DISABLED
         }
 

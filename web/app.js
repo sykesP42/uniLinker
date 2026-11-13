@@ -108,9 +108,10 @@ async function connect() {
     setStatus('connecting', '连接中...');
 
     try {
-        pc = new RTCPeerConnection({
-            iceServers: [{ urls: 'stun:stun.l.google.com:19302' }]
-        });
+        // No STUN servers: this viewer only ever connects inside the LAN (C2/C3).
+        // Host candidates suffice on the same subnet, and a public STUN URL would
+        // leak traffic outside the LAN and delay ICE gathering until it times out.
+        pc = new RTCPeerConnection({ iceServers: [] });
 
         pc.ontrack = (event) => {
             console.log('Track received:', event.track.kind);
