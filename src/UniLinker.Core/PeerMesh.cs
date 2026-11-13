@@ -396,6 +396,15 @@ internal class PeerChannel : IChannel
     private readonly PeerConnection _pc;
     private readonly bool _isSender;
 
+    /// <summary>Capture timestamp of the last frame sent on this channel, in
+    /// microseconds. -1 means "nothing sent yet".</summary>
+    private long _lastFrameTsUs = -1;
+
+    /// <summary>Duration of the previous frame in 90 kHz RTP units. Doubles as
+    /// the fallback when a timestamp fails to advance, so a stalled clock can
+    /// never collapse the stream's time base.</summary>
+    private uint _lastDurationRtp = 90000 / 30;
+
     public string Id { get; } = Guid.NewGuid().ToString("N")[..8];
     public ChannelType Type { get; }
     public PeerInfo RemotePeer { get; }
@@ -458,11 +467,46 @@ internal class PeerChannel : IChannel
     {
         if (State == ChannelState.Open && _isSender)
         {
-            // SIPSorcery's SendVideo takes a DURATION in RTP units (added to
-            // the previous timestamp), not an absolute timestamp. At 30 fps
-            // one frame lasts 3000 ticks of the 90 kHz clock.
-            const uint frameDurationRtp = 90000 / 30;
-            _pc.SendVideoFrame(frameDurationRtp, packet.Data);
+            // SIPSorcery's SendVideo takes a DURATION in RTP units (added to the
+            // previous timestamp), not an absolute timestamp. Derive that duration
+            // from the real capture timestamps so the 90 kHz clock tracks the
+            // actual frame cadence.
+            //
+            // A fixed 90000/30 (the previous implementation) makes a 60 fps stream
+            // advance at half speed: the receiver reconstructs 30 fps worth of
+            // time per second and discards roughly every other frame, while its
+            // jitter estimate grows monotonically. Deriving the delta from
+            // TimestampUs keeps 30/60/120 fps all correct.
+            uint durationRtp;
+            if (_lastFrameTsUs < 0)
+            {
+                // First frame: no delta available, assume the nominal 30 fps.
+                durationRtp = _lastDurationRtp;
+            }
+            else
+            {
+                long deltaUs = packet.TimestampUs - _lastFrameTsUs;
+                if (deltaUs <= 0)
+                {
+                    // Timestamp did not advance (idle re-emit of a cached frame).
+                    // Repeat the previous duration instead of emitting zero, which
+                    // would freeze the receiver's playout clock.
+                    durationRtp = _lastDurationRtp;
+                }
+                else
+                {
+                    // microseconds -> 90 kHz ticks: us * 90000 / 1_000_000 == us * 9 / 100
+                    long ticks = deltaUs * 9 / 100;
+                    // Clamp to 1 fps .. 120 fps so a bad timestamp cannot emit an
+                    // absurd gap.
+                    durationRtp = (uint)Math.Clamp(ticks, 750, 90000);
+                }
+            }
+
+            _lastFrameTsUs = packet.TimestampUs;
+            _lastDurationRtp = durationRtp;
+
+            _pc.SendVideoFrame(durationRtp, packet.Data);
         }
         await Task.CompletedTask;
     }

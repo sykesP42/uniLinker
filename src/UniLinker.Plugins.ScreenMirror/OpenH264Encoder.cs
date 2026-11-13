@@ -25,6 +25,16 @@ public class OpenH264Encoder : IEncoder
     private readonly object _slotGate = new();
     private CaptureFrame? _pendingFrame;
     private CaptureFrame? _lastFrame;
+
+    /// <summary>Stopwatch timestamp (not a wall clock) of when <see cref="_lastFrame"/>
+    /// was captured. Used to advance the timestamp of idle re-emits so the RTP
+    /// 90 kHz clock keeps tracking real time instead of freezing.</summary>
+    private long _lastFrameCachedAt;
+
+    /// <summary>Guards <see cref="_encoder"/> between the encode worker and
+    /// <see cref="ForceKeyFrame"/>. Without it, a key-frame request racing an
+    /// in-flight encode or a resolution change can hit a disposed encoder.</summary>
+    private readonly object _encoderGate = new();
     private readonly SemaphoreSlim _workSignal = new(0, 1);
     private Thread? _worker;
     private volatile bool _running;
@@ -64,7 +74,10 @@ public class OpenH264Encoder : IEncoder
 
     public void ForceKeyFrame()
     {
-        _encoder?.ForceIntraFrame();
+        lock (_encoderGate)
+        {
+            _encoder?.ForceIntraFrame();
+        }
     }
 
     private async void EncodeLoop()
@@ -87,16 +100,26 @@ public class OpenH264Encoder : IEncoder
                     frame = _pendingFrame;
                     _pendingFrame = null;
                 }
-                if (frame == null)
-                {
-                    // Capture is idle (static screen): re-emit the last frame
-                    // as a fresh P-frame so the stream does not stall.
-                    frame = _lastFrame;
-                    if (frame == null) continue;
-                }
-                _lastFrame = frame;
 
-                EncodeOne(frame);
+                if (frame != null)
+                {
+                    _lastFrame = frame;
+                    _lastFrameCachedAt = System.Diagnostics.Stopwatch.GetTimestamp();
+                    EncodeOne(frame);
+                }
+                else if (_lastFrame != null)
+                {
+                    // Capture is idle (static screen): re-encode the cached frame
+                    // as a fresh P-frame so the stream keeps its cadence. The
+                    // timestamp MUST advance into the future -- re-using the stale
+                    // capture timestamp would freeze the RTP 90 kHz clock, and the
+                    // next real frame would then be given an absurdly long
+                    // duration, showing up as a multi-second freeze at the receiver.
+                    long elapsedUs =
+                        (System.Diagnostics.Stopwatch.GetTimestamp() - _lastFrameCachedAt)
+                        * 1_000_000L / System.Diagnostics.Stopwatch.Frequency;
+                    EncodeOne(_lastFrame with { TimestampUs = _lastFrame.TimestampUs + elapsedUs });
+                }
             }
             catch (Exception ex)
             {
@@ -106,6 +129,16 @@ public class OpenH264Encoder : IEncoder
     }
 
     private void EncodeOne(CaptureFrame frame)
+    {
+        // Serialize against ForceKeyFrame/Dispose so a key-frame request or a
+        // shutdown can never touch a disposed or mid-reconfigure encoder.
+        lock (_encoderGate)
+        {
+            EncodeOneCore(frame);
+        }
+    }
+
+    private void EncodeOneCore(CaptureFrame frame)
     {
         if (frame.RawData == null || frame.Width <= 0 || frame.Height <= 0) return;
 
@@ -152,8 +185,11 @@ public class OpenH264Encoder : IEncoder
         _running = false;
         _workSignal.Release();
         _worker?.Join(TimeSpan.FromSeconds(2));
-        _encoder?.Dispose();
-        _encoder = null;
+        lock (_encoderGate)
+        {
+            _encoder?.Dispose();
+            _encoder = null;
+        }
         _workSignal.Dispose();
     }
 }
