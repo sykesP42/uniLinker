@@ -207,3 +207,21 @@ Q9 Android 现有接收是否真机验证可用（影响工期最大）；Q11 �
 1. `PeerMesh.cs` RTP 时基由 `90000/30` 改为按 `EncodedPacket.TimestampUs` 真实增量推进（`4dd2e54`）——
    这是「60fps 选项从假变真」的唯一前提。
 2. Android / Web 移除公网 STUN（`da2e114`）。
+
+### 12.2 v0.4 技术路线实证轮（2026-11-14）
+
+> 起点是用户新增约束「做一个通用的，向下兼容支持安卓 8，v7a 32 位设备」，以及对选型②
+> 关键路线的实证调研（SIPSorcery 8.0.12 反编译取证 + 本机 MF 探针实测 + AAR 拆包 +
+> 官方文档核对）。全部证据与推理见 **`09-technical-route-research.md`**（v1.0，2026-11-14）。
+> 本节只登记对既有裁决的修正，不推翻 C-18 的质量方向。
+
+| 编号 | 原表述 | 修正后 | 证据 | 影响 |
+|---|---|---|---|---|
+| **C-25** | `02` §5 / README §7.5 C-21：「RTCP 反馈**只协商 goog-remb**」 | **不可实现**：SIPSorcery 8.0.12 的 SDP 输出只含 `transport-cc`（remb 行在源码中被注释）。改为「**按需 PLI**（`SendRtcpFeedback` + PSFB/PLI）+ **answer SDP 后处理**（补 `a=rtcp-fb: pli/nack/goog-remb` 行）+ **码率自适应走控制 DataChannel**（RTCP RR 统计 → 控制通道 → 发送端 `RtpSender.setParameters` / 编码器码率）」 | `09` §1.3/§1.4 [S][E] | `02` §5、`03` §2.5 MediaFeedback、`04` §3.x 同步修订 |
+| **C-26** | C-18/Q13：1080p60/≤80ms 为 P0 硬指标（全设备） | **维持 P0，适用域收窄**：1080p60/≤80ms 适用于有硬件编码能力的目标组合（Windows→Windows/浏览器）；新增「**v7a/低配 Android 档位 720p30 为该档位的 P0 基线**」——32 位设备内存上限、HW 编码 profile 变异与软渲染路径使 1080p60 在该档位物理不可达。四模式在该档位自动映射到保守预设，不静默降级 | `09` §2/§4.2/§5 + 用户 2026-11-14 追加约束（Android 8 + v7a 通用兼容） | `01` 需求池按设备档位拆分 P0；`06`/`08` 的 U11 模式用例补充 v7a 档位；`03` HardwareEncoder 归入 P1（条件：C-18 目标档位在该设备档位生效时才需要） |
+| **C-27** | `04` Android 实现指导未分 API 等级 | **补 API 26/33/34/35 条件分支清单**：通知渠道（26 必须）、`startForegroundService`（26 语义）、`startLocalOnlyHotspot`（26 起步 + 33+ `NEARBY_WIFI_DEVICES` / 26-32 定位权限）、`dispatchGesture`（24+）、FGS `mediaProjection` 类型（34+ 强制）、`POST_NOTIFICATIONS` 运行时权限（33+）、MediaProjection 每次 Session 授权 + Android 15 6h/天 FGS 上限。**minSdk 26 与 v7a 打包已满足**（gradle 现值；AAR 实测 `minSdkVersion="21"` + 含 armeabi-v7a） | `09` §2 [D][E] | `04` §3.3 Android 节重写时按此清单展开；`05` 门禁设备清单至少含一台 API 26-30 的 v7a 设备 |
+| —（新风险登记） | Q9 门禁未覆盖「无 HW AVC encoder 机型」 | **Android libwebrtc 的 H264 硬解码以同机存在 H264 硬编码为前提**（webrtc issue 42220261），无软解兜底——此类机型收不了 Windows H264 流。Q9 真机 PoC 必须含该场景；兜底（Windows 发 VP8，需 libvpx）仅登记候选，不进 P0 | `09` §3 [S][D] | `05` M0/G1 门禁清单 +1 场景 |
+| —（新实证） | Windows 解码路线未明确（RemoteRenderer Q14 反转后悬空） | **本机（26300 build）MF MFT 解码实测不可用**：`MFTEnumEx(0xFF)` 22 个激活对象 `ActivateObject` 全部 0xC00D36E6、属性全空；64 个注册 CLSID QI IMFTransform 0/64；MSH264DecoderMFT CoCreate 0x80040154。**零售版 Windows 不受影响**。设计为 `IDecoder` 抽象：OpenH264（H264Sharp，仓库已有依赖，android-arm32 .so 亦在包内）全平台保底 + MF 解码器运行时探针通过才注册 | `09` §4.1/§4.2 [E] | `03` RemoteRenderer 落地按此；软解 1080p30 无压力，1080p60 低端 CPU 吃紧（与 C-26 分档一致） |
+| —（新实证） | QUIC 列 P1 实验位 | **判出通用传输**：.NET 8+ 捆绑 msquic 依赖 Win11/Server 2022 SChannel，零售 Win10 直接「not supported」。维持 WebRTC 唯一 P0 传输；QUIC 保留实验槽并标注「仅 Win11+ / 需手装 libmsquic」 | `09` §5 [D] | `02` §5 R-QUIC、`03` Transport 节注记 |
+| —（实现注意项） | 多显示器同发未评估 | SIPSorcery **单 PC 仅支持单视频流发送**（`SendVideo` → `VideoStreamList[0]`）；多显示器同发需多 PC 或 track 轮换。多观众不受影响（每观众独立 PC） | `09` §1.3/§7 [S] | P1 实现注意项，不进 P0 |
+

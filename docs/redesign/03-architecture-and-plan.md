@@ -1340,4 +1340,17 @@ export function createStateSource(pc /* RTCPeerConnection */) {
 
 ---
 
+---
+
+## 13. 技术路线注记（2026-11-14，源自 `09-technical-route-research.md`）
+
+> 本节是 `09` 调研在本文架构条目上的**落点注记**，裁决正文见 `00` §12.2（C-25~C-27）。
+> 与本节冲突的旧表述（含 Q13/Q14 残留行）以 `00` §12 为准。
+
+1. **`RemoteRenderer.cs`（T02 ⑥ / 风险表 #4 / §8 Q14 行）**：无论接收端形态选 WebView2 还是原生 `MirrorView`，**解码层都按 `IDecoder` 抽象落地**：`OpenH264Decoder`（H264Sharp，仓库已有依赖，Android arm32 `.so` 亦在包内）为全平台保底；`MediaFoundationDecoder` 为运行时探针通过才注册的加速器——实测 build 26300 上 MF MFT 激活链路损坏（22 个解码激活对象全部无法激活），零售版 Windows 不受影响。SIPSorcery 接收入口为 `OnVideoFrameReceived(IPEndPoint, uint, byte[] frame, VideoFormat)`（完整 Annex-B 访问单元，marker 位出帧），注意把 `MaxReconstructedVideoFrameSize` 从默认 1MB 调大。渲染分档：1080p30 → `WriteableBitmap`；1080p60 → `SwapChainPanel`+D3D11。
+2. **`QuicDatagramTransport.cs`(P1)**：标注「**仅 Win11+/需手装 libmsquic**」——.NET 捆绑 msquic 依赖 Win11 SChannel，零售 Win10 直接「not supported」。不作为任何 P0 路径的兜底。
+3. **`PeerConnection.cs`（T02 修改项「RecvOnly 轨道、fmtp、RTCP 反馈」）**：RTCP 反馈按 **C-25** 落地——PLI 用 `SendRtcpFeedback(SDPMediaTypesEnum.video, new RTCPFeedback(…, PSFBFeedbackTypesEnum.PLI))` 手动构造；answer SDP 文本后处理补 `a=rtcp-fb: pli/nack/goog-remb` 行（SIPSorcery 自身只输出 transport-cc）；码率自适应经 §2.4 控制通道，不经 REMB。
+4. **Android 实现节（T02 ③⑤ / 04 §3.3）**：按 **C-27** 的 API 26/33/34/35 条件分支清单展开；`minSdk=26` 与 v7a 打包已满足（gradle 现值 + AAR 实测）；Q9 真机 PoC 增补「无 HW AVC encoder 机型」场景（H264 硬解码依赖同机硬编码，webrtc issue 42220261）。
+5. **多显示器同发**（风险表未列）：SIPSorcery 单 PC 单视频流发送——P1 若要同发需多 PC 或 track 轮换，实现注意项。
+
 （本文件仅做架构设计与计划，未修改任何源码、未写实现代码、未做 git 操作。）
