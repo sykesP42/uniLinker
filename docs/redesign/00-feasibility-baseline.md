@@ -225,3 +225,30 @@ Q9 Android 现有接收是否真机验证可用（影响工期最大）；Q11 �
 | —（新实证） | QUIC 列 P1 实验位 | **判出通用传输**：.NET 8+ 捆绑 msquic 依赖 Win11/Server 2022 SChannel，零售 Win10 直接「not supported」。维持 WebRTC 唯一 P0 传输；QUIC 保留实验槽并标注「仅 Win11+ / 需手装 libmsquic」 | `09` §5 [D] | `02` §5 R-QUIC、`03` Transport 节注记 |
 | —（实现注意项） | 多显示器同发未评估 | SIPSorcery **单 PC 仅支持单视频流发送**（`SendVideo` → `VideoStreamList[0]`）；多显示器同发需多 PC 或 track 轮换。多观众不受影响（每观众独立 PC） | `09` §1.3/§7 [S] | P1 实现注意项，不进 P0 |
 
+### 12.3 M0/G1 真机 PoC 记录 — 第一轮（2026-11-14/15，信令半程通过）
+
+> 设备：SM-P605（LineageOS 8.1 / API 27 / armeabi-v7a，骁龙 800）。
+> 环境：USB（`adb reverse tcp:9527 tcp:9527` 承载信令）、Windows 宿主 3.1.0、
+> APK 首次真实构建（minSdk 26 + v7a 确认可编译可运行）。
+> 新增调试通道：`am start --es connect "ip:port"` 直接触发接收流程（`09` §2 建议的 PoC 入口）。
+
+**信令半程：通过**。修复后真机日志证据：Android 侧 `PeerConnection created → Sending offer →
+Answer received, applying remote description`；Windows 侧 `Offer handled for 'android-…'
+capability=screen-capture answerSdpBytes=959`。双向 SDP 交换（offer/answer/fmtp 42e01f echo）落地。
+
+**新发现（修正 B-9 的细节归因）**：Q9 的「offer 从未发出」其机制与静态推断不同——
+`sendSdp` 挂在 **createOffer 的 observer** 的 `onSetSuccess` 里，而该回调**只为
+setLocalDescription 的 observer 触发**，原代码的 offer 在任何环境下都发不出去（不只是
+Android 侧配置问题）。另有三个叠加缺陷（已修）：`PeerConnectionFactory.initialize` 二次调用
+抛异常被静默吞掉（ERROR 后永远无法重试）、信令失败不回 ERROR（永远卡 CONNECTING）、
+`SurfaceViewRenderer` 未 `init` 即 `addSink`（必崩）。修复提交：Android 侧
+`fix(android): make the receive chain actually reach signaling`、Windows 侧 fmtp
+`packetization-mode=1;profile-level-id=42e01f`（B-4 的落地）。
+
+**工具链发现**：`adb forward` 与 `adb reverse` 方向易错（设备应用连宿主信令需 **reverse**）；
+本机 Gradle 9.0.0 分发包下载常年失败，wrapper 已钉到缓存的 8.9（AGP 8.7.3 兼容）并加
+Aliyun 镜像（google/mavenCentral/gradlePluginPortal）。
+
+**媒体半程：阻塞于设备无网络**——平板 Wi-Fi 处于 DISCONNECTED（无 IP），USB 只承载信令，
+ICE 无路由（判据 E 的 USB-only 媒体属 M8 范围）。待办：平板加入宿主所在 Wi-Fi（或宿主开启
+移动热点），随后复测 ICE → 出画 → M0/G1 结论。

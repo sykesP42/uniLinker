@@ -50,8 +50,13 @@ public class PeerConnection : IDisposable
 
             _pc = new RTCPeerConnection(config);
 
-            // Add H.264 video track (send only)
-            var videoFormat = new VideoFormat(VideoCodecsEnum.H264, 96, 90000);
+            // Add H.264 video track (send only). The fmtp string is echoed
+            // into the answer SDP verbatim: libwebrtc peers (Android/browser)
+            // require packetization-mode=1, and constrained-baseline 42e01f
+            // is the universally decodable profile (see 09 §1.2).
+            var videoFormat = new VideoFormat(
+                VideoCodecsEnum.H264, 96, 90000,
+                "level-asymmetry-allowed=1;packetization-mode=1;profile-level-id=42e01f");
             var videoTrack = new MediaStreamTrack(videoFormat, MediaStreamStatusEnum.SendOnly);
             _pc.addTrack(videoTrack);
 
