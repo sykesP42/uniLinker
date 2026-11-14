@@ -31,6 +31,10 @@ class MainActivity : ComponentActivity() {
             platform.start()
         }
 
+        // Debug/discovery deep link: `am start --es connect "ip:port"` starts
+        // the receive flow directly, bypassing manual UI input.
+        val connectAddress = intent?.getStringExtra("connect")
+
         setContent {
             UniLinkerTheme {
                 val viewModel: MainViewModel = viewModel {
@@ -57,6 +61,14 @@ class MainActivity : ComponentActivity() {
                 ) {
                     // Connected content - show video stream
                     ScreenMirrorTab(screenMirror)
+                }
+
+                // Delayed connect: wait for platform.start() + factory init.
+                connectAddress?.let { address ->
+                    kotlinx.coroutines.MainScope().launch {
+                        kotlinx.coroutines.delay(1500)
+                        viewModel.connectToAddress(address)
+                    }
                 }
             }
         }

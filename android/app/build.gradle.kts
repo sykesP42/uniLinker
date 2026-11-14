@@ -54,6 +54,7 @@ dependencies {
 
     // WebRTC (community build of Google WebRTC for Android)
     implementation("io.getstream:stream-webrtc-android:1.1.1")
+    implementation("androidx.compose.material:material-icons-extended")
 
     // JSON
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")

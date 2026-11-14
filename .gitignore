@@ -507,3 +507,7 @@ src/flutter_app/build/
 !docs/**/*.png
 skills-lock.json
 gui-test-screenshots/
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties

@@ -22,6 +22,7 @@ class WebRTCService(
 
     private val executor = Executors.newSingleThreadExecutor()
     private val eglBase = EglBase.create()
+    val eglBaseContext: EglBase.Context get() = eglBase.eglBaseContext
     private var peerConnectionFactory: PeerConnectionFactory? = null
     private var peerConnection: PeerConnection? = null
     private var videoTrack: VideoTrack? = null
@@ -44,7 +45,14 @@ class WebRTCService(
 
     private var videoTrackCallback: ((VideoTrack) -> Unit)? = null
 
+    @Volatile
+    private var gatheringComplete: Boolean = false
+
+    @Volatile
+    private var factoryInitialized: Boolean = false
+
     fun initialize() {
+        if (factoryInitialized) return
         val options = PeerConnectionFactory.InitializationOptions
             .builder(context)
             .setFieldTrials("WebRTC-H264HighProfile/Enabled/")
@@ -62,11 +70,20 @@ class WebRTCService(
                 disableNetworkMonitor = true
             })
             .createPeerConnectionFactory()
+
+        factoryInitialized = true
     }
 
     override fun connect(peer: PeerDevice) {
         connectionState.value = PeerConnectionState.CONNECTING
+        gatheringComplete = false
         createPeerConnection()
+        if (peerConnection == null) {
+            Log.e(TAG, "createPeerConnection returned null - cannot proceed")
+            connectionState.value = PeerConnectionState.ERROR
+            return
+        }
+        Log.i(TAG, "PeerConnection created, creating offer")
         createOffer()
     }
 
@@ -111,7 +128,11 @@ class WebRTCService(
                 }
             }
 
-            override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {}
+            override fun onIceGatheringChange(state: PeerConnection.IceGatheringState?) {
+                if (state == PeerConnection.IceGatheringState.COMPLETE) {
+                    gatheringComplete = true
+                }
+            }
             override fun onSignalingChange(state: PeerConnection.SignalingState?) {}
             override fun onIceConnectionReceivingChange(receiving: Boolean) {}
         }
@@ -127,13 +148,34 @@ class WebRTCService(
 
         pc.createOffer(object : SdpObserver {
             override fun onCreateSuccess(sdp: SessionDescription) {
-                pc.setLocalDescription(SimpleSdpObserver(), sdp)
+                // setLocalDescription triggers ICE gathering. The observer
+                // passed HERE is the one whose onSetSuccess fires when the
+                // local description lands - send the offer from there after
+                // gathering completes (with a fallback so a stalled gatherer
+                // cannot block signaling). Trickle candidates keep flowing
+                // via /ice regardless. (The createOffer observer's own
+                // onSetSuccess never fires for setLocalDescription - that
+                // was the original silent-send bug.)
+                pc.setLocalDescription(object : SdpObserver {
+                    override fun onSetSuccess() {
+                        scope.launch {
+                            withTimeoutOrNull(1500) {
+                                while (gatheringComplete != true) delay(50)
+                            }
+                            pc.localDescription?.let { sendSdp(it) }
+                        }
+                    }
+                    override fun onCreateSuccess(p0: SessionDescription?) {}
+                    override fun onSetFailure(error: String?) {
+                        Log.e(TAG, "setLocalDescription failed: $error")
+                        scope.launch { connectionState.value = PeerConnectionState.ERROR }
+                    }
+                    override fun onCreateFailure(error: String?) {
+                        Log.e(TAG, "local description creation failed: $error")
+                    }
+                }, sdp)
             }
-            override fun onSetSuccess() {
-                // Wait for ICE gathering, then send
-                scope.launch { delay(2000) }
-                pc.localDescription?.let { sendSdp(it) }
-            }
+            override fun onSetSuccess() {}
             override fun onCreateFailure(error: String) {
                 Log.e(TAG, "createOffer failed: $error")
                 connectionState.value = PeerConnectionState.ERROR
@@ -146,9 +188,15 @@ class WebRTCService(
         val json = JSONObject().apply {
             put("type", sdp.type.canonicalForm())
             put("sdp", sdp.description)
+            // The Windows server reads `fromPeerId` (camelCase) and matches
+            // /ice candidates against it; `peerId` alone is ignored there.
+            put("fromPeerId", peerId)
+            put("capability", "screen-capture")
             put("peerId", peerId)
         }
+        Log.i(TAG, "Sending offer to $signalingUrl/signaling")
         postJson("/signaling", json) { answerJson ->
+            Log.i(TAG, "Answer received, applying remote description")
             val remoteSdp = SessionDescription(
                 SessionDescription.Type.fromCanonicalForm(answerJson.getString("type")),
                 answerJson.getString("sdp"),
@@ -174,9 +222,14 @@ class WebRTCService(
 
         okHttpClient.newCall(Request.Builder().url(url).post(body).build())
             .enqueue(object : Callback {
-                override fun onFailure(call: Call, e: java.io.IOException) {
-                    Log.e(TAG, "POST $path failed: ${e.message}")
+            override fun onFailure(call: Call, e: java.io.IOException) {
+                Log.e(TAG, "POST $path failed: ${e.message}")
+                if (path == "/signaling") {
+                    scope.launch {
+                        connectionState.value = PeerConnectionState.ERROR
+                    }
                 }
+            }
                 override fun onResponse(call: Call, response: Response) {
                     response.body?.string()?.let { body ->
                         if (body.isNotEmpty()) {
@@ -224,9 +277,13 @@ class WebRTCService(
 
     private class SimpleSdpObserver : SdpObserver {
         override fun onCreateSuccess(p0: SessionDescription?) {}
-        override fun onSetSuccess() {}
+        override fun onSetSuccess() {
+            Log.i(TAG, "Remote description applied")
+        }
         override fun onCreateFailure(p0: String?) {}
-        override fun onSetFailure(p0: String?) {}
+        override fun onSetFailure(error: String?) {
+            Log.e(TAG, "Remote description failed: $error")
+        }
     }
 
     companion object {

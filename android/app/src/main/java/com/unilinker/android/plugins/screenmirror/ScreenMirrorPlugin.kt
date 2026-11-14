@@ -6,6 +6,7 @@ import com.unilinker.android.sdk.models.PeerDevice
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import org.webrtc.EglBase
 import org.webrtc.VideoTrack
 
 class ScreenMirrorPlugin : IPlugin {
@@ -30,6 +31,11 @@ class ScreenMirrorPlugin : IPlugin {
 
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error
+
+    /// EglBase context of the active service (null before the first connect);
+    /// the renderer shares it to avoid per-surface context overhead.
+    val eglBaseContext: EglBase.Context?
+        get() = webRtcService?.eglBaseContext
 
     private val scope = CoroutineScope(Dispatchers.Main + SupervisorJob())
 
@@ -88,6 +94,7 @@ class ScreenMirrorPlugin : IPlugin {
             service.connect(device)
 
         } catch (e: Exception) {
+            android.util.Log.e("UniLinkerWebRTC", "connectTo failed: ${e.message}")
             _connectionState.value = PeerConnectionState.ERROR
             _error.value = e.message ?: "初始化失败"
         }

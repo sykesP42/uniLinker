@@ -17,6 +17,7 @@ import androidx.compose.ui.viewinterop.AndroidView
 import com.unilinker.android.sdk.PeerConnectionState
 import com.unilinker.android.sdk.models.PeerDevice
 import com.unilinker.android.sdk.models.StreamStats
+import org.webrtc.EglBase
 import org.webrtc.RendererCommon
 import org.webrtc.SurfaceViewRenderer
 import org.webrtc.VideoTrack
@@ -48,6 +49,7 @@ fun ScreenMirrorTab(plugin: ScreenMirrorPlugin) {
                 connectionState = connectionState,
                 stats = stats,
                 videoTrack = videoTrack,
+                eglBaseContext = plugin.eglBaseContext,
                 onDisconnect = {
                     plugin.disconnect()
                     connectedDeviceId = null
@@ -78,6 +80,7 @@ private fun StreamView(
     connectionState: PeerConnectionState,
     stats: StreamStats,
     videoTrack: VideoTrack?,
+    eglBaseContext: EglBase.Context?,
     onDisconnect: () -> Unit,
 ) {
     Box(modifier = Modifier.fillMaxSize()) {
@@ -100,16 +103,31 @@ private fun StreamView(
 
             PeerConnectionState.CONNECTED -> {
                 if (videoTrack != null) {
+                    // The renderer must be initialized before addSink; sharing
+                    // the factory's EglBase context avoids a per-renderer
+                    // context and the repeated addSink that recomposition
+                    // would otherwise cause.
+                    var renderer by remember { mutableStateOf<SurfaceViewRenderer?>(null) }
                     AndroidView(
                         modifier = Modifier.fillMaxSize(),
                         factory = { ctx ->
                             SurfaceViewRenderer(ctx).apply {
+                                init(eglBaseContext, null)
                                 setEnableHardwareScaler(true)
                                 setScalingType(RendererCommon.ScalingType.SCALE_ASPECT_FIT)
+                                renderer = this
                             }
                         },
-                        update = { renderer -> videoTrack.addSink(renderer) },
+                        update = { },
                     )
+                    LaunchedEffect(videoTrack, renderer) {
+                        val track = videoTrack ?: return@LaunchedEffect
+                        val r = renderer ?: return@LaunchedEffect
+                        track.addSink(r)
+                    }
+                    DisposableEffect(Unit) {
+                        onDispose { renderer?.release() }
+                    }
                 }
 
                 // Stats overlay
