@@ -232,7 +232,13 @@ public class SignalingServer : IDisposable
             return;
         }
 
-        pc.SetRemoteDescriptionAsync(msg.Sdp, isOffer: true);
+        // Strip loopback candidates from the remote offer: libwebrtc includes
+        // 127.0.0.1/::1 host candidates, and SIPSorcery's ICE pairs them
+        // (loopback-to-loopback across machines never works) while starving
+        // the viable pairs - the observed CHECKING->FAILED with zero packets.
+        var offerSdp = FilterLoopbackCandidates(msg.Sdp);
+
+        pc.SetRemoteDescriptionAsync(offerSdp, isOffer: true);
 
         // Register the SAME connection in the mesh so plugin channels are
         // bound to the negotiated peer connection, not a fresh dead one.
@@ -295,7 +301,9 @@ public class SignalingServer : IDisposable
             }
         }
 
-        var localSdp = pc.GetLocalSdp() ?? "";
+        // Strip our own loopback candidates from the answer for the same
+        // reason - the peer would starve the real pairs otherwise.
+        var localSdp = FilterLoopbackCandidates(pc.GetLocalSdp() ?? "");
         Log.Info($"Offer handled for '{peerId}' capability={msg.Capability} answerSdpBytes={localSdp.Length} offerBytes={msg.Sdp.Length}");
         var offerCands = msg.Sdp.Split('\n').Where(l => l.TrimStart().StartsWith("a=candidate")).ToList();
         Log.Info($"[offer] candidateLines={offerCands.Count}");
@@ -322,6 +330,22 @@ public class SignalingServer : IDisposable
         };
 
         await WriteJsonAsync(stream, 200, answer, withCors: true);
+    }
+
+
+    /// <summary>
+    /// Remove loopback host candidates (127.0.0.1/::1) from an SDP. Cross-machine
+    /// loopback-to-loopback ICE pairs never work and starve the viable pairs -
+    /// the observed CHECKING->FAILED with zero STUN packets. Normalizes CR/LF.
+    /// </summary>
+    internal static string FilterLoopbackCandidates(string sdp)
+    {
+        var lines = sdp.Replace("\r\n", "\n").Split('\n');
+        var kept = lines
+            .Where(l => !l.TrimStart().StartsWith("a=candidate:") ||
+                        (!l.Contains("127.0.0.1") && !l.Contains("::1")))
+            .ToList();
+        return string.Join("\r\n", kept);
     }
 
     private async Task HandleIceCandidateAsync(HttpRequest request)

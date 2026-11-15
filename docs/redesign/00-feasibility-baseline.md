@@ -294,3 +294,48 @@ libwebrtc(controlling) 的 ICE agent 双方都不发检查包**。候选、凭�
    SIPSorcery controlled 角色对 libwebrtc aggressive nomination 的处理；
 3. 备选：Android 侧换用 Chrome 同源方案（WebView2/WebChromeClient 承载
    PC 的 viewer 页，复用浏览器已验证的路径，绕开 stream-webrtc 互操作）。
+
+### 12.5 M0/G1 真机 PoC 记录 — 第三轮：loopback 过滤与 SIPSorcery 内部日志（2026-11-15 深夜）
+
+> SIPSorcery 内部日志注入成功（反射把文件 logger 写入 `SIPSorcery.Sys.Log.Logger`，
+> 绕开 WinUI 中无法路由的 MEL 静态工厂）。决定性发现：
+
+**SIPSorcery ICE 会话日志（192.168.42.129 ↔ 192.168.42.39 直连 0ms、防火墙全关）**：
+```
+Successfully bound RTP socket 0.0.0.0:58284.
+RTPChannel for 0.0.0.0:58284 started.
+[setRemoteDescription] - Extension:[2/3/4 …]     ← offer 处理正常
+RTP ICE Channel remote credentials set.          ← 远端凭据已设置
+RTP ICE Channel discovered 8 local candidates.   ← 本地候选发现正常
+ICE RTP channel failed to connect as no checklist entries became available within 16s.
+```
+
+**诊断结论**：SIPSorcery 的 ICE 会话发现了 8 个本地候选、设置了远端凭据，
+但 **checklist 一个条目都没形成**——即远端候选（Android offer 中的
+192.168.42.129 等真实候选，已实证存在于 setRemoteDescription 收到的 SDP 中）
+没有被配对。Android 侧 libwebrtc 也没有发出任何 STUN 检查（pktmon 双向零包）。
+这是 SIPSorcery ICE 会话与 libwebrtc offer 之间的**协议级配对互操作缺陷**
+（疑似：SIPSorcery 对 libwebrtc 风格候选（带 network-id/network-cost 扩展属性）
+的解析，或其 checklist 构建时序），需要 SIPSorcery 源码级调试。
+
+**已完成的规避修复（本轮）**：
+1. 服务器对 offer/answer 双向过滤 loopback 候选（防 loopback↔loopback
+   跨机配对饿死真实候选对——SIPSorcery 日志实证它把检查全发给了
+   127.0.0.1:60436 这个 Android loopback 候选）；
+2. `FilterLoopbackCandidates` 助手（规范化 CRLF）；
+3. SIPSorcery 内部日志注入（`SipFileLoggerProvider.InjectIntoSipsorcery`,
+   反射写 `SIPSorcery.Sys.Log.Logger`,必须在 Platform 启动后调用——
+   程序集需先加载）。
+
+**下一步（按优先级）**：
+1. **SIPSorcery 源码级调试**：用 dnspy/源码单步其 IceSession 配对逻辑，
+   定位 libwebrtc offer 候选未被配对的确切原因（怀疑点：候选的
+   `network-id`/`network-cost` 扩展属性解析、TCP 候选协议字段、或
+   checklist 构建需显式触发）；
+2. **WebView2 兜底方案（`00` §12.4 已记录）**：Android 端用
+   WebChromeClient 承载 PC 的 viewer 页（复用已验证的浏览器路径，
+   绕开 stream-webrtc 与 SIPSorcery 的 ICE 互操作），可作为
+   M0/G1 的替代达成路径；
+3. 真机浏览器对照已通过环境验证：平板 Chrome 打开 viewer 页
+   （信令/页面加载正常），仅 ICE 同样失败——佐证问题在 ICE 互操作
+   而非信令。
