@@ -64,6 +64,13 @@ public partial class App : Application
         try
         {
             await _platform.StartAsync();
+
+            // Inject after Platform start: the SIPSorcery assembly is loaded
+            // by then (its internal Log is what we need to capture).
+            var sipLogProvider = new SipFileLoggerProvider(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "uniLinker", "sipsorcery.log"));
+            sipLogProvider.InjectIntoSipsorcery();
         }
         catch (Exception ex)
         {
