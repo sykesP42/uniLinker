@@ -4,11 +4,9 @@ import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.runtime.*
-import androidx.lifecycle.viewmodel.compose.viewModel
 import com.unilinker.android.core.Platform
 import com.unilinker.android.plugins.screenmirror.ScreenMirrorPlugin
 import com.unilinker.android.plugins.screenmirror.ScreenMirrorTab
-import com.unilinker.android.sdk.PeerConnectionState
 import com.unilinker.android.ui.MainViewModel
 import com.unilinker.android.ui.ModernMainScreen
 import com.unilinker.android.ui.theme.UniLinkerTheme
@@ -20,6 +18,8 @@ class MainActivity : ComponentActivity() {
 
     private val platform by lazy { Platform(applicationContext) }
     private val screenMirror = ScreenMirrorPlugin()
+    private val mainViewModel by lazy { MainViewModel(platform, screenMirror) }
+    private var connectFired = false
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -27,21 +27,25 @@ class MainActivity : ComponentActivity() {
 
         platform.registerPlugin(screenMirror)
 
-        kotlinx.coroutines.MainScope().launch {
+        MainScope().launch {
             platform.start()
         }
 
         // Debug/discovery deep link: `am start --es connect "ip:port"` starts
-        // the receive flow directly, bypassing manual UI input.
+        // the receive flow directly, bypassing manual UI input. Fired exactly
+        // once, outside composition, after the platform settles.
         val connectAddress = intent?.getStringExtra("connect")
+        if (connectAddress != null && !connectFired) {
+            connectFired = true
+            MainScope().launch {
+                kotlinx.coroutines.delay(2500)
+                mainViewModel.connectToAddress(connectAddress)
+            }
+        }
 
         setContent {
             UniLinkerTheme {
-                val viewModel: MainViewModel = viewModel {
-                    MainViewModel(platform, screenMirror)
-                }
-
-                val uiState by viewModel.uiState.collectAsState()
+                val uiState by mainViewModel.uiState.collectAsState()
                 val connectionState by screenMirror.connectionState.collectAsState()
                 val errorMessage by screenMirror.error.collectAsState()
 
@@ -52,23 +56,15 @@ class MainActivity : ComponentActivity() {
                     devices = uiState.devices,
                     selectedStrategy = uiState.activeStrategyId,
                     errorMessage = errorMessage ?: uiState.error,
-                    onStrategyChange = { viewModel.selectStrategy(it) },
-                    onConnect = { device -> viewModel.connectToDevice(device) },
-                    onManualConnect = { address -> viewModel.connectToAddress(address) },
-                    onDisconnect = { viewModel.disconnect() },
-                    onRefresh = { viewModel.selectStrategy(uiState.activeStrategyId) },
+                    onStrategyChange = { mainViewModel.selectStrategy(it) },
+                    onConnect = { device -> mainViewModel.connectToDevice(device) },
+                    onManualConnect = { address -> mainViewModel.connectToAddress(address) },
+                    onDisconnect = { mainViewModel.disconnect() },
+                    onRefresh = { mainViewModel.selectStrategy(uiState.activeStrategyId) },
                     onClearError = { screenMirror.clearError() }
                 ) {
                     // Connected content - show video stream
                     ScreenMirrorTab(screenMirror)
-                }
-
-                // Delayed connect: wait for platform.start() + factory init.
-                connectAddress?.let { address ->
-                    kotlinx.coroutines.MainScope().launch {
-                        kotlinx.coroutines.delay(1500)
-                        viewModel.connectToAddress(address)
-                    }
                 }
             }
         }

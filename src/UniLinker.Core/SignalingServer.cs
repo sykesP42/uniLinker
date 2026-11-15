@@ -296,7 +296,21 @@ public class SignalingServer : IDisposable
         }
 
         var localSdp = pc.GetLocalSdp() ?? "";
-        Log.Info($"Offer handled for '{peerId}' capability={msg.Capability} answerSdpBytes={localSdp.Length}");
+        Log.Info($"Offer handled for '{peerId}' capability={msg.Capability} answerSdpBytes={localSdp.Length} offerBytes={msg.Sdp.Length}");
+        var offerCands = msg.Sdp.Split('\n').Where(l => l.TrimStart().StartsWith("a=candidate")).ToList();
+        Log.Info($"[offer] candidateLines={offerCands.Count}");
+        foreach (var l in offerCands.Take(8))
+        {
+            Log.Info($"[offer-cand] {l.Trim()}");
+        }
+        foreach (var line in localSdp.Split("\n"))
+        {
+            var l = line.Trim();
+            if (l.StartsWith("a=candidate") || l.StartsWith("a=rtpmap") || l.StartsWith("a=fmtp") || l.StartsWith("m="))
+            {
+                Log.Info($"[answer] {l}");
+            }
+        }
 
         // Remember the peer's real address for the UI (available after the
         // socket round trip; the request handler passes it via Body marker).

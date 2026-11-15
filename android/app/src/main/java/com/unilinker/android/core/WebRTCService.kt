@@ -59,6 +59,18 @@ class WebRTCService(
             .createInitializationOptions()
         PeerConnectionFactory.initialize(options)
 
+        // Deep ICE diagnostics (PoC): verbose native logging of every STUN
+        // check. Requires the native library (loaded by initialize); also
+        // process-wide-once - a second call throws UnsatisfiedLinkError.
+        if (!nativeLoggingEnabled) {
+            try {
+                org.webrtc.Logging.enableLogToDebugOutput(org.webrtc.Logging.Severity.LS_VERBOSE)
+                nativeLoggingEnabled = true
+            } catch (t: Throwable) {
+                // Logging stays off if the native side refuses; not fatal.
+            }
+        }
+
         val encoderFactory = DefaultVideoEncoderFactory(eglBase.eglBaseContext, true, true)
         val decoderFactory = DefaultVideoDecoderFactory(eglBase.eglBaseContext)
 
@@ -67,7 +79,7 @@ class WebRTCService(
             .setVideoDecoderFactory(decoderFactory)
             .setOptions(PeerConnectionFactory.Options().apply {
                 disableEncryption = false
-                disableNetworkMonitor = true
+                disableNetworkMonitor = false
             })
             .createPeerConnectionFactory()
 
@@ -103,6 +115,7 @@ class WebRTCService(
 
             override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>?) {}
             override fun onIceConnectionChange(state: PeerConnection.IceConnectionState?) {
+                Log.i(TAG, "ICE state: $state")
                 when (state) {
                     PeerConnection.IceConnectionState.CONNECTED ->
                         connectionState.value = PeerConnectionState.CONNECTED
@@ -159,7 +172,7 @@ class WebRTCService(
                 pc.setLocalDescription(object : SdpObserver {
                     override fun onSetSuccess() {
                         scope.launch {
-                            withTimeoutOrNull(1500) {
+                            withTimeoutOrNull(8000) {
                                 while (gatheringComplete != true) delay(50)
                             }
                             pc.localDescription?.let { sendSdp(it) }
@@ -288,6 +301,10 @@ class WebRTCService(
 
     companion object {
         private const val TAG = "UniLinkerWebRTC"
+
+        @Volatile
+        var nativeLoggingEnabled: Boolean = false
+            private set
     }
 
     private val context: android.content.Context

@@ -331,6 +331,10 @@ public class PeerMesh : IPeerMesh, IDisposable
                 peer.State = PeerState.Disconnected;
                 PeerDisconnected?.Invoke(peer);
                 RemoveConnection(peer.Id);
+                // Dispose so every channel on this connection fires OnClose -
+                // otherwise plugins keep stale viewer sessions alive forever
+                // (encoder running with nobody watching).
+                try { pc.Dispose(); } catch { }
             }
         };
 

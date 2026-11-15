@@ -252,3 +252,45 @@ Aliyun 镜像（google/mavenCentral/gradlePluginPortal）。
 **媒体半程：阻塞于设备无网络**——平板 Wi-Fi 处于 DISCONNECTED（无 IP），USB 只承载信令，
 ICE 无路由（判据 E 的 USB-only 媒体属 M8 范围）。待办：平板加入宿主所在 Wi-Fi（或宿主开启
 移动热点），随后复测 ICE → 出画 → M0/G1 结论。
+
+### 12.4 M0/G1 真机 PoC 记录 — 第二轮：USB 网络共享直连（2026-11-15）
+
+> 平板 USB 网络共享（RNDIS）建立真实 IP 网络：平板 rndis0 = 192.168.42.129，
+> PC 以太网 3 = 192.168.42.39，RTT 0ms，防火墙全关 + UDP 全端口放行，
+> 单实例宿主。环境干扰全部消除后，ICE 仍失败。
+
+**信令半程：稳定通过**。offer/answer 双向落地（offer 3772B 含 4 候选：
+rndis0 192.168.42.129 / loopback×2；answer 1540B 含 8 候选含 192.168.42.39）。
+候选交换在 SDP 两侧完全正确。
+
+**媒体半程：ICE CHECKING → FAILED（新实证）**：
+1. PC 侧 RTP socket 绑定 0.0.0.0（wildcard ✓，`X_BindAddress = IPAddress.Any` 生效）；
+   平板侧 libwebrtc socket 按 per-interface 绑定 ✓（/proc/net/udp 实证）。
+2. pktmon 内核抓包（40s 全窗覆盖 CHECKING→FAILED）：**零 STUN 包**
+   —— Android libwebrtc 从未发出 binding request，Windows SIPSorcery 也从未发出。
+   同窗口 DNS/mDNS 流动正常（链路本身可用）。
+3. libwebrtc verbose 日志：`Sorting 0 available connections` —— 远端候选从未配对成功。
+
+**结论修正（B-9 链的第三层）**：出画阻断不止信令——**SIPSorcery(controlled) ↔
+libwebrtc(controlling) 的 ICE agent 双方都不发检查包**。候选、凭据、socket 绑定
+全部正确仍不发包，指向两库间 ICE agent 启动时序/协议互操作问题
+（对照：浏览器↔SIPSorcery 同角色流程正常——但浏览器在 PC 本机，无法区分
+"同机 loopback 特殊性" 与 "角色正确性"）。
+
+**新增修复（本轮）**：
+- `X_BindAddress = IPAddress.Any`（多宿主主机 RTP socket 绑 wildcard，
+  否则只绑默认路由地址、其余接口候选全为假候选）+ `X_ICEIncludeAllInterfaceAddresses = true`；
+- Android `disableNetworkMonitor = false`（`03` T03 步骤① 的落地）；
+- Android offer 发送前的 gathering 等待 1500ms → 8000ms（SDP 内嵌全量候选，
+  对齐浏览器流程）；
+- 深链 `--es connect` 移出 Compose 组合作用域（每次重组触发 connect 的 bug）；
+- `enableLogToDebugOutput` 移到 native 库加载后 + 进程级守卫（UnsatisfiedLinkError）。
+
+**下一步（按优先级）**：
+1. SIPSorcery ICE 日志落地（MEL provider 的 SetCurrentFactory 路由未生效，
+   需验证 `Microsoft.Extensions.Logging.LogFactory` 的 provider 注册时机），
+   或用 Wireshark 在 PC 网卡层抓全量（含 loopback:  Rawshark/npcap）；
+2. 对照实验：同机 loopback（浏览器 ✓）与跨机（✗）的差别 —— 优先怀疑
+   SIPSorcery controlled 角色对 libwebrtc aggressive nomination 的处理；
+3. 备选：Android 侧换用 Chrome 同源方案（WebView2/WebChromeClient 承载
+   PC 的 viewer 页，复用浏览器已验证的路径，绕开 stream-webrtc 互操作）。

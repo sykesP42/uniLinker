@@ -45,7 +45,13 @@ public class PeerConnection : IDisposable
         {
             var config = new RTCConfiguration
             {
-                iceServers = new List<RTCIceServer>() // LAN only, no STUN needed initially
+                iceServers = new List<RTCIceServer>(), // LAN only, no STUN needed initially
+                // The PC is multi-homed (Ethernet/campus/ZeroTier/hotspot): bind
+                // the RTP socket to 0.0.0.0 and offer candidates on ALL
+                // interfaces - the default binds to the default-route address
+                // only, which makes every candidate except that one a lie.
+                X_BindAddress = IPAddress.Any,
+                X_ICEIncludeAllInterfaceAddresses = true,
             };
 
             _pc = new RTCPeerConnection(config);

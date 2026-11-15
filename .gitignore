@@ -511,3 +511,10 @@ android/.gradle/
 android/build/
 android/app/build/
 android/local.properties
+android/.gradle/
+android/build/
+android/app/build/
+**/capture.etl
+android/.gradle/
+android/build/
+android/app/build/
