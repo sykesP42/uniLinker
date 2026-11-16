@@ -28,3 +28,8 @@ jobs:
 
       - name: Build
         run: msbuild UniLinker.sln -p:Configuration=Debug -m -v:minimal -nologo
+
+      # Unit gate (no GUI needed). The Playwright E2E suite is NOT run here:
+      # it boots the real WinUI app and needs a display.
+      - name: Unit tests
+        run: dotnet test tests/UniLinker.Core.Tests --configuration Debug --no-restore --logger "console;verbosity=normal"
