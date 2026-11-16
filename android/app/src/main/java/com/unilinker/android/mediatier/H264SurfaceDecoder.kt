@@ -9,6 +9,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.launch
 
 /**
@@ -22,6 +23,10 @@ class H264SurfaceDecoder(surface: Surface) : AutoCloseable {
     private val codec: MediaCodec
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var drainJob: Job? = null
+
+    /** Actual decoded stream size (from INFO_OUTPUT_FORMAT_CHANGED) — the UI
+     *  uses it to aspect-fit the SurfaceView. Null until the first format. */
+    val streamSize = MutableStateFlow<Pair<Int, Int>?>(null)
 
     @Volatile var decodedFrames: Int = 0
         private set
@@ -58,7 +63,19 @@ class H264SurfaceDecoder(surface: Surface) : AutoCloseable {
                     codec.releaseOutputBuffer(out, true) // render to surface
                     decodedFrames++
                 }
-                out == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> { /* new size */ }
+                out == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
+                    val f = codec.outputFormat
+                    val w = f.getInteger(MediaFormat.KEY_WIDTH)
+                    val h = f.getInteger(MediaFormat.KEY_HEIGHT)
+                    // Crop rect carries the REAL video size on some decoders.
+                    if (f.containsKey("crop-left") && f.containsKey("crop-right")) {
+                        val cw = f.getInteger("crop-right") - f.getInteger("crop-left") + 1
+                        val ch = f.getInteger("crop-bottom") - f.getInteger("crop-top") + 1
+                        streamSize.value = Pair(cw, ch)
+                    } else {
+                        streamSize.value = Pair(w, h)
+                    }
+                }
                 else -> { /* try again later */ }
             }
         }

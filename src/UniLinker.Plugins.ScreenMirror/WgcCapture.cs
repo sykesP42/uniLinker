@@ -101,7 +101,7 @@ public class WgcCapture : ICapture
             _session.StartCapture();
             _pollTimer = new System.Threading.Timer(
                 _ => ReadLatestFrame(), null, TimeSpan.Zero,
-                TimeSpan.FromMilliseconds(1000.0 / _fps));
+                TimeSpan.FromMilliseconds(8));
             Log.Info($"WGC: session started (polling @ {_fps}fps), thread={Environment.CurrentManagedThreadId}");
 
             Log.Info("WGC capture started (staging readback)");
@@ -118,20 +118,19 @@ public class WgcCapture : ICapture
     {
         if (!_isCapturing || _framePool == null) return;
 
-        // Skip frames arriving faster than the target fps: the GPU-side copy
-        // plus CPU readback dominates the pipeline cost, so dropping here is
-        // far cheaper than encoding and discarding afterwards.
-        var nowTicks = Environment.TickCount64;
-        if (nowTicks - _lastReadbackTicks < _minReadbackIntervalMs)
-        {
-            return;
-        }
-        _lastReadbackTicks = nowTicks;
-
+        // DRAIN-TO-LATEST: poll fast (8 ms) and consume everything the pool
+        // holds, processing only the newest frame. This caps the capture-side
+        // latency at one poll interval instead of one throttle interval, and
+        // it cannot fall behind — a burst of frames collapses into the latest.
+        // The fps cap is applied AFTER the drain, on the encode side.
         try
         {
-            var readbackStart = System.Diagnostics.Stopwatch.GetTimestamp();
-            using var frame = _framePool.TryGetNextFrame();
+            Direct3D11CaptureFrame? frame = null;
+            while (_framePool.TryGetNextFrame() is { } f)
+            {
+                frame?.Dispose();
+                frame = f;
+            }
             if (frame == null)
             {
                 // An empty pool for this long means the DWM→pool copy pipeline
@@ -149,6 +148,32 @@ public class WgcCapture : ICapture
             }
             _emptyPolls = 0;
 
+            // fps cap AFTER the drain: dropping here skips the expensive
+            // readback, while the drain itself keeps the pool clean so the
+            // NEXT frame is always the newest.
+            var nowTicks = Environment.TickCount64;
+            if (nowTicks - _lastReadbackTicks < _minReadbackIntervalMs)
+            {
+                frame.Dispose();
+                return;
+            }
+            _lastReadbackTicks = nowTicks;
+
+            var readbackStart = System.Diagnostics.Stopwatch.GetTimestamp();
+            using (frame)
+            {
+                DeliverFrame(frame, readbackStart);
+            }
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"WGC frame error: {ex}");
+        }
+    }
+
+    private void DeliverFrame(Direct3D11CaptureFrame frame, long readbackStart)
+    {
+        {
             var surface = frame.Surface;
 
             // Get the underlying ID3D11Texture2D from WinRT IDirect3DSurface.
@@ -243,10 +268,6 @@ public class WgcCapture : ICapture
                 // dxgiSurfacePtr (from GetInterface) is released manually.
                 if (dxgiSurfacePtr != nint.Zero) Marshal.Release(dxgiSurfacePtr);
             }
-        }
-        catch (Exception ex)
-        {
-            Log.Error($"WGC frame error: {ex}");
         }
     }
 

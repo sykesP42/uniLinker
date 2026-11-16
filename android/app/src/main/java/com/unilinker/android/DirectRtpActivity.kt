@@ -6,6 +6,7 @@ import android.view.SurfaceView
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -23,6 +24,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Modifier
+import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -110,8 +112,22 @@ fun DirectRtpScreen(initialAddress: String?) {
         modifier = Modifier.fillMaxSize().padding(12.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        AndroidView(
+        // Aspect-fit the video surface to the ACTUAL stream size reported by
+        // the decoder (INFO_OUTPUT_FORMAT_CHANGED) — no stretching, no crops.
+        val streamSize by decoder?.streamSize?.collectAsState()
+            ?: remember { mutableStateOf<Pair<Int, Int>?>(null) }
+        Box(
             modifier = Modifier.fillMaxWidth().weight(1f),
+            contentAlignment = androidx.compose.ui.Alignment.Center,
+        ) {
+        AndroidView(
+            modifier = Modifier
+                .fillMaxWidth()
+                .then(
+                    streamSize?.let { (w, h) ->
+                        Modifier.aspectRatio(w.toFloat() / h.toFloat())
+                    } ?: Modifier.fillMaxSize()
+                ),
             factory = { ctx ->
                 SurfaceView(ctx).apply {
                     // Compose window backgrounds sit ABOVE the default SurfaceView
@@ -137,6 +153,7 @@ fun DirectRtpScreen(initialAddress: String?) {
                 }
             },
         )
+        }
 
         Text(
             text = statusText,
