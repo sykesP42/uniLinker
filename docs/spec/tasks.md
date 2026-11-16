@@ -24,11 +24,17 @@
 | M2-T4 | 回归验证 | 全量验证记录 | 单测 22/22；E2E SM01–05 5/5 + FT01–03 3/3；curl 契约基线逐项过（OPTIONS 204/静态 200/400 文案逐字节/ice-pending 404/netstat 双栈）；中途抓到 2 个真坑（OPTIONS 路由候选 405、UseWebRoot NotSupportedException）已修并沉淀 | 红灯合并 | ✅ |
 | M2-T5 | 沉淀 | architecture.md 更新；tasks 勾选；记忆 | 文档与实际一致 | 漏记 | ✅ |
 
-## M3：直连 RTP 档（spec：M3-direct-rtp.md，M2 后启动）
+## M3：直连 RTP 档（spec：M3-direct-rtp.md）
 
-Windows 侧 RTPSession+SDPSDES 发送链（证据已由 M2-T1 探针锁定）+ Android
-侧 SRTP/depacketizer/MediaCodec 接收链（RFC 向量单测先行）。验收：平板
-≥10s 稳定出画 + clumsy 2% 丢包自愈。
+| # | 任务 | 产出 | 验收 | 状态 |
+|---|------|------|------|------|
+| M3-T1/T2 | Windows 发送链 | DirectRtpChannel（RTPSession SDES）+ 控制面 type=rtp + 跨语言 fixture | C# 环回往返 + 互操作诊断绿（1af41a5） | ✅ |
+| M3 互操作诊断 | outbound key 根因 | SIPSorcery 用 OFFER 里宣布的 key 保护出向包（非外部注入 key）→ CryptoLine 改从 offer 提取；C# 自证往返门禁 | SenderOutput_unprotects_with_own_crypto_line 绿（cd091e4） | ✅ |
+| M3-T3 | Android SRTP/FU-A | jitsi-srtp 包装 + RFC 6184 depacketizer + JVM fixture 测试 | 跨实现闭环：Windows 密文 → JVM 解保 → 重组逐字节还原（cd091e4） | ✅ |
+| M3-T4 | Android 接收引擎 | DirectRtpReceiver（UDP loop）+ DirectRtpClient（控制面）+ H264SurfaceDecoder（MediaCodec）+ DirectRtpActivity（deep link `--es connect`） | assembleDebug + JVM 测试绿；**设备验收（≥10s 出画 + clumsy 2% 自愈）待平板上线** | ✅ 编译级 / ⬜ 设备 |
+| M3-T5 | 沉淀 | architecture.md / tasks / 记忆 / push | CI 绿 | ✅ |
+
+**互操作关键发现（沉淀）**：① SIPSorcery 出向保护 key 来自其 OFFER 宣布（外部注入 key 无效——诊断测试实证）；② SRTP payload 全密文，长度证据（每包 +10B tag）是判定保护是否生效的唯一可靠信号；③ RTCP SR 周期 ~5s，短窗口抓包别假设必现。
 
 ## 依赖顺序
 
