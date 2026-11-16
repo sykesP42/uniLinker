@@ -37,7 +37,13 @@ class DirectRtpReceiver(
     @Volatile var receivedPackets: Int = 0
         private set
 
+    @Volatile var lostPackets: Int = 0
+        private set
+
     @Volatile var authFailures: Int = 0
+        private set
+
+    @Volatile var bytesReceived: Long = 0
         private set
 
     fun start() {
@@ -91,10 +97,12 @@ class DirectRtpReceiver(
         if (lastSeq >= 0) {
             val gap = (seq - lastSeq - 1 + 65536) % 65536
             if (gap > 0) {
+                lostPackets += gap
                 android.util.Log.w("DirectRtp", "seq gap $lastSeq->$seq (lost $gap pkts)")
             }
         }
         lastSeq = seq
+        bytesReceived += bytes.size
 
         val marker = (clear[1].toInt() and 0x80) != 0
         nalBuffer.addAll(depacketizer.push(H264RtpDepacketizer.rtpPayload(clear)))

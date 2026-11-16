@@ -50,6 +50,7 @@ internal static class RtpTiming
     }
 }
 
+
 /// <summary>
 /// Direct-RTP media channel (M3, docs/spec/M3-direct-rtp.md): fixed-endpoint
 /// UDP RTP with SDES-keyed SRTP — NO ICE, NO DTLS, NO SDP round trip with the
@@ -62,7 +63,7 @@ internal static class RtpTiming
 /// random filler — M3 is one-way, only OUR key is on the protection path).
 /// The Android side unprotects with the announced key via jitsi-srtp.
 /// </summary>
-internal class DirectRtpChannel : IChannel
+internal class DirectRtpChannel : IDirectRtpChannel
 {
     public const int DefaultRtpPort = 5004;
     public const string CryptoSuite = "AES_CM_128_HMAC_SHA1_80";
@@ -102,13 +103,30 @@ internal class DirectRtpChannel : IChannel
         PeerInfo peer,
         string capability,
         IPEndPoint destination,
-        int bindPort = DefaultRtpPort)
+        int bindPort = DefaultRtpPort,
+        int requestedWidth = 0,
+        int requestedHeight = 0,
+        int requestedBitrateKbps = 0,
+        int requestedFps = 0)
     {
         RemotePeer = peer;
         Capability = capability;
         _destination = destination;
         _bindPort = bindPort;
+        RequestedWidth = requestedWidth;
+        RequestedHeight = requestedHeight;
+        RequestedBitrateKbps = requestedBitrateKbps;
+        RequestedFps = requestedFps;
     }
+
+    /// <inheritdoc />
+    public int RequestedWidth { get; }
+    /// <inheritdoc />
+    public int RequestedHeight { get; }
+    /// <inheritdoc />
+    public int RequestedBitrateKbps { get; }
+    /// <inheritdoc />
+    public int RequestedFps { get; }
 
     /// <summary>Bring the session up: bind, generate offer, fabricate the
     /// SDES answer, set destination. Throws when the SIPSorcery SDP state

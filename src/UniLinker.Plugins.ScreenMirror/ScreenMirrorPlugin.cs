@@ -55,6 +55,16 @@ public class ScreenMirrorPlugin : IPlugin
             _viewers.Add(channel);
             if (_viewers.Count == 1)
             {
+                // Receiver-driven tier: a direct-RTP channel carries the
+                // capture parameters the receiver requested (resolution/
+                // bitrate/fps). Zero values fall back to the sender config.
+                if (channel is IDirectRtpChannel direct &&
+                    (direct.RequestedWidth > 0 || direct.RequestedBitrateKbps > 0 || direct.RequestedFps > 0))
+                {
+                    fps = direct.RequestedFps > 0 ? direct.RequestedFps : fps;
+                    bitrate = direct.RequestedBitrateKbps > 0 ? direct.RequestedBitrateKbps : bitrate;
+                    _ctx.Logger.Info($"Receiver tier: {direct.RequestedWidth}x{direct.RequestedHeight}@{fps} {bitrate}kbps");
+                }
                 StartSession(fps, bitrate);
             }
             _ctx.Logger.Info($"Viewer added (total {_viewers.Count}) for {peer.Name}");

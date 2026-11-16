@@ -22,6 +22,15 @@ import java.util.concurrent.TimeUnit
  * SSRC. Spawns a DirectRtpReceiver bound on the advertised port and exposes
  * decoded-ready Annex-B access units as a flow.
  */
+/** Receiver-driven capture tier: carried in the rtp request, honored by the
+ *  sender (values 0 mean "sender default"). */
+data class CaptureTier(
+    val width: Int,
+    val height: Int,
+    val bitrateKbps: Int,
+    val fps: Int,
+)
+
 class DirectRtpClient(private val host: String, private val signalingPort: Int) {
     enum class State { IDLE, CONNECTING, STREAMING, ERROR }
 
@@ -41,8 +50,12 @@ class DirectRtpClient(private val host: String, private val signalingPort: Int) 
 
     @Volatile private var receiver: DirectRtpReceiver? = null
 
+    /** Latest receiver counters, for the HUD (null while not streaming). */
+    val receiverStats: Triple<Int, Int, Long>?
+        get() = receiver?.let { Triple(it.receivedPackets, it.lostPackets, it.bytesReceived) }
+
     /** Bind first (so the OS picks a free UDP port), then announce it. */
-    suspend fun connect(): Boolean = withContext(Dispatchers.IO) {
+    suspend fun connect(tier: CaptureTier): Boolean = withContext(Dispatchers.IO) {
         _state.value = State.CONNECTING
         _error.value = null
 
@@ -58,6 +71,11 @@ class DirectRtpClient(private val host: String, private val signalingPort: Int) 
             put("fromPeerId", "android-direct")
             put("capability", "screen-capture")
             put("rtpPort", localPort)
+            // Receiver-driven tier (0 values = sender defaults).
+            put("captureWidth", tier.width)
+            put("captureHeight", tier.height)
+            put("bitrateKbps", tier.bitrateKbps)
+            put("captureFps", tier.fps)
         }.toString()
 
         try {

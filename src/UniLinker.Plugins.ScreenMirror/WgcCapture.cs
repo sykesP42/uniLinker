@@ -256,6 +256,21 @@ public class WgcCapture : ICapture
                     var rbMs = System.Diagnostics.Stopwatch.GetTimestamp() - readbackStart;
                     Log.Info($"WGC frame #{_framesDelivered} {desc.Width}x{desc.Height} readback={rbMs * 1000L / System.Diagnostics.Stopwatch.Frequency}ms pitch={rowPitch}");
                 }
+                if (_framesDelivered == 1)
+                {
+                    // One-shot encoded-input probe: dump the raw BGRA readback
+                    // to inspect the capture content itself (snow-rectangle
+                    // diagnosis: capture vs encode vs decode). TEMPORARY.
+                    try
+                    {
+                        var dumpPath = Path.Combine(Path.GetTempPath(), "wgcframe.bin");
+                        File.WriteAllBytes(dumpPath, rawData);
+                        File.WriteAllText(Path.ChangeExtension(dumpPath, ".meta"),
+                            $"{desc.Width}x{desc.Height} pitch={rowPitch}");
+                        Log.Info($"WGC: frame dump written {dumpPath}");
+                    }
+                    catch { }
+                }
                 FrameCaptured?.Invoke(captureFrame);
             }
             finally

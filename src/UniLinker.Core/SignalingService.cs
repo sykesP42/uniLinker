@@ -168,7 +168,8 @@ public class SignalingService : IDisposable
 
         var channel = new DirectRtpChannel(
             peerInfo, msg.Capability ?? "screen-capture",
-            new IPEndPoint(remoteIp, msg.RtpPort), bindPort);
+            new IPEndPoint(remoteIp, msg.RtpPort), bindPort,
+            msg.CaptureWidth, msg.CaptureHeight, msg.BitrateKbps, msg.CaptureFps);
         try
         {
             await channel.OpenAsync();
@@ -273,6 +274,12 @@ public class SignalingMessage
 
     /// <summary>type=="rtp": the requester's UDP listening port (M3 direct tier).</summary>
     public int RtpPort { get; set; }
+
+    /// <summary>type=="rtp": receiver-driven capture tier (0 = sender default).</summary>
+    public int CaptureWidth { get; set; }
+    public int CaptureHeight { get; set; }
+    public int BitrateKbps { get; set; }
+    public int CaptureFps { get; set; }
 }
 
 /// <summary>/ice wire DTO (camelCase on the wire).</summary>
