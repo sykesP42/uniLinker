@@ -16,8 +16,18 @@ namespace UniLinker.Core.Tests;
 /// </summary>
 public class DirectRtpChannelTests
 {
-    private static readonly byte[] FixedKey = Convert.FromBase64String("16QH6TOk7FpaXmIlIkf3rg==");
-    private static readonly byte[] FixedSalt = Convert.FromBase64String("GBkv7cTpvA46TcCAAAA=");
+    /// <summary>Splits "1 AES_CM_128_HMAC_SHA1_80 inline:&lt;b64&gt;" into its
+    /// 16-byte master key and 14-byte salt (RFC 4568 inline = key || salt).</summary>
+    private static (byte[] key, byte[] salt) SplitInline(string cryptoLine)
+    {
+        var inline = cryptoLine.Split(' ').First(p => p.StartsWith("inline:", StringComparison.Ordinal))["inline:".Length..];
+        var kv = Convert.FromBase64String(inline);
+        return (kv[..16], kv[16..]);
+    }
+
+    private static SIPSorcery.Net.SrtpPolicy MakePolicy() =>
+        new(SIPSorcery.Net.SrtpPolicy.AESCM_ENCRYPTION, 16,
+            SIPSorcery.Net.SrtpPolicy.HMACSHA1_AUTHENTICATION, 20, 10, 14);
 
     private static PeerInfo MakePeer() => new()
     {
@@ -28,6 +38,52 @@ public class DirectRtpChannelTests
         State = PeerState.Discovered,
         Capabilities = ["screen-capture"],
     };
+
+    /// <summary>
+    /// Interop gate: the wire packets must be decryptable with exactly the
+    /// crypto line the channel exposes (the one Android receives). The earlier
+    /// version of this test failed — SIPSorcery protects outbound with the key
+    /// it announced in the OFFER, not an externally injected one, so the
+    /// channel now derives CryptoLine from the offer itself.
+    /// </summary>
+    [Fact]
+    public async Task SenderOutput_unprotects_with_own_crypto_line()
+    {
+        using var receiver = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+        var destPort = ((IPEndPoint)receiver.Client.LocalEndPoint!).Port;
+
+        var channel = new DirectRtpChannel(
+            MakePeer(), "screen-capture",
+            new IPEndPoint(IPAddress.Loopback, destPort),
+            bindPort: 0);
+        await channel.OpenAsync();
+        channel.CryptoLine.Should().Contain("inline:");
+
+        var au = new byte[32];
+        new Random(7).NextBytes(au);
+        await channel.SendPacketAsync(new EncodedPacket(au, TimestampUs: 1_000_000, IsKeyFrame: true));
+
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var wire = (await receiver.ReceiveAsync(cts.Token)).Buffer;
+
+        var (key, salt) = SplitInline(channel.CryptoLine);
+        var engine = new SIPSorcery.Net.SrtpTransformEngine(key, salt, MakePolicy(), MakePolicy());
+        var transformer = new SIPSorcery.Net.SrtpTransformer(engine);
+        try
+        {
+            var plain = transformer.ReverseTransform(wire);
+            plain.Should().NotBeNull("the exposed crypto line decrypts the wire packets");
+            plain!.Length.Should().Be(wire.Length - 10, "auth tag stripped");
+            plain.AsSpan(12).ToArray().Should().Equal(au, "the original Annex-B AU comes back");
+        }
+        finally
+        {
+            try { transformer.Close(); } catch { }
+            try { engine.Close(); } catch { }
+        }
+
+        channel.Dispose();
+    }
 
     [Fact]
     public async Task Sends_srtp_protected_annexb_au_to_fixed_endpoint()
@@ -61,28 +117,27 @@ public class DirectRtpChannelTests
     }
 
     [Fact]
-    public void Crypto_line_reflects_injected_key_and_salt()
+    public async Task CryptoLine_comes_from_the_offer_with_30byte_inline()
     {
         var channel = new DirectRtpChannel(
             MakePeer(), "screen-capture",
             new IPEndPoint(IPAddress.Loopback, 5600),
-            bindPort: 0,
-            masterKey: FixedKey,
-            masterSalt: FixedSalt);
+            bindPort: 0);
+        await channel.OpenAsync();
 
         channel.CryptoLine.Should().StartWith("1 AES_CM_128_HMAC_SHA1_80 inline:");
         var inline = channel.CryptoLine["1 AES_CM_128_HMAC_SHA1_80 inline:".Length..];
         Convert.FromBase64String(inline).Should().HaveCount(30, "16-byte master key + 14-byte salt (RFC 4568)");
-        Convert.FromBase64String(inline).Should().Equal(FixedKey.Concat(FixedSalt));
         channel.Dispose();
     }
 
     /// <summary>
     /// Generates the cross-language fixture consumed by the Android JVM tests
     /// (jitsi-srtp unprotect + FU-A reassembly must reproduce the original
-    /// Annex-B AU). Deterministic: fixed key/salt/SSRC/payload, fixed capture
-    /// timestamps. Writes only when UNILINKER_WRITE_FIXTURE=1 so CI stays
-    /// write-free; the committed file is the reference.
+    /// Annex-B AU). The key material is whatever the sender announced (captured
+    /// in the fixture); the AU content is deterministic. Writes only when
+    /// UNILINKER_WRITE_FIXTURE=1 so CI stays write-free; the committed file is
+    /// the reference.
     /// </summary>
     [Fact]
     public async Task WriteFixture_generates_deterministic_cross_language_vectors()
@@ -93,9 +148,7 @@ public class DirectRtpChannelTests
         var channel = new DirectRtpChannel(
             MakePeer(), "screen-capture",
             new IPEndPoint(IPAddress.Loopback, destPort),
-            bindPort: 0,
-            masterKey: FixedKey,
-            masterSalt: FixedSalt);
+            bindPort: 0);
         await channel.OpenAsync();
 
         // One keyframe AU with a LARGE IDR NAL (forces FU-A fragmentation,
@@ -135,12 +188,14 @@ public class DirectRtpChannelTests
 
         if (Environment.GetEnvironmentVariable("UNILINKER_WRITE_FIXTURE") == "1")
         {
+            var (key, salt) = SplitInline(channel.CryptoLine);
             var fixture = new
             {
-                description = "Direct RTP SDES fixture: Windows SrtpTransformEngine (AES_CM_128_HMAC_SHA1_80) protecting H264 FU-A packets; Android jitsi-srtp must unprotect and reassemble the original Annex-B AU",
-                masterKeyB64 = Convert.ToBase64String(FixedKey),
-                masterSaltB64 = Convert.ToBase64String(FixedSalt),
+                description = "Direct RTP SDES fixture: Windows RTPSession (AES_CM_128_HMAC_SHA1_80 SDES) protecting H264 FU-A packets; Android jitsi-srtp must unprotect and reassemble the original Annex-B AU",
+                masterKeyB64 = Convert.ToBase64String(key),
+                masterSaltB64 = Convert.ToBase64String(salt),
                 cryptoLine = channel.CryptoLine,
+                ssrc = channel.Ssrc,
                 annexBAuB64 = Convert.ToBase64String(au),
                 timestampUs = tsUs,
                 packets = packets.Select(p => Convert.ToBase64String(p)).ToArray(),

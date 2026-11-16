@@ -1,5 +1,4 @@
 using System.Net;
-using System.Security.Cryptography;
 using System.Text;
 using SIPSorcery.Net;
 using SIPSorcery.SIP.App;
@@ -70,8 +69,6 @@ internal class DirectRtpChannel : IChannel
 
     private readonly IPEndPoint _destination;
     private readonly int _bindPort;
-    private readonly byte[] _masterKey;
-    private readonly byte[] _masterSalt;
     private RTPSession? _session;
 
     private long _lastFrameTsUs = -1;
@@ -93,24 +90,24 @@ internal class DirectRtpChannel : IChannel
     /// offer carries none — the receiver keys per-SSRC on first packet).</summary>
     public uint Ssrc { get; private set; }
 
-    /// <summary>The SDES crypto attribute Android unprotects our stream with
-    /// (RFC 4568: "1 &lt;suite&gt; inline:&lt;base64(16B key || 14B salt)&gt;").</summary>
-    public string CryptoLine => $"1 {CryptoSuite} inline:{Convert.ToBase64String(_masterKey.Concat(_masterSalt).ToArray())}";
+    /// <summary>
+    /// The SDES crypto attribute from OUR generated offer — the key SIPSorcery
+    /// actually protects outbound packets with (interop-diagnosed: it is NOT
+    /// an externally injected key). Android unprotects with this exact line.
+    /// Valid only after a successful OpenAsync.
+    /// </summary>
+    public string CryptoLine { get; private set; } = "";
 
     public DirectRtpChannel(
         PeerInfo peer,
         string capability,
         IPEndPoint destination,
-        int bindPort = DefaultRtpPort,
-        byte[]? masterKey = null,
-        byte[]? masterSalt = null)
+        int bindPort = DefaultRtpPort)
     {
         RemotePeer = peer;
         Capability = capability;
         _destination = destination;
         _bindPort = bindPort;
-        _masterKey = masterKey ?? RandomNumberGenerator.GetBytes(16);
-        _masterSalt = masterSalt ?? RandomNumberGenerator.GetBytes(14);
     }
 
     /// <summary>Bring the session up: bind, generate offer, fabricate the
@@ -134,6 +131,11 @@ internal class DirectRtpChannel : IChannel
 
             var offer = session.CreateOffer(_destination.Address);
             Ssrc = ExtractSsrc(offer.ToString() ?? "");
+            CryptoLine = ExtractCryptoLine(offer.ToString() ?? "");
+            if (CryptoLine.Length == 0)
+            {
+                throw new InvalidOperationException("offer carries no a=crypto line (SDES not negotiated)");
+            }
 
             var answerSdp = FabricateAnswer(offer.ToString() ?? "", _destination);
             var result = session.SetRemoteDescription(SdpType.answer, SDP.ParseSDPDescription(answerSdp));
@@ -193,15 +195,39 @@ internal class DirectRtpChannel : IChannel
         return 0;
     }
 
+    /// <summary>Pull the "a=crypto:" line out of our own offer — that key is
+    /// what SIPSorcery's SRTP handler actually protects outbound with.</summary>
+    private static string ExtractCryptoLine(string offerSdp)
+    {
+        foreach (var line in offerSdp.Replace("\r\n", "\n").Split('\n'))
+        {
+            var l = line.Trim();
+            if (l.StartsWith("a=crypto:", StringComparison.Ordinal))
+            {
+                return l["a=crypto:".Length..].Trim();
+            }
+        }
+        return "";
+    }
+
     /// <summary>
     /// Fabricate the remote (Android-side) answer from our offer by text
     /// transformation: point the media at the Android listener, flip the
     /// direction to recvonly, strip ICE (plain RTPSession has none), and add
-    /// the peer-side crypto line so SIPSorcery's SDES state machine completes.
+    /// the crypto line so SIPSorcery's SDES state machine completes.
+    ///
+    /// The answer ECHOES OUR OWN key. Empirically (interop diagnosis test)
+    /// SIPSorcery's outbound SRTP handler derives its protection key from the
+    /// remote description, not the local one — echoing our key makes the
+    /// emitted packets decryptable with the crypto line we hand to Android
+    /// regardless of which side it picks. M3 is one-way, so key reuse across
+    /// the two descriptions is harmless; revisit when the reverse direction
+    /// ships.
     /// </summary>
-    private static string FabricateAnswer(string offerSdp, IPEndPoint destination)
+    private string FabricateAnswer(string offerSdp, IPEndPoint destination)
     {
-        var peerKey = $"inline:{Convert.ToBase64String(RandomNumberGenerator.GetBytes(16).Concat(RandomNumberGenerator.GetBytes(14)).ToArray())}";
+        // Echo our own crypto line (see member doc on the key-direction quirk).
+        var peerKey = CryptoLine;
         var sb = new StringBuilder();
         var inMedia = false;
         var mediaRewritten = false;
@@ -253,13 +279,13 @@ internal class DirectRtpChannel : IChannel
             if (mediaRewritten && l.StartsWith("a=fmtp:", StringComparison.Ordinal))
             {
                 // Peer crypto goes right after the format declaration.
-                sb.Append($"a=crypto:1 {CryptoSuite} {peerKey}\r\n");
+                sb.Append($"a=crypto:{peerKey}\r\n");
             }
         }
 
         if (!sb.ToString().Contains("a=crypto:", StringComparison.Ordinal))
         {
-            sb.Append($"a=crypto:1 {CryptoSuite} {peerKey}\r\n");
+            sb.Append($"a=crypto:{peerKey}\r\n");
         }
         return sb.ToString();
     }

@@ -2,6 +2,7 @@ plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("org.jetbrains.kotlin.plugin.compose")
+    id("org.jetbrains.kotlin.plugin.serialization")
 }
 
 android {
@@ -56,6 +57,10 @@ dependencies {
     implementation("io.getstream:stream-webrtc-android:1.1.1")
     implementation("androidx.compose.material:material-icons-extended")
 
+    // Direct RTP tier (M3): SDES-keyed SRTP — the battle-tested pure-Java
+    // implementation used by Jitsi Meet. No hand-written crypto.
+    implementation("org.jitsi:jitsi-srtp:1.1-25-gfe5d2f6")
+
     // JSON
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 
@@ -67,4 +72,7 @@ dependencies {
 
     // Permissions
     implementation("com.google.accompanist:accompanist-permissions:0.36.0")
+
+    // JVM unit tests (SRTP/FU-A vectors run without a device)
+    testImplementation("junit:junit:4.13.2")
 }
