@@ -206,3 +206,25 @@ public class SignalingService : IDisposable
         return string.Join("\r\n", kept);
     }
 }
+
+/// <summary>
+/// /signaling wire DTO. Serialized AND deserialized with
+/// JsonNamingPolicy.CamelCase; shapes are locked by SignalingContractTests
+/// (both the Android app and the browser viewer depend on them).
+/// </summary>
+public class SignalingMessage
+{
+    public string Type { get; set; } = ""; // "offer" or "answer"
+    public string Sdp { get; set; } = "";
+    public string FromPeerId { get; set; } = "";
+    public string? Capability { get; set; }
+}
+
+/// <summary>/ice wire DTO (camelCase on the wire).</summary>
+public class IceCandidateMessage
+{
+    public string PeerId { get; set; } = "";
+    public string? Candidate { get; set; }
+    public string? SdpMid { get; set; }
+    public int SdpMLineIndex { get; set; }
+}

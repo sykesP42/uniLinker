@@ -1,7 +1,3 @@
-using Microsoft.AspNetCore.Builder;
-using Microsoft.AspNetCore.Hosting;
-using Microsoft.AspNetCore.Http;
-using Microsoft.Extensions.Logging;
 using Microsoft.UI.Xaml;
 using UniLinker.Core;
 using UniLinker.Plugins.FileTransfer;
@@ -14,9 +10,8 @@ public partial class App : Application
 {
     private Platform? _platform;
     private WebBridge? _bridge;
-    private SignalingServer? _signalingServer;
+    private SignalingKestrelHost? _signalingServer;
     private MainWindow? _window;
-    private WebApplication? _kestrelProbe;
 
     public static AppServices Services { get; private set; } = null!;
 
@@ -85,26 +80,22 @@ public partial class App : Application
         var config = _platform.Context.Config.Get<PlatformConfig>("platform");
 
         _bridge = new WebBridge(_platform);
-        _signalingServer = new SignalingServer(
+        _signalingServer = new SignalingKestrelHost(
             config.HttpPort > 0 ? config.HttpPort : 9527,
             _platform.PeerMesh);
 
         Services = new AppServices(_platform, _bridge, _signalingServer);
 
-        // Start the signaling server for WebRTC connections
+        // Start the signaling server (Kestrel host, M2 migration).
         try
         {
             await _signalingServer.StartAsync();
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"Failed to start signaling server: {ex.Message}");
-        }
-
-        // P3 probe (docs/spec/M1-probes.md): opt-in minimal Kestrel host.
-        if (config.ExperimentalKestrel)
-        {
-            StartKestrelProbe();
+            // Debug.WriteLine is invisible in an unpackaged GUI app — put the
+            // failure where diagnostics can actually see it.
+            Log.Info($"Failed to start signaling server: {ex}");
         }
 
         _window = new MainWindow();
@@ -123,54 +114,7 @@ public partial class App : Application
         if (Current is App app)
         {
             try { app._signalingServer?.Stop(); } catch { }
-            if (app._kestrelProbe != null)
-            {
-                var probe = app._kestrelProbe;
-                app._kestrelProbe = null;
-                try
-                {
-                    await probe.StopAsync(new CancellationTokenSource(TimeSpan.FromSeconds(2)).Token);
-                }
-                catch { }
-                try { await probe.DisposeAsync(); } catch { }
-            }
             try { await app._platform?.StopAsync(); } catch { }
-        }
-    }
-
-    /// <summary>
-    /// P3 probe: host a minimal Kestrel instance inside the WinUI process,
-    /// loopback-only on 9528 (/ulp/info). Proves ASP.NET Core's server can
-    /// live in this host - the precondition for migrating SignalingServer
-    /// onto Kestrel (tus/WebSocket/HTTPS). Loopback binding avoids a new
-    /// firewall prompt; the LAN-facing server stays the existing
-    /// SignalingServer (9527), untouched.
-    /// </summary>
-    private void StartKestrelProbe()
-    {
-        try
-        {
-            var builder = WebApplication.CreateBuilder();
-            builder.Logging.ClearProviders();
-            builder.WebHost.UseUrls("http://127.0.0.1:9528");
-            var app = builder.Build();
-
-            app.MapGet("/ulp/info", () => Results.Json(new
-            {
-                name = Environment.MachineName,
-                version = UniLinker.Plugin.Sdk.UniLinkerInfo.Version,
-                port = 9528,
-                proto = "ulp/0.1-probe",
-            }));
-
-            _kestrelProbe = app;
-            _ = app.RunAsync();
-            System.Diagnostics.Debug.WriteLine("Kestrel probe listening on http://127.0.0.1:9528");
-        }
-        catch (Exception ex)
-        {
-            System.Diagnostics.Debug.WriteLine($"Kestrel probe failed to start: {ex.Message}");
-            _kestrelProbe = null;
         }
     }
 
@@ -191,7 +135,7 @@ public partial class App : Application
             try
             {
                 app._signalingServer?.Stop();
-                app._signalingServer = new SignalingServer(httpPort, app._platform.PeerMesh);
+                app._signalingServer = new SignalingKestrelHost(httpPort, app._platform.PeerMesh);
                 Services = new AppServices(app._platform, app._bridge!, app._signalingServer);
                 await app._signalingServer.StartAsync();
             }

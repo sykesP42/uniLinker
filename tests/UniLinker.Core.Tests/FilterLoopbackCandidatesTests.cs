@@ -5,7 +5,7 @@ using Xunit;
 namespace UniLinker.Core.Tests;
 
 /// <summary>
-/// Characterization tests for SignalingServer.FilterLoopbackCandidates.
+/// Characterization tests for SignalingService.FilterLoopbackCandidates.
 /// These lock behavior that was introduced to fix the M0/G1 "zero STUN
 /// packets" ICE failure (SIPSorcery pairing loopback candidates from
 /// libwebrtc peers). The \r\n normalization matters: an earlier naive
@@ -29,7 +29,7 @@ public class FilterLoopbackCandidatesTests
     {
         var sdp = MinimalSdp(HostCandidateReal, HostCandidateLoopback, HostCandidateLoopbackV6);
 
-        var result = SignalingServer.FilterLoopbackCandidates(sdp);
+        var result = SignalingService.FilterLoopbackCandidates(sdp);
 
         result.Should().Contain("192.168.137.1");
         result.Should().NotContain("127.0.0.1 60436");
@@ -41,7 +41,7 @@ public class FilterLoopbackCandidatesTests
     {
         var sdp = MinimalSdp(HostCandidateLoopback, HostCandidateLoopbackV6);
 
-        var result = SignalingServer.FilterLoopbackCandidates(sdp);
+        var result = SignalingService.FilterLoopbackCandidates(sdp);
 
         result.Split("\r\n").Should().NotContain(l => l.TrimStart().StartsWith("a=candidate:"));
         // Non-candidate SDP lines survive so the description stays parseable.
@@ -56,7 +56,7 @@ public class FilterLoopbackCandidatesTests
         // "\r\r\n" pairs on the wire, breaking SDP parsing downstream.
         var sdp = "v=0\r\nm=video 9 UDP/TLS/RTP/SAVPF 96\r\n" + HostCandidateReal + "\r\n";
 
-        var result = SignalingServer.FilterLoopbackCandidates(sdp);
+        var result = SignalingService.FilterLoopbackCandidates(sdp);
 
         result.Should().NotContain("\r\r");
         result.Split("\r\n").Should().HaveCount(4).And.Contain(HostCandidateReal);
@@ -67,7 +67,7 @@ public class FilterLoopbackCandidatesTests
     {
         var sdp = "v=0\nm=video 9 UDP/TLS/RTP/SAVPF 96\n" + HostCandidateLoopback + "\n";
 
-        var result = SignalingServer.FilterLoopbackCandidates(sdp);
+        var result = SignalingService.FilterLoopbackCandidates(sdp);
 
         result.Should().NotContain("127.0.0.1");
         result.Should().Contain("m=video");
@@ -81,7 +81,7 @@ public class FilterLoopbackCandidatesTests
                   + HostCandidateLoopback + "\r\n"
                   + "a=rtpmap:96 H264/90000\r\n";
 
-        var result = SignalingServer.FilterLoopbackCandidates(sdp);
+        var result = SignalingService.FilterLoopbackCandidates(sdp);
 
         result.Should().Contain("a=rtpmap:96 H264/90000");
         result.Should().NotContain(HostCandidateLoopback);
@@ -90,6 +90,6 @@ public class FilterLoopbackCandidatesTests
     [Fact]
     public void Empty_input_returns_empty_output()
     {
-        SignalingServer.FilterLoopbackCandidates("").Should().Be("");
+        SignalingService.FilterLoopbackCandidates("").Should().Be("");
     }
 }

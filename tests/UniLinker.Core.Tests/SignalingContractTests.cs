@@ -10,7 +10,7 @@ namespace UniLinker.Core.Tests;
 /// Both the Android app (WebRTCService.kt) and the browser viewer (web/app.js)
 /// depend on these exact JSON shapes; breaking them silently kills every
 /// client at once. The server serializes AND deserializes with
-/// JsonNamingPolicy.CamelCase (SignalingServer.cs WriteJsonAsync /
+/// JsonNamingPolicy.CamelCase (now SignalingService + SignalingKestrelHost;
 /// HandleSignalingAsync).
 /// </summary>
 public class SignalingContractTests

@@ -126,11 +126,6 @@ public class PlatformConfig
     public int HttpPort { get; set; } = 9527;
     public bool AutoStartPlugins { get; set; } = true;
     public string[] DisabledPlugins { get; set; } = [];
-
-    /// <summary>P3 probe: start a minimal Kestrel host on 127.0.0.1:9528
-    /// serving /ulp/info. Off by default; the existing SignalingServer on
-    /// HttpPort is untouched (docs/spec/M1-probes.md).</summary>
-    public bool ExperimentalKestrel { get; set; }
 }
 
 internal class PlatformContext : IPluginContext

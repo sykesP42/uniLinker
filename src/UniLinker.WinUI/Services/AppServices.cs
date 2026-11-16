@@ -6,10 +6,10 @@ public class AppServices
 {
     public Platform Platform { get; }
     public WebBridge Bridge { get; }
-    public SignalingServer SignalingServer { get; set; }
+    public SignalingKestrelHost SignalingServer { get; set; }
     public NavigationService Navigation { get; }
 
-    public AppServices(Platform platform, WebBridge bridge, SignalingServer signalingServer)
+    public AppServices(Platform platform, WebBridge bridge, SignalingKestrelHost signalingServer)
     {
         Platform = platform;
         Bridge = bridge;
