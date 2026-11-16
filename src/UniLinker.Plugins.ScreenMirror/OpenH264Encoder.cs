@@ -183,8 +183,10 @@ public class OpenH264Encoder : IEncoder
         }
         else if (++_framesSinceIdr >= _fps * 2)
         {
-            Log.Info($"requesting IDR (frameType={encoded[0].FrameType} lastSize={accessUnit.Length})");
-            _encoder.ForceKeyFrame();
+            // Belt-and-braces ID recovery: the screen-content config already
+            // emits periodic IDRs, but this guarantees a recovery point at a
+            // fixed cadence regardless of configuration.
+            _encoder.ForceIntraFrame();
         }
 
         if (_emittedFrames % 60 == 1)
