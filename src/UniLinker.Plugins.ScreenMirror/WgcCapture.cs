@@ -29,6 +29,8 @@ public class WgcCapture : ICapture
     private int _framesDelivered;
     private long _lastReadbackTicks;
     private int _minReadbackIntervalMs = 33;
+    private System.Threading.Timer? _pollTimer;
+    private int _emptyPolls;
 
     public bool Start(int width, int height, int fps)
     {
@@ -77,13 +79,19 @@ public class WgcCapture : ICapture
             // before StartCapture has been flaky across Windows builds.
             _session.IsCursorCaptureEnabled = true;
 
-            _framePool.FrameArrived += OnFrameArrived;
-            // Must be set before StartCapture: on a static desktop WGC only
-            // delivers the initial frame, which would otherwise race this
-            // flag and be dropped forever.
+            // POLLING instead of FrameArrived: with CreateFreeThreaded on a
+            // background thread the event fired exactly once on this machine
+            // (session started 02:41, counter stuck at #1) — mirroring froze
+            // at the first frame. The frame pool keeps the latest composed
+            // frame, so TryGetNextFrame in a timer works regardless of the
+            // event mechanism. Same official pattern as the polling
+            // CaptureSample variant.
             _isCapturing = true;
             _session.StartCapture();
-            Log.Info($"WGC: session started, thread={Environment.CurrentManagedThreadId}, framePoolIsFreeThreaded=yes");
+            _pollTimer = new System.Threading.Timer(
+                _ => ReadLatestFrame(), null, TimeSpan.Zero,
+                TimeSpan.FromMilliseconds(1000.0 / _fps));
+            Log.Info($"WGC: session started (polling @ {_fps}fps), thread={Environment.CurrentManagedThreadId}");
 
             Log.Info("WGC capture started (staging readback)");
             return true;
@@ -95,10 +103,9 @@ public class WgcCapture : ICapture
         }
     }
 
-    private void OnFrameArrived(
-        Direct3D11CaptureFramePool sender, object args)
+    private void ReadLatestFrame()
     {
-        if (!_isCapturing) return;
+        if (!_isCapturing || _framePool == null) return;
 
         // Skip frames arriving faster than the target fps: the GPU-side copy
         // plus CPU readback dominates the pipeline cost, so dropping here is
@@ -112,8 +119,23 @@ public class WgcCapture : ICapture
 
         try
         {
-            using var frame = sender.TryGetNextFrame();
-            if (frame == null) return;
+            using var frame = _framePool.TryGetNextFrame();
+            if (frame == null)
+            {
+                // An empty pool for this long means the DWM→pool copy pipeline
+                // died (observed on this machine: exactly one frame ever
+                // delivered per session). Recreate is WGC's own recovery API
+                // and rebuilds that pipeline.
+                _emptyPolls++;
+                if (_emptyPolls >= 10)
+                {
+                    Log.Info("WGC: pool empty x10 — recreating frame pool");
+                    _framePool.Recreate(_winrtDevice!, DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, _item!.Size);
+                    _emptyPolls = 0;
+                }
+                return;
+            }
+            _emptyPolls = 0;
 
             var surface = frame.Surface;
 
@@ -131,7 +153,7 @@ public class WgcCapture : ICapture
                 int hr = dxgiAccess.GetInterface(in iidDxgiSurface, out dxgiSurfacePtr);
                 if (hr < 0 || dxgiSurfacePtr == nint.Zero)
                 {
-                    System.Diagnostics.Debug.WriteLine($"WGC: GetInterface(IDXGISurface) failed hr=0x{hr:X8}");
+                    Log.Error($"WGC: GetInterface(IDXGISurface) failed hr=0x{hr:X8}");
                     return;
                 }
 
@@ -140,7 +162,7 @@ public class WgcCapture : ICapture
                 hr = Marshal.QueryInterface(dxgiSurfacePtr, in iidTexture2D, out texturePtr);
                 if (hr < 0 || texturePtr == nint.Zero)
                 {
-                    System.Diagnostics.Debug.WriteLine($"WGC: QI(ID3D11Texture2D) failed hr=0x{hr:X8}");
+                    Log.Error($"WGC: QI(ID3D11Texture2D) failed hr=0x{hr:X8}");
                     return;
                 }
 
@@ -200,13 +222,18 @@ public class WgcCapture : ICapture
             }
             finally
             {
-                if (texturePtr != nint.Zero) Marshal.Release(texturePtr);
+                // texturePtr is OWNED by the Vortice wrapper (new ID3D11Texture2D
+                // takes ownership and releases on GC/dispose) — releasing it here
+                // as well double-freed the reference and corrupted the D3D
+                // context: readback failed silently on every frame after the
+                // first, freezing the mirror at frame #1. Only the raw
+                // dxgiSurfacePtr (from GetInterface) is released manually.
                 if (dxgiSurfacePtr != nint.Zero) Marshal.Release(dxgiSurfacePtr);
             }
         }
         catch (Exception ex)
         {
-            System.Diagnostics.Debug.WriteLine($"WGC frame error: {ex.Message}");
+            Log.Error($"WGC frame error: {ex}");
         }
     }
 
@@ -214,8 +241,8 @@ public class WgcCapture : ICapture
     {
         _isCapturing = false;
 
-        if (_framePool != null)
-            _framePool.FrameArrived -= OnFrameArrived;
+        _pollTimer?.Dispose();
+        _pollTimer = null;
 
         _session?.Dispose();
         _session = null;

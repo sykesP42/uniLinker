@@ -144,13 +144,17 @@ fun DirectRtpScreen(initialAddress: String?) {
             color = if (statusText.startsWith("Error")) Color.Red else Color.Unspecified,
         )
 
-        OutlinedTextField(
-            value = address,
-            onValueChange = { address = it },
-            label = { Text("Host IP:signaling-port (e.g. 192.168.42.39:9527)") },
-            modifier = Modifier.fillMaxWidth(),
-            singleLine = true,
-        )
+        // Hide the address field while streaming: removing the focused field
+        // collapses the soft keyboard and frees the screen for video.
+        if (client == null) {
+            OutlinedTextField(
+                value = address,
+                onValueChange = { address = it },
+                label = { Text("Host IP:signaling-port (e.g. 192.168.42.39:9527)") },
+                modifier = Modifier.fillMaxWidth(),
+                singleLine = true,
+            )
+        }
 
         Button(
             onClick = { toggleConnect() },
