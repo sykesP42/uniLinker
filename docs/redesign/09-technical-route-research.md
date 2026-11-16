@@ -157,3 +157,69 @@
 - [.NET QUIC 支持](https://learn.microsoft.com/en-us/dotnet/fundamentals/networking/quic/quic-overview) · [System.Net.Quic readme](https://github.com/dotnet/runtime/blob/main/src/libraries/System.Net.Quic/readme.md) · [Unofficial.MsQuic](https://www.nuget.org/packages/Unofficial.MsQuic)
 - [GetStream/webrtc-android](https://github.com/GetStream/webrtc-android) · Maven Central `io.getstream/stream-webrtc-android/1.1.1` AAR 实测
 - SIPSorcery v8.0.12 源码（tag 4965e8f）：RTPSession/VideoStream/MediaStream/H264Depacketiser/RTCPFeedback/RTCPeerConnection
+
+## 10. 轮子适配探针（V0，2026-11-17，M1 里程碑）
+
+> 按「不造轮子」原则对组装式方案的两个关键轮子做实证。规格见
+> `docs/spec/M1-probes.md`；任务拆解见 `docs/spec/tasks.md`。
+> 测试代码：`tests/UniLinker.Core.Tests/Probes/SipsorcerySrtpProbe.cs`（可重复执行）。
+
+### 10.1 P2 — SIPSorcery SRTP 复用（直连 RTP 档加密）：**FEASIBLE**
+
+**结论**：直连 RTP 档可以零新增加密代码——SRTP 引擎用我们自己的密钥材料
+构造，完全不需要 DTLS 握手。裁决 **C-28**（`00` §12.6）。
+
+**证据链**（`dotnet test --filter SipsorcerySrtpProbe` 可复现）：
+
+1. 8.0.12 程序集内**不存在** `DtlsSrtp` 类型（早期 DLL grep 命中的是
+   `DtlsSrtpClient/Server/Transport` DTLS 握手族——探针第一版红灯推翻了该假设）；
+2. 真正可外部供钥的 public 组合：
+   `SrtpTransformEngine(masterKey, masterSalt, srtpPolicy, srtcpPolicy)`
+   → `SrtpTransformer.Transform/ReverseTransform`；
+   `SrtpCryptoContext(ssrc, roc, kdr, masterK, masterS, policy)` 亦可直构；
+3. `SrtpPolicy` 常量实测：`AESCM_ENCRYPTION=1`、`HMACSHA1_AUTHENTICATION=1`；
+4. **往返验证**：随机 16B master key + 14B salt（即 WebRTC 默认
+   AES-CM/HMAC-SHA1-80 档），合成 RTP 包 protect（追加 10B auth tag）→
+   unprotect 逐字节还原——全程零 DTLS，且为编译期引用（非反射 hack）。
+
+**对媒体路线决策树的影响**：`00` §12.5 已实证平板 Chrome 打开 viewer 页
+后 ICE 同样失败（跨设备场景下 WebView/浏览器兜底**绕不开** ICE 互操作），
+因此直连 RTP + SRTP（C-28）升为 **Win↔Android 媒体主路径**：控制面走现有
+HTTP（`/signaling`、`/ice` 已有 characterization 测试锁契约），媒体面 UDP
+直连 + SrtpTransformer，彻底绕开 ICE。
+
+**附带发现（需后续处理，不阻塞）**：SIPSorcery 8.0.12 有已知高危漏洞公告
+（NU1903：GHSA-28gm-jrmw-xx93、GHSA-jwjp-4649-v8jp）。升级评估时注意
+保持 SRTP API 面不回归（探针测试即回归门禁）。
+
+### 10.2 P3 — Kestrel 寄宿 WinUI 宿主：**FEASIBLE（带部署约束）**
+
+**结论**：ASP.NET Core Kestrel 可在 WinUI 3 unpackaged 进程内运行——
+SignalingServer→Kestrel 迁移（后续 tus/WebSocket/HTTPS 的载体）成立。
+裁决 **C-29**（`00` §12.6）。
+
+**证据链**（commit ff60043，可复现）：
+
+1. `UniLinker.WinUI.csproj` 加 `<FrameworkReference Include="Microsoft.AspNetCore.App" />`；
+   `PlatformConfig.ExperimentalKestrel`（默认 false）门控；
+2. **态 ON**：应用启动，`GET http://127.0.0.1:9528/ulp/info` 返回
+   200 `{"name":"SYKES","version":"3.1.0","port":9528,"proto":"ulp/0.1-probe"}`；
+   9527 信令照常；两个 listener 同进程（同 PID）；
+3. **态 OFF**：9528 无监听，9527 行为与现状逐字节一致；
+4. 回归：单测 15/15 绿，E2E SM01–SM05 5/5 绿。
+
+**部署约束（登记）**：FrameworkReference 要求目标机器装有 ASP.NET Core
+shared runtime（本机已有 9.0.9；分发时用 self-contained publish 可打包）。
+
+**实施坑位（已写入 AGENTS.md）**：添加 FrameworkReference 后必须
+`msbuild -restore`——否则 runtimeconfig 不会包含 AspNetCore.App 条目，
+本地输出又因 FrameworkReference 剔除了 Microsoft.Extensions.* DLL，
+启动即崩（FileNotFound），本探针第一轮实机验证即撞上。
+
+### 10.3 V0 探针后续
+
+| 探针 | 状态 | 下一步 |
+|---|---|---|
+| P2 SRTP 复用 | ✅ FEASIBLE | 直连 RTP 档设计进协议规范（控制=HTTP、媒体=UDP+SRTP） |
+| P3 Kestrel-in-WinUI | ✅ FEASIBLE | SignalingServer 迁移按「strangler」进行：新路由进 Kestrel、旧路由保持字节兼容 |
+| P1 平板浏览器接收 | 部分预验证（§12.5） | 页面加载/信令正常但 ICE 跨设备失败 → 浏览器兜底不解决媒体问题；改为验证「直连 RTP 到平板自定义接收端」 |

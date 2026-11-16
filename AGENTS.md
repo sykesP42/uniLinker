@@ -12,6 +12,7 @@
 - NEVER 在未获用户确认时改动防火墙、杀软或系统网络设置（火绒 HIPS 事故先例）。
 - NEVER 变更 `/signaling` 或 `/ice` 的 JSON 契约而不先更新 `tests/UniLinker.Core.Tests` 中的 characterization 测试（Android/浏览器线上契约）。
 - NEVER 用 `dotnet build` 构建解决方案（缺 AppxPackage PRI 任务必败）；NEVER 在应用实例运行时构建（MSB3021/3027 DLL 锁，先 taskkill）。
+- NEVER 在变更依赖或 FrameworkReference 后不带 `-restore` 构建——否则 runtimeconfig 缺失 framework 条目、本地 DLL 又被剔除，启动即崩（P3 探针实证）。
 - NEVER 复活 Media Foundation SinkWriter 编码器（`MFCreateMemoryByteStream` 导出不存在，从未能初始化）。
 
 ## MUST ALWAYS

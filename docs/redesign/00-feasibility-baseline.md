@@ -339,3 +339,13 @@ ICE RTP channel failed to connect as no checklist entries became available withi
 3. 真机浏览器对照已通过环境验证：平板 Chrome 打开 viewer 页
    （信令/页面加载正常），仅 ICE 同样失败——佐证问题在 ICE 互操作
    而非信令。
+
+### 12.6 v0.5 轮子适配探针轮（2026-11-17，C-28~C-29）
+
+> 按「不造轮子」原则对统一连接方案的两个关键轮子做实证。规格与
+> 证据全文见 `09` §10；可复现测试在 `tests/UniLinker.Core.Tests/Probes/`。
+
+| 编号 | 问题 | 裁决 | 理由 |
+|---|---|---|---|
+| **C-28** | 直连 RTP 档的加密是否需要自研（SRTP/DTLS 路线） | **不自研**。SIPSorcery 8.0.12 的 SRTP 可脱离 DTLS、用外部密钥材料直接构造：`SrtpTransformEngine(masterKey, masterSalt, srtpPolicy, srtcpPolicy)` → `SrtpTransformer.Transform/ReverseTransform`，往返测试用随机 16B key + 14B salt（AES-CM/HMAC-SHA1-80，WebRTC 默认档）逐字节还原成功 | Win↔Android 媒体主路径确定为**直连 RTP + SRTP**：控制面走现有 HTTP（契约已被 characterization 测试锁定），媒体面 UDP 直连，彻底绕开 ICE 互操作（`12.5` 实证平板浏览器跨设备 ICE 同样失败，WebView 兜底不成立）。注意 8.0.12 无 `DtlsSrtp` 类型（早期 grep 误判）。附带：NU1903 高危公告 ×2 登记，升级时以探针测试为 API 回归门禁 |
+| **C-29** | SignalingServer→Kestrel 迁移前置是否成立（WinUI 宿主内跑 ASP.NET Core） | **成立**。`FrameworkReference AspNetCore.App` + `platform.ExperimentalKestrel` 门控（默认关）：ON 时 9528 `/ulp/info` 200、与 9527 同进程双监听、9527 逐字节不变；OFF 时无 9528；单测 15/15、E2E SM01–05 全绿 | 迁移按 strangler 进行：新路由（tus/WebSocket/`/ulp/*`）进 Kestrel，旧 `/signaling` `/ice` 保持字节兼容直至三端切换完成。**部署约束**：目标机需 ASP.NET Core 9 shared runtime（分发可 self-contained publish）。**坑位**：加 FrameworkReference 必须 `msbuild -restore`，否则 runtimeconfig 缺 framework 条目、本地 DLL 又被剔除 → 启动即崩（已写入 AGENTS.md） |

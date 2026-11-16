@@ -9,10 +9,10 @@
 | T2 | 治理基线 | `AGENTS.md`（≤35 行硬约束）；`CLAUDE.md` → `@AGENTS.md` 导入；详细架构迁入 `docs/architecture.md` | 人工审查规则完整性；无双源漂移 | 把 README 内容整段复制进来 | ✅ 0f5462f |
 | T3 | 编辑器一致性 | 根 `.editorconfig`（不强制行尾） | msbuild 仍绿 | 强制 end_of_line 触发全仓 reformat | ✅ c10536d |
 | T4 | Spec 与拆解 | `docs/spec/M1-probes.md`；本文件 | 探针实现前两者已入库 | Spec 出现技术实现细节 | ✅ |
-| T5 | 测试先行 | `tests/UniLinker.Core.Tests/`（FilterLoopbackCandidates、SignalingMessage/IceCandidateMessage JSON 契约）；Core 加 InternalsVisibleTo；CI 加 `dotnet test` 门禁 | `dotnet test tests/UniLinker.Core.Tests` 绿；推送后 CI 绿 | 跳过 characterization 直接写迁移 | ⬜ |
-| T6 | P2 探针 | `tests/UniLinker.Core.Tests/Probes/SipsorcerySrtpProbe.cs` + verdict 落 09 §10 | 探针运行并输出 FEASIBLE / NOT FEASIBLE | 反射调用 internal 成员；改生产代码 | ⬜ |
-| T7 | P3 探针 | WinUI.csproj 加 FrameworkReference；`PlatformConfig.ExperimentalKestrel`；App.xaml.cs 最小 Kestrel（9528 `/ulp/info`） | 开关两态 curl 验证；SM01–05 回归绿；CI 绿 | 迁移现有路由；加 tus/WS | ⬜ |
-| T8 | 沉淀 | 09 §10 verdict；README 裁决表 C-28/C-29；记忆文件；tasks 勾选 | 文档齐全且与测试输出一致 | 漏记证据链 | ⬜ |
+| T5 | 测试先行 | `tests/UniLinker.Core.Tests/`（FilterLoopbackCandidates、SignalingMessage/IceCandidateMessage JSON 契约）；Core 加 InternalsVisibleTo；CI 加 `dotnet test` 门禁 | 13/13 绿（43d120e）；推送后 CI 绿 | 跳过 characterization 直接写迁移 | ✅ 43d120e |
+| T6 | P2 探针 | `tests/UniLinker.Core.Tests/Probes/SipsorcerySrtpProbe.cs` + verdict 落 09 §10 | **FEASIBLE**：外部密钥 SRTP 往返验证通过（45e6f11） | 反射调用 internal 成员；改生产代码 | ✅ 45e6f11 |
+| T7 | P3 探针 | WinUI.csproj 加 FrameworkReference；`PlatformConfig.ExperimentalKestrel`；App.xaml.cs 最小 Kestrel（9528 `/ulp/info`） | 两态验证通过：ON=200/9527 不变，OFF=无监听；单测 15/15、SM01–05 5/5 绿 | 迁移现有路由；加 tus/WS | ✅ ff60043 |
+| T8 | 沉淀 | 09 §10 verdict；`00` §12.6 裁决 C-28/C-29；记忆文件；tasks 勾选 | 文档齐全且与测试输出一致 | 漏记证据链 | ✅ |
 
 ## 依赖顺序
 
