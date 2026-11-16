@@ -83,4 +83,13 @@ Plugin SDK (interfaces) → Core Platform → Plugins → UI Shell
 - OnLaunched server failures must go to the file log (`Log.Info`) — `Debug.WriteLine` is invisible in an unpackaged GUI app
 - Adding/refreshing FrameworkReference requires `msbuild -restore`, or runtimeconfig misses Microsoft.AspNetCore.App and startup FileNotFound-crashes (in AGENTS.md)
 
+**Direct RTP tier (M3, `DirectRtpChannel` + Android `mediatier/`):**
+- Windows sender: SIPSorcery `RTPSession` in `RtpSecureMediaOption.SdpCryptoNegotiation` mode; **CryptoLine is extracted from the generated offer** — SIPSorcery protects outbound with the key it announces there; an externally injected key does NOT reach the protection path (interop-diagnosed by `SenderOutput_unprotects_with_own_crypto_line`)
+- Fabricated answer echoes our own crypto line (one-way stream, harmless key reuse); `SetDestination` = fixed UDP endpoint, no ICE
+- Android receiver: jitsi-srtp (`org.jitsi:jitsi-srtp`) per-SSRC unprotect + RFC 6184 FU-A/STAP-A depacketizer (`H264RtpDepacketizer`) + MediaCodec→Surface (`H264SurfaceDecoder`); entry = `DirectRtpActivity` (deep link `--es connect "ip:9527"`)
+- Cross-language conformance: `tests/UniLinker.Core.Tests/Fixtures/direct-rtp-fixture.json` regenerated via `UNILINKER_WRITE_FIXTURE=1`, consumed by Android JVM tests (`DirectRtpFixtureTest`)
+- Control plane: `POST /signaling {type:"rtp", rtpPort}` → `{type:"rtp-answer", crypto, ssrc, rtpPort}`; plugin viewer flow unchanged via `PeerMesh.RegisterDirectChannel`
+- SRTP payload bytes are ciphertext — the only reliable on-the-wire signal that protection is active is the +10-byte auth tag per packet
+- Gradle on this machine: bypass `gradlew` under proxy (PKIX); call the unpacked dist directly — `%USERPROFILE%\.gradle\wrapper\dists\gradle-8.9-bin\78qddjpeqn5v6yec3xb8kv9ca\gradle-8.9\bin\gradle` with `JAVA_HOME` = Android Studio JBR
+
 **Diagnostics:** file logs at `%APPDATA%\uniLinker\unilinker.log` (plugin + server) and `crash.log` (unhandled exceptions). Console output is invisible for unpackaged WinUI apps.
