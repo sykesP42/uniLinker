@@ -31,6 +31,7 @@ public class WgcCapture : ICapture
     private int _minReadbackIntervalMs = 33;
     private System.Threading.Timer? _pollTimer;
     private int _emptyPolls;
+    private Windows.Graphics.SizeInt32 _poolSize;
 
     public bool Start(int width, int height, int fps)
     {
@@ -65,6 +66,16 @@ public class WgcCapture : ICapture
             }
             Log.Info($"WGC: item '{_item.DisplayName}' size {_item.Size.Width}x{_item.Size.Height} thread={Environment.CurrentManagedThreadId} supported={Windows.Graphics.Capture.GraphicsCaptureSession.IsSupported()} d3dDevice={_d3dDevice != null} ctx={_d3dContext != null}");
 
+            // Pool at the REQUESTED size: WGC scales the monitor content into
+            // pool-sized frames, so a 720p-class config actually captures
+            // 720p (native-size pools silently quadrupled the encode cost
+            // while the bitrate stayed at the 720p tier).
+            var native = _width <= 0 || _height <= 0;
+            _poolSize = native
+                ? _item.Size
+                : new Windows.Graphics.SizeInt32(_width, _height);
+            Log.Info($"WGC: pool size {_poolSize.Width}x{_poolSize.Height} ({(native ? "native" : "scaled")})");
+
             // CreateFreeThreaded delivers FrameArrived without needing a
             // DispatcherQueue on the calling thread (capture runs on the
             // plugin's background session thread).
@@ -72,7 +83,7 @@ public class WgcCapture : ICapture
                 _winrtDevice!,
                 DirectXPixelFormat.B8G8R8A8UIntNormalized,
                 2,
-                _item.Size);
+                _poolSize);
 
             _session = _framePool.CreateCaptureSession(_item);
             // NOTE: leave cursor capture on by default; toggling this property
@@ -119,6 +130,7 @@ public class WgcCapture : ICapture
 
         try
         {
+            var readbackStart = System.Diagnostics.Stopwatch.GetTimestamp();
             using var frame = _framePool.TryGetNextFrame();
             if (frame == null)
             {
@@ -130,7 +142,7 @@ public class WgcCapture : ICapture
                 if (_emptyPolls >= 10)
                 {
                     Log.Info("WGC: pool empty x10 — recreating frame pool");
-                    _framePool.Recreate(_winrtDevice!, DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, _item!.Size);
+                    _framePool.Recreate(_winrtDevice!, DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, _poolSize);
                     _emptyPolls = 0;
                 }
                 return;
@@ -216,7 +228,8 @@ public class WgcCapture : ICapture
                 _framesDelivered++;
                 if (_framesDelivered == 1 || _framesDelivered % 120 == 0)
                 {
-                    Log.Info($"WGC frame #{_framesDelivered} {desc.Width}x{desc.Height} pitch={rowPitch}");
+                    var rbMs = System.Diagnostics.Stopwatch.GetTimestamp() - readbackStart;
+                    Log.Info($"WGC frame #{_framesDelivered} {desc.Width}x{desc.Height} readback={rbMs * 1000L / System.Diagnostics.Stopwatch.Frequency}ms pitch={rowPitch}");
                 }
                 FrameCaptured?.Invoke(captureFrame);
             }

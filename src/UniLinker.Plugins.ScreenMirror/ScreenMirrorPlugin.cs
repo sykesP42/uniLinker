@@ -69,9 +69,15 @@ public class ScreenMirrorPlugin : IPlugin
     private void StartSession(int fps, int bitrateKbps)
     {
         _capture = new WgcCapture();
-        // Capture at the display's native resolution; the encoder adopts the
-        // real frame size on the first frame.
-        if (!_capture.Start(0, 0, fps))
+        // Capture at the configured resolution. The frame pool is created at
+        // this size and WGC scales the monitor content into it — capturing at
+        // the native 2560x1600 while the bitrate targets a 720p-class tier
+        // wrecks both encode latency and quality (measured: this was the
+        // dominant bottleneck of the wired link).
+        var config = _ctx?.Config.Get<ScreenMirrorConfig>("screen-mirror");
+        var captureW = config?.CaptureWidth > 0 ? config.CaptureWidth : 0;
+        var captureH = config?.CaptureHeight > 0 ? config.CaptureHeight : 0;
+        if (!_capture.Start(captureW, captureH, fps))
         {
             _ctx?.Logger.Error("WGC capture failed to start", null);
             _capture.Dispose();

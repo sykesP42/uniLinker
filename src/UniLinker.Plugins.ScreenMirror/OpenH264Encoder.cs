@@ -166,8 +166,10 @@ public class OpenH264Encoder : IEncoder
         }
 
         using var image = new RgbImage(ImageFormat.Bgra, width, height, frame.Pitch, frame.RawData);
+        var encodeStart = System.Diagnostics.Stopwatch.GetTimestamp();
         bool ok = _encoder.Encode(image, out EncodedData[] encoded);
         if (!ok || encoded.Length == 0) return;
+        var encodeMs = (System.Diagnostics.Stopwatch.GetTimestamp() - encodeStart) * 1000L / System.Diagnostics.Stopwatch.Frequency;
 
         byte[] accessUnit = encoded.GetAllBytes();
         bool isKeyFrame = encoded[0].FrameType == FrameType.IDR;
@@ -191,7 +193,7 @@ public class OpenH264Encoder : IEncoder
 
         if (_emittedFrames % 60 == 1)
         {
-            Log.Info($"OpenH264 emitted {_emittedFrames} frames (last {accessUnit.Length}B key={isKeyFrame})");
+            Log.Info($"OpenH264 emitted {_emittedFrames} frames (last {accessUnit.Length}B key={isKeyFrame} encode={encodeMs}ms {width}x{height})");
         }
         PacketEncoded?.Invoke(new EncodedPacket(accessUnit, frame.TimestampUs, isKeyFrame));
     }
