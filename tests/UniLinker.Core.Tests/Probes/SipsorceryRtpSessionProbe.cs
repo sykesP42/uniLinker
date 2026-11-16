@@ -68,5 +68,20 @@ public class SipsorceryRtpSessionProbe
         _output.WriteLine("SetSecurityDescription: {0}", methods.Contains("SetSecurityDescription"));
         _output.WriteLine("SendVideoFrame: {0}", methods.Contains("SendVideoFrame"));
         _output.WriteLine("SendRTPRaw: {0}", methods.Contains("SendRTPRaw"));
+
+        // M3 implementation needs the RtpSessionConfig property surface.
+        var cfg = asm.GetType("SIPSorcery.Net.RtpSessionConfig");
+        if (cfg != null)
+        {
+            _output.WriteLine("=== RtpSessionConfig (visible={0}) ===", cfg.IsVisible);
+            foreach (var prop in cfg.GetProperties(BindingFlags.Public | BindingFlags.Instance))
+            {
+                _output.WriteLine("  property {0} {1}", prop.PropertyType.Name, prop.Name);
+            }
+            foreach (var f in cfg.GetFields(BindingFlags.Public | BindingFlags.Instance))
+            {
+                _output.WriteLine("  field {0} {1}", f.FieldType.Name, f.Name);
+            }
+        }
     }
 }

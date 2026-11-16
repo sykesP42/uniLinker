@@ -98,9 +98,36 @@ public class PeerMesh : IPeerMesh, IDisposable
     ///
     /// For DataChannel type, creates a reliable data channel instead of media track.
     /// </summary>
+    private readonly Dictionary<string, IChannel> _directChannels = new();
+
+    /// <summary>
+    /// Pre-register a transport channel created OUTSIDE the WebRTC flow (M3
+    /// direct RTP: SignalingService builds a DirectRtpChannel on an "rtp"
+    /// signaling request). CreateChannel returns it so plugins see a normal
+    /// viewer — no plugin changes needed.
+    /// </summary>
+    public void RegisterDirectChannel(PeerInfo peer, IChannel channel)
+    {
+        lock (_lock)
+        {
+            _directChannels[peer.Id] = channel;
+            _peers[peer.Id] = peer;
+        }
+    }
+
     public async Task<IChannel?> CreateChannel(
         PeerInfo peer, string capability, ChannelOptions? options = null)
     {
+        // Direct-RTP sessions are pre-built by the signaling layer; hand the
+        // same channel back so the plugin's viewer flow works unchanged.
+        lock (_lock)
+        {
+            if (_directChannels.TryGetValue(peer.Id, out var direct))
+            {
+                return direct;
+            }
+        }
+
         // Check if DataChannel is requested
         if (options?.Type == ChannelType.DataChannel)
         {

@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -96,7 +97,31 @@ public sealed class SignalingKestrelHost : IDisposable
                 msg = null;
             }
 
-            if (msg is null || string.IsNullOrEmpty(msg.Sdp))
+            if (msg is null)
+            {
+                return Results.Text("Invalid signaling message", "text/plain", statusCode: 400);
+            }
+
+            // M3 direct RTP: no SDP involved, the requester names its UDP port.
+            if (msg.Type == "rtp")
+            {
+                if (msg.RtpPort <= 0)
+                {
+                    return Results.Text("rtpPort required", "text/plain", statusCode: 400);
+                }
+                try
+                {
+                    var remoteIp = ctx.Connection.RemoteIpAddress?.MapToIPv4() ?? IPAddress.Loopback;
+                    var answer = await _service.HandleRtpSessionAsync(msg, remoteIp);
+                    return Results.Json(answer, jsonOpts);
+                }
+                catch (Exception ex)
+                {
+                    return Results.Text($"rtp session failed: {ex.Message}", "text/plain", statusCode: 500);
+                }
+            }
+
+            if (string.IsNullOrEmpty(msg.Sdp))
             {
                 return Results.Text("Invalid signaling message", "text/plain", statusCode: 400);
             }

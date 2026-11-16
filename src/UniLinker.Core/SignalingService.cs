@@ -1,3 +1,4 @@
+using System.Net;
 using UniLinker.Plugin.Sdk;
 
 namespace UniLinker.Core;
@@ -138,6 +139,53 @@ public class SignalingService : IDisposable
         };
     }
 
+    /// <summary>
+    /// Handle a direct-RTP session request (M3, /signaling with type "rtp"):
+    /// build a DirectRtpChannel toward the requester's UDP listener, register
+    /// it so the plugin's viewer flow picks it up, and return the answer the
+    /// Android side needs (our SDES crypto line + RTP bind port + SSRC).
+    /// Returns null when rtpPort is missing (transport → 400).
+    /// </summary>
+    public async Task<RtpSessionAnswer?> HandleRtpSessionAsync(
+        SignalingMessage msg, IPAddress remoteIp, int bindPort = DirectRtpChannel.DefaultRtpPort)
+    {
+        if (msg.RtpPort <= 0) return null;
+
+        var peerId = string.IsNullOrEmpty(msg.FromPeerId) ? "unknown" : msg.FromPeerId;
+        var peerInfo = new PeerInfo
+        {
+            Id = peerId,
+            Name = peerId,
+            IpAddress = remoteIp.ToString(),
+            Port = msg.RtpPort,
+            State = PeerState.Discovered,
+            Capabilities = [msg.Capability ?? "screen-capture"],
+        };
+
+        var channel = new DirectRtpChannel(
+            peerInfo, msg.Capability ?? "screen-capture",
+            new IPEndPoint(remoteIp, msg.RtpPort), bindPort);
+        try
+        {
+            await channel.OpenAsync();
+        }
+        catch (Exception ex)
+        {
+            channel.Dispose();
+            Log.Info($"Direct RTP session for '{peerId}' failed: {ex.Message}");
+            throw; // transport → 500; e.g. bind port already in use (E_BUSY)
+        }
+
+        _peerMesh.RegisterDirectChannel(peerInfo, channel);
+        _ = _peerMesh.RaiseChannelRequestedAsync(peerInfo, channel.Capability);
+
+        return new RtpSessionAnswer(
+            Type: "rtp-answer",
+            Crypto: channel.CryptoLine,
+            Ssrc: channel.Ssrc,
+            RtpPort: bindPort);
+    }
+
     /// <summary>POST /ice — feed a remote ICE candidate into the pending peer
     /// connection. Unknown peers are silently ignored (legacy behavior).</summary>
     public Task HandleIceCandidateAsync(IceCandidateMessage msg)
@@ -214,10 +262,13 @@ public class SignalingService : IDisposable
 /// </summary>
 public class SignalingMessage
 {
-    public string Type { get; set; } = ""; // "offer" or "answer"
+    public string Type { get; set; } = ""; // "offer", "answer" or "rtp"
     public string Sdp { get; set; } = "";
     public string FromPeerId { get; set; } = "";
     public string? Capability { get; set; }
+
+    /// <summary>type=="rtp": the requester's UDP listening port (M3 direct tier).</summary>
+    public int RtpPort { get; set; }
 }
 
 /// <summary>/ice wire DTO (camelCase on the wire).</summary>
@@ -228,3 +279,14 @@ public class IceCandidateMessage
     public string? SdpMid { get; set; }
     public int SdpMLineIndex { get; set; }
 }
+
+/// <summary>
+/// Direct-RTP session answer (M3, /signaling type "rtp"). Android needs
+/// exactly three facts: our SDES crypto line (unprotect inbound), the UDP
+/// port our session bound (informational), and the stream SSRC.
+/// </summary>
+public record RtpSessionAnswer(
+    string Type,
+    string Crypto,
+    uint Ssrc,
+    int RtpPort);

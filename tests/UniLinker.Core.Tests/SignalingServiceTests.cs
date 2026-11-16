@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 using FluentAssertions;
 using UniLinker.Core;
@@ -123,5 +124,43 @@ public class SignalingServiceTests
         service.Stop();
 
         service.PendingIceCount.Should().Be(0, "Stop disposes and clears pending negotiated connections");
+    }
+}
+
+public class SignalingRtpSessionTests
+{
+    [Fact]
+    public async Task HandleRtpSessionAsync_creates_direct_channel_and_returns_answer()
+    {
+        var service = new SignalingService(new PeerMesh(), 9527);
+        var msg = new SignalingMessage
+        {
+            Type = "rtp",
+            FromPeerId = "test-android-3",
+            Capability = "screen-capture",
+            RtpPort = 5607,
+        };
+
+        var answer = await service.HandleRtpSessionAsync(msg, IPAddress.Loopback, bindPort: 0);
+
+        answer.Should().NotBeNull();
+        answer!.Type.Should().Be("rtp-answer");
+        answer.Crypto.Should().StartWith("1 AES_CM_128_HMAC_SHA1_80 inline:");
+        Convert.FromBase64String(answer.Crypto["1 AES_CM_128_HMAC_SHA1_80 inline:".Length..]).Should().HaveCount(30);
+        answer.RtpPort.Should().Be(0, "ephemeral bind requested by the test");
+
+        service.Stop(); // disposes the direct channel's RTP session
+    }
+
+    [Fact]
+    public async Task HandleRtpSessionAsync_without_rtp_port_returns_null()
+    {
+        var service = new SignalingService(new PeerMesh(), 9527);
+
+        var answer = await service.HandleRtpSessionAsync(
+            new SignalingMessage { Type = "rtp", FromPeerId = "x", RtpPort = 0 },
+            IPAddress.Loopback, bindPort: 0);
+
+        answer.Should().BeNull("transport maps null to 400 rtpPort required");
     }
 }
