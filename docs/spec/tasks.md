@@ -19,10 +19,10 @@
 | # | 任务 | 产出 | 验收命令 | 禁止 | 状态 |
 |---|------|------|----------|------|------|
 | M2-T1 | 证据与规格 | `SipsorceryRtpSessionProbe`（RTPSession/SDES API 证据）；`M2-kestrel.md`；`M3-direct-rtp.md` | 探针绿且 spec-critical facts 落文档 | spec 含未证实 API 假设 | ✅ |
-| M2-T2 | 抽 SignalingService | `src/UniLinker.Core/SignalingService.cs`（传输无关逻辑）+ `SignalingServiceTests`（test-first：先红后绿）；FilterLoopbackCandidates 迁移 | `dotnet test` 全绿（先红证明测试有效） | Service 引 ASP.NET 类型 | ⬜ |
-| M2-T3 | Kestrel 宿主 + 切换 | `SignalingKestrelHost`（9527 双栈、CORS、静态、契约路由）；App.xaml.cs 切换；删 SignalingServer.cs、/ice-pending、ExperimentalKestrel 探针 | msbuild 绿 | 留双服务并存；改 JSON 契约 | ⬜ |
-| M2-T4 | 回归验证 | 全量验证记录 | 单测全绿；E2E SM01–05 + FT01–03 绿；curl 契约基线逐项过（含 OPTIONS/静态/400 文案/netstat 双栈） | 红灯合并 | ⬜ |
-| M2-T5 | 沉淀 | architecture.md 更新；tasks 勾选；记忆 | 文档与实际一致 | 漏记 | ⬜ |
+| M2-T2 | 抽 SignalingService | `src/UniLinker.Core/SignalingService.cs`（传输无关逻辑）+ `SignalingServiceTests`（test-first：先红后绿）；FilterLoopbackCandidates 迁移 | 6/6 绿，全套 22/22（b39da42） | Service 引 ASP.NET 类型 | ✅ b39da42 |
+| M2-T3 | Kestrel 宿主 + 切换 | `SignalingKestrelHost`（9527 双栈、CORS、静态、契约路由）；App.xaml.cs 切换；删 SignalingServer.cs、/ice-pending、ExperimentalKestrel 探针 | msbuild 绿 | 留双服务并存；改 JSON 契约 | ✅ 392cff3 |
+| M2-T4 | 回归验证 | 全量验证记录 | 单测 22/22；E2E SM01–05 5/5 + FT01–03 3/3；curl 契约基线逐项过（OPTIONS 204/静态 200/400 文案逐字节/ice-pending 404/netstat 双栈）；中途抓到 2 个真坑（OPTIONS 路由候选 405、UseWebRoot NotSupportedException）已修并沉淀 | 红灯合并 | ✅ |
+| M2-T5 | 沉淀 | architecture.md 更新；tasks 勾选；记忆 | 文档与实际一致 | 漏记 | ✅ |
 
 ## M3：直连 RTP 档（spec：M3-direct-rtp.md，M2 后启动）
 

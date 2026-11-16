@@ -43,7 +43,8 @@ Plugin SDK (interfaces) → Core Platform → Plugins → UI Shell
 
 - `Platform` — plugin host, orchestrates lifecycle; built-in plugins register via `Platform.RegisterPlugin()`, external DLLs are still loaded from `<output>/plugins/`
 - `PeerMesh` — WebRTC connection management; `RegisterIncomingConnection(peer, pc)` binds the exact negotiated connection
-- `SignalingServer` — **TcpListener-based HTTP server on 0.0.0.0:9527** (HttpListener was localhost-only and http.sys needs admin URL ACLs). Endpoints: `/info`, `/api/status`, `/signaling`, `/ice`, `/ice-pending`, static files from `web/`
+- `SignalingService` (Core) — transport-free signaling business logic (offer handling, loopback candidate filter, info/status payloads); wire DTOs `SignalingMessage`/`IceCandidateMessage` live here, shapes locked by `SignalingContractTests`
+- `SignalingKestrelHost` (WinUI) — **Kestrel on 0.0.0.0:9527 (IPv6 dual-mode)**, pure transport mapping onto `SignalingService` (replaced the hand-rolled TcpListener server in M2). Endpoints: `/info`, `/api/status`, `/signaling`, `/ice`, static viewer from `web/`; CORS `*` on every response; OPTIONS → 204. `/ice-pending` was removed as dead code
 - `DiscoveryService` — mDNS advertise (Makaretu.Dns.Multicast) + browse (Zeroconf)
 - `IPlugin` / `IIncomingChannelHandler` — plugin interfaces; the latter receives data channels opened by remote peers
 
@@ -75,5 +76,11 @@ Plugin SDK (interfaces) → Core Platform → Plugins → UI Shell
 - H264Sharp's `RgbImage(Bgra, w, h, stride, data)` handles stride-padded WGC frames natively
 
 **Signaling port:** default 9527, configurable in Settings (saving restarts the server at runtime). First run triggers a Windows Firewall prompt — required for LAN access.
+
+**Kestrel host gotchas (M2, all empirical):**
+- Web root must be set via `WebApplication.CreateBuilder(new WebApplicationOptions { WebRootPath = ... })` — `builder.WebHost.UseWebRoot()` afterwards throws `NotSupportedException`
+- OPTIONS preflight must short-circuit in MIDDLEWARE; a catch-all `MapMethods("{*path}", "OPTIONS")` route candidate makes ASP.NET answer **405** for plain GETs
+- OnLaunched server failures must go to the file log (`Log.Info`) — `Debug.WriteLine` is invisible in an unpackaged GUI app
+- Adding/refreshing FrameworkReference requires `msbuild -restore`, or runtimeconfig misses Microsoft.AspNetCore.App and startup FileNotFound-crashes (in AGENTS.md)
 
 **Diagnostics:** file logs at `%APPDATA%\uniLinker\unilinker.log` (plugin + server) and `crash.log` (unhandled exceptions). Console output is invisible for unpackaged WinUI apps.
