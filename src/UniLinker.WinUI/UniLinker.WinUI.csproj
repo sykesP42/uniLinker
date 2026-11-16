@@ -33,6 +33,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- P3 probe (docs/spec/M1-probes.md): Kestrel inside the WinUI host.
+         Reference-only; the host activates it via platform.experimentalKestrel. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\UniLinker.Core\UniLinker.Core.csproj" />
     <ProjectReference Include="..\UniLinker.Plugins.FileTransfer\UniLinker.Plugins.FileTransfer.csproj" />
     <ProjectReference Include="..\UniLinker.Plugins.ScreenMirror\UniLinker.Plugins.ScreenMirror.csproj" />
