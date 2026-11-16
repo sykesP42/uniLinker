@@ -162,6 +162,10 @@ public class SignalingService : IDisposable
             Capabilities = [msg.Capability ?? "screen-capture"],
         };
 
+        // Same peer re-requesting (app restart, reconnect): dispose the stale
+        // channel first so its RTP bind port is free for the new session.
+        _peerMesh.RemoveDirectChannel(peerId)?.Dispose();
+
         var channel = new DirectRtpChannel(
             peerInfo, msg.Capability ?? "screen-capture",
             new IPEndPoint(remoteIp, msg.RtpPort), bindPort);

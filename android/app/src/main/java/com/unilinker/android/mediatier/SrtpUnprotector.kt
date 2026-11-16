@@ -16,6 +16,13 @@ import org.jitsi.utils.logging2.LoggerImpl
  * Meet) — no hand-written crypto anywhere in this module.
  */
 class SrtpUnprotector(masterKey: ByteArray, masterSalt: ByteArray) : AutoCloseable {
+    init {
+        // jitsi-srtp resolves its ciphers through a JCE provider literally
+        // named "SunJCE" (OpenJDK-only). On Android that name does not exist
+        // and its static initializer NPEs — register the alias first.
+        SunJceAlias.register()
+    }
+
     // AES-CM 128 / HMAC-SHA1-80 — the WebRTC-default profile, same shape as
     // the sender's SrtpPolicy (SIPSorcery and jitsi-srtp share this lineage).
     private val srtpPolicy = SrtpPolicy(

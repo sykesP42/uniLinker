@@ -41,6 +41,7 @@ public class OpenH264Encoder : IEncoder
 
     public event Action<EncodedPacket>? PacketEncoded;
     private int _emittedFrames;
+    private int _framesSinceIdr;
 
     public bool Initialize(int width, int height, int fps, int bitrateKbps)
     {
@@ -171,6 +172,21 @@ public class OpenH264Encoder : IEncoder
         byte[] accessUnit = encoded.GetAllBytes();
         bool isKeyFrame = encoded[0].FrameType == FrameType.IDR;
         _emittedFrames++;
+
+        // Periodic IDR (~2 s cadence): any receiver joining mid-stream — or one
+        // that missed the join-time IDR racing its UDP bind — must be able to
+        // start decoding without a signaling round trip. Applies to the idle
+        // re-encode path too (it counts as frames here).
+        if (isKeyFrame)
+        {
+            _framesSinceIdr = 0;
+        }
+        else if (++_framesSinceIdr >= _fps * 2)
+        {
+            Log.Info($"requesting IDR (frameType={encoded[0].FrameType} lastSize={accessUnit.Length})");
+            _encoder.ForceKeyFrame();
+        }
+
         if (_emittedFrames % 60 == 1)
         {
             Log.Info($"OpenH264 emitted {_emittedFrames} frames (last {accessUnit.Length}B key={isKeyFrame})");

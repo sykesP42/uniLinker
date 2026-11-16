@@ -115,6 +115,18 @@ public class PeerMesh : IPeerMesh, IDisposable
         }
     }
 
+    /// <summary>Take back a previously registered direct channel (callers must
+    /// Dispose it) — used when the same peer re-requests a session so the old
+    /// RTP bind port is freed before the new one opens.</summary>
+    public IChannel? RemoveDirectChannel(string peerId)
+    {
+        lock (_lock)
+        {
+            if (_directChannels.Remove(peerId, out var channel)) return channel;
+            return null;
+        }
+    }
+
     public async Task<IChannel?> CreateChannel(
         PeerInfo peer, string capability, ChannelOptions? options = null)
     {

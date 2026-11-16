@@ -129,9 +129,26 @@ public class ScreenMirrorPlugin : IPlugin
     private void StopSession()
     {
         _ctx?.Logger.Info("Stopping screen sharing session");
-        _capture?.Dispose();
+        // Dispose chains can race the capture/encoder worker threads; a throw
+        // here must not leave the session half-torn-down nor break the caller
+        // (direct-RTP reconnect disposes the stale channel before rebinding).
+        try
+        {
+            _capture?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            _ctx?.Logger.Error($"capture dispose threw: {ex.Message}", ex);
+        }
         _capture = null;
-        _encoder?.Dispose();
+        try
+        {
+            _encoder?.Dispose();
+        }
+        catch (Exception ex)
+        {
+            _ctx?.Logger.Error($"encoder dispose threw: {ex.Message}", ex);
+        }
         _encoder = null;
         _ctx?.Logger.Info("Screen sharing session stopped");
     }

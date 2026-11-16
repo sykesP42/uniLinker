@@ -59,7 +59,13 @@ dependencies {
 
     // Direct RTP tier (M3): SDES-keyed SRTP — the battle-tested pure-Java
     // implementation used by Jitsi Meet. No hand-written crypto.
-    implementation("org.jitsi:jitsi-srtp:1.1-25-gfe5d2f6")
+    // Pinned to 1.0-4: newer lines reference java.lang.ref.Cleaner (Java 9+),
+    // which does not exist on Android 8 and kills the provider's class init.
+    implementation("org.jitsi:jitsi-srtp:1.0-4-g5a06536") {
+        // Old transitive kotlin-stdlib bundle clashes with kotlin-stdlib 2.x;
+        // jitsi-srtp 1.0-4 itself is pure Java.
+        exclude(group = "org.jetbrains.kotlin", module = "kotlin-osgi-bundle")
+    }
 
     // JSON
     implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")

@@ -177,7 +177,16 @@ internal class DirectRtpChannel : IChannel
         try { _session?.Close("channel disposed"); } catch { }
         try { _session?.Dispose(); } catch { }
         _session = null;
-        OnClose?.Invoke();
+        try
+        {
+            OnClose?.Invoke();
+        }
+        catch (Exception ex)
+        {
+            // A viewer-release handler must never break disposal (reconnect
+            // flow: the stale channel is disposed before the new one binds).
+            Log.Info($"Direct RTP channel {Id} OnClose handler threw: {ex.Message}");
+        }
     }
 
     private static uint ExtractSsrc(string offerSdp)
