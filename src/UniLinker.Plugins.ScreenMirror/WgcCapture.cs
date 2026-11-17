@@ -32,6 +32,15 @@ public class WgcCapture : ICapture
     private System.Threading.Timer? _pollTimer;
     private int _emptyPolls;
     private Windows.Graphics.SizeInt32 _poolSize;
+    private long _lastDownscaleMs;
+    private ID3D11VideoDevice? _videoDevice;
+    private ID3D11VideoContext? _videoContext;
+    private ID3D11VideoProcessorEnumerator? _vpEnum;
+    private ID3D11VideoProcessor? _videoProcessor;
+    private ID3D11Texture2D? _scaledTexture;
+    private ID3D11Texture2D? _stagingSmall;
+    private int _outWidth;
+    private int _outHeight;
 
     public bool Start(int width, int height, int fps)
     {
@@ -66,24 +75,71 @@ public class WgcCapture : ICapture
             }
             Log.Info($"WGC: item '{_item.DisplayName}' size {_item.Size.Width}x{_item.Size.Height} thread={Environment.CurrentManagedThreadId} supported={Windows.Graphics.Capture.GraphicsCaptureSession.IsSupported()} d3dDevice={_d3dDevice != null} ctx={_d3dContext != null}");
 
-            // Pool at the REQUESTED size: WGC scales the monitor content into
-            // pool-sized frames, so a 720p-class config actually captures
-            // 720p (native-size pools silently quadrupled the encode cost
-            // while the bitrate stayed at the 720p tier).
-            var native = _width <= 0 || _height <= 0;
-            _poolSize = native
-                ? _item.Size
-                : new Windows.Graphics.SizeInt32(_width, _height);
-            Log.Info($"WGC: pool size {_poolSize.Width}x{_poolSize.Height} ({(native ? "native" : "scaled")})");
+            // Pool at NATIVE size: WGC monitor capture CROPS the display
+            // content into pool-sized textures (top-left 1:1, no scaling) —
+            // a 1280x800 pool on a 2560x1600 display delivered the top-left
+            // quarter magnified. Capture native, then downscale on the CPU
+            // (Downscale2x2) to the configured output tier.
+            _poolSize = _item.Size;
+            Log.Info($"WGC: poolX {_poolSize.Width}x{_poolSize.Height} (native), output tier {_width}x{_height}");
 
             // CreateFreeThreaded delivers FrameArrived without needing a
             // DispatcherQueue on the calling thread (capture runs on the
             // plugin's background session thread).
+            // Output tier: config WxH or native when unset. The GPU scales
+            // native -> tier via VideoProcessor (a 2560x1600 pool CROPS, it
+            // does not scale — see DownscaleBox history).
+            _outWidth = _width > 0 ? _width : _poolSize.Width;
+            _outHeight = _height > 0 ? _height : _poolSize.Height;
+
             _framePool = Direct3D11CaptureFramePool.CreateFreeThreaded(
                 _winrtDevice!,
                 DirectXPixelFormat.B8G8R8A8UIntNormalized,
                 2,
                 _poolSize);
+
+            if (_outWidth != _poolSize.Width || _outHeight != _poolSize.Height)
+            {
+                // GPU downscale chain: VideoProcessor scales the full-frame
+                // texture into a small GPU texture; the CPU then reads only
+                // 4 MB instead of 16 MB per frame.
+                _videoDevice = _d3dDevice!.QueryInterface<ID3D11VideoDevice>();
+                _videoContext = _d3dContext!.QueryInterface<ID3D11VideoContext>();
+                var contentDesc = new VideoProcessorContentDescription
+                {
+                    InputFrameFormat = VideoFrameFormat.Progressive,
+                    InputWidth = unchecked((uint)_poolSize.Width),
+                    InputHeight = unchecked((uint)_poolSize.Height),
+                    OutputWidth = unchecked((uint)_outWidth),
+                    OutputHeight = unchecked((uint)_outHeight),
+                };
+                _vpEnum = _videoDevice.CreateVideoProcessorEnumerator(contentDesc);
+                _videoProcessor = _videoDevice.CreateVideoProcessor(_vpEnum, 0);
+                _scaledTexture = _d3dDevice.CreateTexture2D(new Texture2DDescription
+                {
+                    Width = (uint)_outWidth,
+                    Height = (uint)_outHeight,
+                    MipLevels = 1,
+                    ArraySize = 1,
+                    Format = Format.B8G8R8A8_UNorm,
+                    SampleDescription = new SampleDescription(1, 0),
+                    Usage = ResourceUsage.Default,
+                    BindFlags = BindFlags.RenderTarget,
+                });
+                _stagingSmall = _d3dDevice.CreateTexture2D(new Texture2DDescription
+                {
+                    Width = (uint)_outWidth,
+                    Height = (uint)_outHeight,
+                    MipLevels = 1,
+                    ArraySize = 1,
+                    Format = Format.B8G8R8A8_UNorm,
+                    SampleDescription = new SampleDescription(1, 0),
+                    Usage = ResourceUsage.Staging,
+                    BindFlags = BindFlags.None,
+                    CPUAccessFlags = CpuAccessFlags.Read,
+                });
+                Log.Info($"WGC: VideoProcessor chain ready {_poolSize.Width}x{_poolSize.Height} → {_outWidth}x{_outHeight}");
+            }
 
             _session = _framePool.CreateCaptureSession(_item);
             // NOTE: leave cursor capture on by default; toggling this property
@@ -140,7 +196,7 @@ public class WgcCapture : ICapture
                 _emptyPolls++;
                 if (_emptyPolls >= 10)
                 {
-                    Log.Info("WGC: pool empty x10 — recreating frame pool");
+                    Log.Info("WGC: poolX empty x10 — recreating frame pool");
                     _framePool.Recreate(_winrtDevice!, DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, _poolSize);
                     _emptyPolls = 0;
                 }
@@ -162,12 +218,127 @@ public class WgcCapture : ICapture
             var readbackStart = System.Diagnostics.Stopwatch.GetTimestamp();
             using (frame)
             {
-                DeliverFrame(frame, readbackStart);
+                if (_videoProcessor != null)
+                {
+                    DeliverFrameGPU(frame, readbackStart);
+                }
+                else
+                {
+                    DeliverFrame(frame, readbackStart);
+                }
             }
         }
         catch (Exception ex)
         {
             Log.Error($"WGC frame error: {ex}");
+        }
+    }
+
+    /// <summary>
+    /// GPU path: scale the full-frame texture down to the output tier with
+    /// the VideoProcessor, then read back only the small CPU-visible texture
+    /// (4 MB at the 720p tier instead of 16 MB native).
+    /// </summary>
+    private void DeliverFrameGPU(Direct3D11CaptureFrame frame, long readbackStart)
+    {
+        var surface = frame.Surface;
+        var dxgiAccess = WinRT.CastExtensions.As<IDirect3DDxgiInterfaceAccessNative>(surface);
+        nint dxgiSurfacePtr = nint.Zero;
+        nint texturePtr = nint.Zero;
+        try
+        {
+            Guid iidDxgiSurface = typeof(IDXGISurface).GUID;
+            int hr = dxgiAccess.GetInterface(in iidDxgiSurface, out dxgiSurfacePtr);
+            if (hr < 0 || dxgiSurfacePtr == nint.Zero)
+            {
+                Log.Error($"WGC: GetInterface(IDXGISurface) failed hr=0x{hr:X8}");
+                return;
+            }
+            Guid iidTexture2D = typeof(ID3D11Texture2D).GUID;
+            hr = Marshal.QueryInterface(dxgiSurfacePtr, in iidTexture2D, out texturePtr);
+            if (hr < 0 || texturePtr == nint.Zero)
+            {
+                Log.Error($"WGC: QI(ID3D11Texture2D) failed hr=0x{hr:X8}");
+                return;
+            }
+            var frameTexture = new ID3D11Texture2D(texturePtr);
+            var desc = frameTexture.Description;
+
+            using var inputView = _videoDevice!.CreateVideoProcessorInputView(
+                frameTexture, _vpEnum!, new VideoProcessorInputViewDescription
+                {
+                    ViewDimension = VideoProcessorInputViewDimension.Texture2D,
+                    Texture2D = new Texture2DVideoProcessorInputView { MipSlice = 0 },
+                });
+            using var outputView = _videoDevice.CreateVideoProcessorOutputView(
+                _scaledTexture!, _vpEnum!, new VideoProcessorOutputViewDescription
+                {
+                    ViewDimension = VideoProcessorOutputViewDimension.Texture2D,
+                    Texture2D = new Texture2DVideoProcessorOutputView { MipSlice = 0 },
+                });
+
+            _videoContext!.VideoProcessorSetStreamFrameFormat(_videoProcessor!, 0, VideoFrameFormat.Progressive);
+            _videoContext.VideoProcessorSetStreamSourceRect(_videoProcessor!, 0, true,
+                new Vortice.RawRect(0, 0, (int)desc.Width, (int)desc.Height));
+            _videoContext.VideoProcessorSetStreamDestRect(_videoProcessor!, 0, true,
+                new Vortice.RawRect(0, 0, _outWidth, _outHeight));
+
+            var stream = new VideoProcessorStream
+            {
+                Enable = true,
+                OutputIndex = 0,
+                InputFrameOrField = 0,
+                InputSurface = inputView,
+            };
+            _videoContext.VideoProcessorBlt(_videoProcessor!, outputView, 0, new[] { stream });
+
+            // Read back the SCALED texture (4 MB) — the VP blit and the copy
+            // both complete before the CPU-visible map.
+            _d3dContext!.CopyResource(_stagingSmall!, _scaledTexture!);
+            _d3dContext.Map(_stagingSmall!, 0, MapMode.Read,
+                Vortice.Direct3D11.MapFlags.None, out MappedSubresource mapped);
+            var rowPitch = (int)mapped.RowPitch;
+            var rawData = new byte[rowPitch * _outHeight];
+            Marshal.Copy(mapped.DataPointer, rawData, 0, rawData.Length);
+            _d3dContext.Unmap(_stagingSmall!, 0);
+
+            var ts = (long)(frame.SystemRelativeTime.TotalMilliseconds * 1000);
+            var captureFrame = new CaptureFrame(
+                D3dTexture: nint.Zero,
+                Width: _outWidth,
+                Height: _outHeight,
+                Pitch: rowPitch,
+                TimestampUs: ts,
+                RawData: rawData);
+
+            _framesDelivered++;
+            if (_framesDelivered == 1)
+            {
+                // One-shot probe: dump the GPU-scaled frame (the encoder input)
+                // to check whether the TOP of the display survives the
+                // capture chain (frozen-top diagnosis).
+                try
+                {
+                    var dumpPath = Path.Combine(Path.GetTempPath(), "wgcsmall.bin");
+                    File.WriteAllBytes(dumpPath, rawData);
+                    File.WriteAllText(Path.ChangeExtension(dumpPath, ".meta"),
+                        $"{_outWidth}x{_outHeight} pitch={rowPitch}");
+                    Log.Info($"WGC: scaled dump written {dumpPath}");
+                }
+                catch { }
+            }
+            if (_framesDelivered == 1 || _framesDelivered % 120 == 0)
+            {
+                var rbMs = (System.Diagnostics.Stopwatch.GetTimestamp() - readbackStart) * 1000L
+                    / System.Diagnostics.Stopwatch.Frequency;
+                Log.Info($"WGC frame #{_framesDelivered} {desc.Width}x{desc.Height} → {_outWidth}x{_outHeight} gpuTotal={rbMs}ms");
+            }
+            FrameCaptured?.Invoke(captureFrame);
+        }
+        finally
+        {
+            if (dxgiSurfacePtr != nint.Zero) Marshal.Release(dxgiSurfacePtr);
+            // texturePtr is owned by the Vortice wrapper (new ID3D11Texture2D).
         }
     }
 
@@ -242,34 +413,39 @@ public class WgcCapture : ICapture
 
                 var ts = (long)(frame.SystemRelativeTime.TotalMilliseconds * 1000);
 
+                var outW = (int)desc.Width;
+                var outH = (int)desc.Height;
+                var outPitch = rowPitch;
+                var outData = rawData;
+
+                // Downscale to the configured OUTPUT tier (config width/height;
+                // 0 = native). WGC pools CROP monitor content, they do not
+                // scale it — the downscale must happen here, on the CPU, after
+                // the full-frame readback.
+                if (_width > 0 && _height > 0 && (outW != _width || outH != _height))
+                {
+                    var dsStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                    outData = DownscaleBox(rawData, outW, outH, rowPitch, _width, _height);
+                    outW = _width;
+                    outH = _height;
+                    outPitch = _width * 4;
+                    _lastDownscaleMs = (System.Diagnostics.Stopwatch.GetTimestamp() - dsStart) * 1000L
+                        / System.Diagnostics.Stopwatch.Frequency;
+                }
+
                 var captureFrame = new CaptureFrame(
                     D3dTexture: nint.Zero,
-                    Width: (int)desc.Width,
-                    Height: (int)desc.Height,
-                    Pitch: rowPitch,
+                    Width: outW,
+                    Height: outH,
+                    Pitch: outPitch,
                     TimestampUs: ts,
-                    RawData: rawData);
+                    RawData: outData);
 
                 _framesDelivered++;
                 if (_framesDelivered == 1 || _framesDelivered % 120 == 0)
                 {
                     var rbMs = System.Diagnostics.Stopwatch.GetTimestamp() - readbackStart;
-                    Log.Info($"WGC frame #{_framesDelivered} {desc.Width}x{desc.Height} readback={rbMs * 1000L / System.Diagnostics.Stopwatch.Frequency}ms pitch={rowPitch}");
-                }
-                if (_framesDelivered == 1)
-                {
-                    // One-shot encoded-input probe: dump the raw BGRA readback
-                    // to inspect the capture content itself (snow-rectangle
-                    // diagnosis: capture vs encode vs decode). TEMPORARY.
-                    try
-                    {
-                        var dumpPath = Path.Combine(Path.GetTempPath(), "wgcframe.bin");
-                        File.WriteAllBytes(dumpPath, rawData);
-                        File.WriteAllText(Path.ChangeExtension(dumpPath, ".meta"),
-                            $"{desc.Width}x{desc.Height} pitch={rowPitch}");
-                        Log.Info($"WGC: frame dump written {dumpPath}");
-                    }
-                    catch { }
+                    Log.Info($"WGC frame #{_framesDelivered} capture {desc.Width}x{desc.Height} → out {outW}x{outH} readback={rbMs * 1000L / System.Diagnostics.Stopwatch.Frequency}ms downscale={_lastDownscaleMs}ms");
                 }
                 FrameCaptured?.Invoke(captureFrame);
             }
@@ -286,12 +462,75 @@ public class WgcCapture : ICapture
         }
     }
 
+    /// <summary>
+    /// Box-filter downscale of a BGRA frame to a smaller size. Fast path for
+    /// exact 2x1 reductions (the common 2560x1600 → 1280x800 tier); general
+    /// sizes fall back to area sampling. Allocates the destination buffer.
+    /// </summary>
+    internal static byte[] DownscaleBox(byte[] src, int srcW, int srcH, int srcPitch, int dstW, int dstH)
+    {
+        var dst = new byte[dstW * 4 * dstH];
+        if (srcW == dstW * 2 && srcH == dstH * 2)
+        {
+            // Exact 2x: average 2x2 pixel blocks.
+            for (int dy = 0; dy < dstH; dy++)
+            {
+                int s0 = dy * 2 * srcPitch;
+                int s1 = s0 + srcPitch;
+                int d = dy * dstW * 4;
+                for (int dx = 0; dx < dstW; dx++)
+                {
+                    int sx = dx * 8;
+                    int dPx = d + dx * 4;
+                    for (int c = 0; c < 4; c++)
+                    {
+                        int v = src[s0 + sx + c] + src[s0 + sx + 4 + c]
+                              + src[s1 + sx + c] + src[s1 + sx + 4 + c];
+                        dst[dPx + c] = (byte)(v >> 2);
+                    }
+                }
+            }
+            return dst;
+        }
+
+        // General case: area-weighted nearest sample (quality fallback for
+        // arbitrary ratios; the primary tiers are exact 2x).
+        for (int dy = 0; dy < dstH; dy++)
+        {
+            int sy = Math.Min(srcH - 1, dy * srcH / dstH);
+            int d = dy * dstW * 4;
+            for (int dx = 0; dx < dstW; dx++)
+            {
+                int sx = Math.Min(srcW - 1, dx * srcW / dstW) * 4;
+                int s = sy * srcPitch + sx;
+                dst[d + dx * 4] = src[s];
+                dst[d + dx * 4 + 1] = src[s + 1];
+                dst[d + dx * 4 + 2] = src[s + 2];
+                dst[d + dx * 4 + 3] = src[s + 3];
+            }
+        }
+        return dst;
+    }
+
     public void Stop()
     {
         _isCapturing = false;
 
         _pollTimer?.Dispose();
         _pollTimer = null;
+
+        _videoProcessor?.Dispose();
+        _videoProcessor = null;
+        _vpEnum?.Dispose();
+        _vpEnum = null;
+        _scaledTexture?.Dispose();
+        _scaledTexture = null;
+        _stagingSmall?.Dispose();
+        _stagingSmall = null;
+        _videoContext?.Dispose();
+        _videoContext = null;
+        _videoDevice?.Dispose();
+        _videoDevice = null;
 
         _session?.Dispose();
         _session = null;
