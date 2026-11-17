@@ -67,6 +67,9 @@ class DirectRtpClient(private val host: String, private val signalingPort: Int) 
     val receiverStats: Triple<Int, Int, Long>?
         get() = receiver?.let { Triple(it.receivedPackets, it.lostPackets, it.bytesReceived) }
 
+    val receiverJitter: Double
+        get() = receiver?.jitterMs ?: 0.0
+
     /** SHA-256 fingerprint of a DER-encoded certificate, uppercase hex. */
     private fun fingerprintOf(cert: X509Certificate): String =
         MessageDigest.getInstance("SHA-256").digest(cert.encoded)
@@ -116,20 +119,24 @@ class DirectRtpClient(private val host: String, private val signalingPort: Int) 
      * Returns the pairing code, or null when the probe fails.
      */
     suspend fun probePairing(): Pair<String, String>? = withContext(Dispatchers.IO) {
+        android.util.Log.d("DirectRtp", "probe: entering withContext")
         val probeTm = ProbeTrustManager()
         val probeClient = http.forTrust(probeTm)
         try {
             val request = Request.Builder()
                 .url("https://$host:$signalingPort/ulp/pairing")
                 .build()
+            android.util.Log.d("DirectRtp", "probe: executing request")
             probeClient.newCall(request).execute().use { response ->
+                android.util.Log.d("DirectRtp", "probe: response ${response.code}")
                 if (!response.isSuccessful) return@withContext null
                 val obj = JSONObject(response.body!!.string())
                 val fp = probeTm.lastFingerprint ?: return@withContext null
                 Pair(obj.optString("pairingCode", ""), fp)
             }
-        } catch (e: Exception) {
-            _error.value = "pairing probe failed: ${e.message}"
+        } catch (e: Throwable) {
+            android.util.Log.e("DirectRtp", "pairing probe failed", e)
+            _error.value = "pairing probe failed: ${e.javaClass.simpleName}: ${e.message}"
             null
         }
     }

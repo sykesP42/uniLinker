@@ -63,6 +63,9 @@ public sealed class SignalingKestrelHost : IDisposable
             WebRootPath = Directory.Exists(webRoot) ? webRoot : null,
         });
         builder.Logging.ClearProviders();
+        // Forward ASP.NET/Kestrel warnings+errors to the file log — silent
+        // 500s were undiagnosable with the providers cleared.
+        builder.Logging.AddProvider(new KestrelFileLoggerProvider());
         if (_identity is not null)
         {
             // Dual listeners: plain HTTP (browser viewer compatibility) +
@@ -81,6 +84,8 @@ public sealed class SignalingKestrelHost : IDisposable
         }
 
         var app = builder.Build();
+
+        Log.Info($"SignalingKestrelHost: identity={_identity != null} pairingPort={_pairingPort} urls=[{string.Join(",", app.Urls)}]");
 
         // Legacy parity: CORS headers on every response, preflight 204.
         // OPTIONS is short-circuited in middleware (NOT as a catch-all route:
@@ -111,25 +116,23 @@ public sealed class SignalingKestrelHost : IDisposable
         // M4 pairing discovery (informational only — the SAS code is compared
         // on-screen by the human; trusting this endpoint alone would defeat
         // the purpose of the pairing).
-        app.MapGet("/ulp/pairing", () => Results.Json(new
+        app.MapGet("/ulp/pairing", () =>
         {
-            pairingCode = PairingCode,
-            fingerprint = _identity?.GetCertHashString(
-                System.Security.Cryptography.HashAlgorithmName.SHA256),
-        }, jsonOpts));
+            try
+            {
+                var fp = _identity?.GetCertHashString(System.Security.Cryptography.HashAlgorithmName.SHA256);
+                Log.Info($"pairing endpoint: fp={fp} code={PairingCode}");
+                return Results.Json(new { pairingCode = PairingCode, fingerprint = fp }, jsonOpts);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"pairing endpoint failed: {ex}");
+                return Results.Text("pairing error: " + ex.Message, "text/plain", statusCode: 500);
+            }
+        });
 
         app.MapGet("/info", () => Results.Json(_service.GetInfo(), jsonOpts));
         app.MapGet("/api/status", () => Results.Json(_service.GetStatus(IsRunning), jsonOpts));
-
-        // M4 pairing discovery (informational; the SAS code is compared
-        // on-screen by the human — trusting this endpoint alone would defeat
-        // the purpose).
-        app.MapGet("/ulp/pairing", () => Results.Json(new
-        {
-            pairingCode = PairingCode,
-            fingerprint = _identity?.GetCertHashString(
-                System.Security.Cryptography.HashAlgorithmName.SHA256),
-        }, jsonOpts));
 
         // Manual body parsing preserves the legacy 400 texts byte-for-byte.
         app.MapPost("/signaling", async (HttpContext ctx) =>
@@ -209,7 +212,30 @@ public sealed class SignalingKestrelHost : IDisposable
         });
 
         _app = app;
-        return app.StartAsync(ct);
+        var startTask = app.StartAsync(ct);
+        Log.Info($"SignalingKestrelHost started: urls=[{string.Join(",", app.Urls)}]");
+        return startTask;
+    }
+
+    /// <summary>Minimal ILoggerProvider forwarding Kestrel warnings/errors
+    /// into the uniLinker file log (ClearProviders had silenced them).</summary>
+    private sealed class KestrelFileLoggerProvider : ILoggerProvider
+    {
+        public ILogger CreateLogger(string categoryName) => new KestrelFileLogger(categoryName);
+        public void Dispose() { }
+    }
+
+    private sealed class KestrelFileLogger(string categoryName) : ILogger
+    {
+        public IDisposable? BeginScope<TState>(TState state) where TState : notnull => null;
+        public bool IsEnabled(LogLevel logLevel) => logLevel >= LogLevel.Warning;
+        public void Log<TState>(LogLevel level, EventId eventId, TState state, Exception? exception, Func<TState, Exception?, string> formatter)
+        {
+            if (!IsEnabled(level)) return;
+            var text = formatter(state, exception);
+            if (exception != null) text += "\n" + exception;
+            UniLinker.Core.Log.Info($"[Kestrel/{level}] {categoryName}: {text}");
+        }
     }
 
     public void Stop()

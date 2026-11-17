@@ -46,6 +46,11 @@ class DirectRtpReceiver(
     @Volatile var bytesReceived: Long = 0
         private set
 
+    /** RFC-3550-style interarrival jitter (ms), exponentially smoothed. */
+    @Volatile var jitterMs: Double = 0.0
+        private set
+    private var lastArrivalMs: Long = -1
+
     fun start() {
         if (loop?.isActive == true) return
         val sock = DatagramSocket(null).apply {
@@ -101,6 +106,12 @@ class DirectRtpReceiver(
                 android.util.Log.w("DirectRtp", "seq gap $lastSeq->$seq (lost $gap pkts)")
             }
         }
+        val nowMs = System.currentTimeMillis()
+        if (lastArrivalMs > 0) {
+            val delta = (nowMs - lastArrivalMs).coerceAtLeast(0).toDouble()
+            jitterMs += (kotlin.math.abs(delta - 33.3) - jitterMs) / 16.0
+        }
+        lastArrivalMs = nowMs
         lastSeq = seq
         bytesReceived += bytes.size
 

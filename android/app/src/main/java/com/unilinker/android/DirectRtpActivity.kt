@@ -118,6 +118,52 @@ fun DirectRtpScreen(initialAddress: String?) {
     var hudText by remember { mutableStateOf("") }
     var ballExpanded by remember { mutableStateOf(false) }
 
+    var hudFps by remember { mutableStateOf(0.0) }
+    var hudMbps by remember { mutableStateOf(0.0) }
+    var hudJitter by remember { mutableStateOf(0.0) }
+
+    // HUD dashboard: per-metric switches (persisted) + draggable position.
+    data class HudItem(val key: String, val label: String, val default: Boolean)
+    val hudItems = listOf(
+        HudItem("fps", "帧率", true),
+        HudItem("mbps", "码率", true),
+        HudItem("jitter", "抖动", true),
+        HudItem("loss", "丢包", true),
+        HudItem("res", "分辨率", true),
+    )
+    val hudOn = hudItems.associate { it.key to mutableStateOf(prefs.getBoolean("hud_" + it.key, it.default)) }
+    var hudOffsetX by remember { mutableIntStateOf(prefs.getInt("hud_x", 0)) }
+    var hudOffsetY by remember { mutableIntStateOf(prefs.getInt("hud_y", 0)) }
+    fun persistHud() {
+        prefs.edit()
+            .putBoolean("hud_fps", hudOn["fps"]!!.value)
+            .putBoolean("hud_mbps", hudOn["mbps"]!!.value)
+            .putBoolean("hud_jitter", hudOn["jitter"]!!.value)
+            .putBoolean("hud_loss", hudOn["loss"]!!.value)
+            .putBoolean("hud_res", hudOn["res"]!!.value)
+            .putInt("hud_x", hudOffsetX)
+            .putInt("hud_y", hudOffsetY)
+            .apply()
+    }
+    fun hudLines(): List<String> {
+        val st = client?.receiverStats
+        val lines = mutableListOf<String>()
+        if (hudOn["fps"]!!.value) lines.add("帧率 %.0f fps".format(hudFps))
+        if (hudOn["mbps"]!!.value) lines.add("码率 %.1f Mbps".format(hudMbps))
+        if (hudOn["jitter"]!!.value) lines.add("抖动 %.0f ms".format(hudJitter))
+        if (hudOn["loss"]!!.value) {
+            val total = st?.first?.plus(st.second ?: 0) ?: 0
+            val loss = st?.second ?: 0
+            lines.add("丢包 %.2f%% (%d/%d)".format(if (total > 0) loss * 100.0 / total else 0.0, loss, total))
+        }
+        if (hudOn["res"]!!.value) {
+            val r = decoder?.streamSize?.value
+            lines.add("分辨率 " + (r?.let { "${it.first}×${it.second}" } ?: "—"))
+        }
+        lines.add("帧数 $decodedCount")
+        return lines
+    }
+
     fun toggleConnect() {
         if (client != null) {
             client?.stop()
@@ -139,6 +185,7 @@ fun DirectRtpScreen(initialAddress: String?) {
         val pairingPort = parsed.getOrNull(2)?.toIntOrNull() ?: 9528
         val newClient = DirectRtpClient(parsed[0], parsed[1].toIntOrNull() ?: 9527)
         newClient.pinnedFingerprint = prefs.getString("pinned_fp", null)
+        android.util.Log.d("DirectRtp", "toggle: pinned=${newClient.pinnedFingerprint}")
         client = newClient
         statusText = "Connecting…"
         scope.launch {
@@ -147,7 +194,9 @@ fun DirectRtpScreen(initialAddress: String?) {
             // the sender (pairing.txt / sender UI) and confirms. The
             // fingerprint is then pinned — every later connection verifies it.
             if (newClient.pinnedFingerprint == null) {
+                android.util.Log.d("DirectRtp", "pairing: probing…")
                 val probe = newClient.probePairing()
+                android.util.Log.d("DirectRtp", "pairing: probe done ok=${probe != null}")
                 if (probe == null) {
                     statusText = "Error: ${newClient.error.value}"
                     client = null
@@ -242,17 +291,55 @@ fun DirectRtpScreen(initialAddress: String?) {
             },
         )
 
-        // HUD — bottom-left by spec, tiny translucent text over the video.
-        Text(
-            text = hudText,
+        // HUD stat updater: rolling decoded-fps, wire bitrate, jitter — the
+        // dashboard reads these raw values through its per-metric switches.
+        if (client != null) {
+            LaunchedEffect(Unit) {
+                var lastFrames = 0
+                var lastBytes = 0L
+                var lastTime = System.nanoTime()
+                while (true) {
+                    kotlinx.coroutines.delay(500)
+                    val now = System.nanoTime()
+                    val dtSec = (now - lastTime) / 1e9
+                    val st = client?.receiverStats ?: continue
+                    val dFrames = decodedCount - lastFrames
+                    val dBytes = st.third - lastBytes
+                    lastFrames = decodedCount
+                    lastBytes = st.third
+                    lastTime = now
+                    if (dtSec <= 0) continue
+                    hudFps = dFrames / dtSec
+                    hudMbps = dBytes * 8 / dtSec / 1e6
+                    hudJitter = client?.receiverJitter ?: 0.0
+                }
+            }
+        }
+
+        // HUD dashboard — default TOP-END, draggable, per-metric switches.
+        Column(
             modifier = Modifier
-                .align(Alignment.BottomStart)
+                .align(Alignment.TopEnd)
                 .padding(10.dp)
-                .background(Color(0x66000000))
-                .padding(horizontal = 6.dp, vertical = 3.dp),
-            style = MaterialTheme.typography.labelSmall,
-            color = Color(0xFFC8E6C9),
-        )
+                .offset { IntOffset(hudOffsetX, hudOffsetY) }
+                .background(Color(0x55000000), RoundedCornerShape(8.dp))
+                .padding(horizontal = 8.dp, vertical = 5.dp)
+                .pointerInput(Unit) {
+                    detectDragGestures(
+                        onDrag = { change, drag ->
+                            change.consume()
+                            hudOffsetX += drag.x.toInt()
+                            hudOffsetY += drag.y.toInt()
+                        },
+                        onDragEnd = { persistHud() },
+                    )
+                },
+            verticalArrangement = Arrangement.spacedBy(1.dp),
+        ) {
+            hudLines().forEach { line ->
+                Text(line, style = MaterialTheme.typography.labelSmall, color = Color(0xFFC8E6C9))
+            }
+        }
 
         if (client == null) {
             Text(

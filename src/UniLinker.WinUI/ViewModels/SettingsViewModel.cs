@@ -2,7 +2,9 @@ using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.Win32;
+using System.IO;
 using System.Text.Json;
+using UniLinker.Core;
 using UniLinker.WinUI.Services;
 
 namespace UniLinker.WinUI.ViewModels;
@@ -22,6 +24,24 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private int _defaultBitrate = 1;    // 0: 10M, 1: 15M, 2: 20M
 
     [ObservableProperty] private int _languageIndex = 0; // 0: English, 1: 中文
+
+    // M4 pairing: device fingerprint + SAS pairing code (matches the code the
+    // receiver shows during first pairing).
+    [ObservableProperty] private string _pairingCode = "";
+    [ObservableProperty] private string _fingerprintShort = "";
+
+    private void LoadDeviceIdentity()
+    {
+        try
+        {
+            var identity = DeviceIdentity.LoadOrCreate(Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "uniLinker", DeviceIdentity.DefaultStoreSubdirectory));
+            PairingCode = identity.PairingCode;
+            FingerprintShort = identity.FingerprintSha256[..8];
+        }
+        catch { /* identity is informational in Settings; never break the page */ }
+    }
 
     private int _themeIndex = 2; // Default to System
     public int ThemeIndex
@@ -50,6 +70,7 @@ public partial class SettingsViewModel : ObservableObject
         _configPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
             "uniLinker", "settings.json");
+        LoadDeviceIdentity();
     }
 
     public SettingsViewModel(WebBridge bridge) : this()

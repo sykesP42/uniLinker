@@ -17,6 +17,7 @@ namespace UniLinker.Core;
 public class DeviceIdentity
 {
     public const string DefaultFileName = "device-identity.pfx";
+    public const string DefaultStoreSubdirectory = "identity";
 
     public X509Certificate2 Certificate { get; }
     public string FingerprintSha256 { get; }

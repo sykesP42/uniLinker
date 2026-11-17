@@ -86,7 +86,7 @@ public partial class App : Application
         var identity = UniLinker.Core.DeviceIdentity.LoadOrCreate(
             Path.Combine(
                 Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                "uniLinker", "identity"));
+                "uniLinker", UniLinker.Core.DeviceIdentity.DefaultStoreSubdirectory));
         Log.Info($"Device fingerprint: {identity.FingerprintSha256}");
         Log.Info($"Pairing code: {identity.PairingCode}");
 
@@ -149,7 +149,7 @@ public partial class App : Application
                 var runtimeIdentity = UniLinker.Core.DeviceIdentity.LoadOrCreate(
                     Path.Combine(
                         Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
-                        "uniLinker", "identity"));
+                        "uniLinker", UniLinker.Core.DeviceIdentity.DefaultStoreSubdirectory));
                 app._signalingServer = new SignalingKestrelHost(
                     httpPort, app._platform.PeerMesh, runtimeIdentity.Certificate);
                 Services = new AppServices(app._platform, app._bridge!, app._signalingServer);
