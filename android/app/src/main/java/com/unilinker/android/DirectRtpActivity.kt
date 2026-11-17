@@ -1,6 +1,9 @@
 package com.unilinker.android
 
+import android.graphics.SurfaceTexture
 import android.os.Bundle
+import android.view.Surface
+import android.view.TextureView
 import android.view.View
 import android.view.WindowManager
 import androidx.activity.ComponentActivity
@@ -163,27 +166,40 @@ fun DirectRtpScreen(initialAddress: String?) {
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
         // Video surface fills the screen; every configured tier is 16:10, the
         // same ratio as the panel display, so fill = correct aspect.
+        // TextureView, not SurfaceView: it composes as a NORMAL view, so the
+        // HUD/floating ball sit above it without Z-order tricks, and Compose
+        // can overlay anything. (setZOrderOnTop(true) made the video cover
+        // the entire Compose layer — HUD was invisible.)
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
-                android.view.SurfaceView(ctx).apply {
-                    setZOrderOnTop(true)
-                    holder.setFormat(android.graphics.PixelFormat.OPAQUE)
-                    holder.addCallback(object : android.view.SurfaceHolder.Callback {
-                        override fun surfaceCreated(holder: android.view.SurfaceHolder) {
+                android.view.TextureView(ctx).apply {
+                    surfaceTextureListener = object : TextureView.SurfaceTextureListener {
+                        override fun onSurfaceTextureAvailable(
+                            st: SurfaceTexture,
+                            width: Int,
+                            height: Int,
+                        ) {
                             decoder?.close()
-                            decoder = H264SurfaceDecoder(holder.surface)
+                            decoder = H264SurfaceDecoder(Surface(st))
                             surfaceReady = true
                         }
 
-                        override fun surfaceChanged(holder: android.view.SurfaceHolder, format: Int, width: Int, height: Int) {}
+                        override fun onSurfaceTextureSizeChanged(
+                            st: SurfaceTexture,
+                            width: Int,
+                            height: Int,
+                        ) {}
 
-                        override fun surfaceDestroyed(holder: android.view.SurfaceHolder) {
+                        override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
                             surfaceReady = false
                             decoder?.close()
                             decoder = null
+                            return true
                         }
-                    })
+
+                        override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
+                    }
                 }
             },
         )
