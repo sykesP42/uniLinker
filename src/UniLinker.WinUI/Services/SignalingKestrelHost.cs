@@ -1,4 +1,5 @@
 using System.Net;
+using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Hosting;
@@ -25,15 +26,28 @@ public sealed class SignalingKestrelHost : IDisposable
 {
     private readonly SignalingService _service;
     private readonly int _port;
+    private readonly X509Certificate2? _identity;
+    private readonly int _pairingPort;
     private WebApplication? _app;
 
     public int Port => _port;
+    public int PairingPort { get; private set; }
+    public string PairingCode { get; private set; } = "";
     public bool IsRunning => _app is not null;
 
-    public SignalingKestrelHost(int port, PeerMesh peerMesh)
+    public SignalingKestrelHost(
+        int port,
+        PeerMesh peerMesh,
+        X509Certificate2? identity = null,
+        int pairingPort = 9528)
     {
         _port = port;
+        _identity = identity;
+        _pairingPort = identity is null ? 0 : pairingPort;
+        PairingPort = _pairingPort;
         _service = new SignalingService(peerMesh, port);
+        PairingCode = identity is null ? "" : DeviceIdentity.DerivePairingCode(
+            DeviceIdentity.ComputeFingerprint(identity));
     }
 
     public Task StartAsync(CancellationToken ct = default)
@@ -49,7 +63,22 @@ public sealed class SignalingKestrelHost : IDisposable
             WebRootPath = Directory.Exists(webRoot) ? webRoot : null,
         });
         builder.Logging.ClearProviders();
-        builder.WebHost.UseUrls($"http://*:{_port}");
+        if (_identity is not null)
+        {
+            // Dual listeners: plain HTTP (browser viewer compatibility) +
+            // HTTPS with the DEVICE certificate (pairing channel for apps —
+            // the fingerprint of this certificate is the device identity).
+            builder.WebHost.ConfigureKestrel(kestrel =>
+            {
+                kestrel.ListenAnyIP(_port);
+                kestrel.ListenAnyIP(_pairingPort, listen =>
+                    listen.UseHttps(_identity!));
+            });
+        }
+        else
+        {
+            builder.WebHost.UseUrls($"http://*:{_port}");
+        }
 
         var app = builder.Build();
 
@@ -79,8 +108,28 @@ public sealed class SignalingKestrelHost : IDisposable
 
         var jsonOpts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
+        // M4 pairing discovery (informational only — the SAS code is compared
+        // on-screen by the human; trusting this endpoint alone would defeat
+        // the purpose of the pairing).
+        app.MapGet("/ulp/pairing", () => Results.Json(new
+        {
+            pairingCode = PairingCode,
+            fingerprint = _identity?.GetCertHashString(
+                System.Security.Cryptography.HashAlgorithmName.SHA256),
+        }, jsonOpts));
+
         app.MapGet("/info", () => Results.Json(_service.GetInfo(), jsonOpts));
         app.MapGet("/api/status", () => Results.Json(_service.GetStatus(IsRunning), jsonOpts));
+
+        // M4 pairing discovery (informational; the SAS code is compared
+        // on-screen by the human — trusting this endpoint alone would defeat
+        // the purpose).
+        app.MapGet("/ulp/pairing", () => Results.Json(new
+        {
+            pairingCode = PairingCode,
+            fingerprint = _identity?.GetCertHashString(
+                System.Security.Cryptography.HashAlgorithmName.SHA256),
+        }, jsonOpts));
 
         // Manual body parsing preserves the legacy 400 texts byte-for-byte.
         app.MapPost("/signaling", async (HttpContext ctx) =>

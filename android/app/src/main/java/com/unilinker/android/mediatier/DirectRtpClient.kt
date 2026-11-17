@@ -13,8 +13,15 @@ import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.RequestBody.Companion.toRequestBody
 import org.json.JSONObject
+import java.security.MessageDigest
+import java.security.cert.X509Certificate
 import java.util.Base64
 import java.util.concurrent.TimeUnit
+import javax.net.ssl.HostnameVerifier
+import java.security.cert.CertificateException
+import javax.net.ssl.SSLContext
+import javax.net.ssl.TrustManager
+import javax.net.ssl.X509TrustManager
 
 /**
  * Control plane for the direct-RTP tier: POST /signaling {type:"rtp"} with
@@ -34,10 +41,16 @@ data class CaptureTier(
 class DirectRtpClient(private val host: String, private val signalingPort: Int) {
     enum class State { IDLE, CONNECTING, STREAMING, ERROR }
 
-    private val http = OkHttpClient.Builder()
+    private val baseHttp = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
         .readTimeout(10, TimeUnit.SECONDS)
         .build()
+
+    private val http: OkHttpClient
+        get() {
+            val fp = pinnedFingerprint
+            return if (fp != null) baseHttp.forTrust(PinnedTrustManager(fp)) else baseHttp
+        }
 
     private val _state = MutableStateFlow(State.IDLE)
     val state: StateFlow<State> = _state.asStateFlow()
@@ -53,6 +66,80 @@ class DirectRtpClient(private val host: String, private val signalingPort: Int) 
     /** Latest receiver counters, for the HUD (null while not streaming). */
     val receiverStats: Triple<Int, Int, Long>?
         get() = receiver?.let { Triple(it.receivedPackets, it.lostPackets, it.bytesReceived) }
+
+    /** SHA-256 fingerprint of a DER-encoded certificate, uppercase hex. */
+    private fun fingerprintOf(cert: X509Certificate): String =
+        MessageDigest.getInstance("SHA-256").digest(cert.encoded)
+            .joinToString("") { "%02X".format(it) }
+
+    /** Trust manager that accepts everything — used ONLY for the pairing
+     *  probe; the trust decision is made out-of-band by the human comparing
+     *  the SAS code, and every later connection is fingerprint-pinned. */
+    private class ProbeTrustManager : X509TrustManager {
+        @Volatile var lastFingerprint: String? = null
+        override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
+            if (chain.isEmpty()) throw javax.net.ssl.SSLPeerUnverifiedException("empty chain")
+            lastFingerprint = MessageDigest.getInstance("SHA-256").digest(chain[0].encoded)
+                .joinToString("") { "%02X".format(it) }
+        }
+        override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
+        override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+    }
+
+    /** Trust manager that REQUIRES the pinned fingerprint. */
+    private class PinnedTrustManager(private val pinned: String) : X509TrustManager {
+        override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
+            if (chain.isEmpty()) throw javax.net.ssl.SSLPeerUnverifiedException("empty chain")
+            val fp = MessageDigest.getInstance("SHA-256").digest(chain[0].encoded)
+                .joinToString("") { "%02X".format(it) }
+            if (!fp.equals(pinned, ignoreCase = true)) {
+                throw CertificateException("fingerprint mismatch: $fp")
+            }
+        }
+        override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {}
+        override fun getAcceptedIssuers(): Array<X509Certificate> = arrayOf()
+    }
+
+    private fun OkHttpClient.forTrust(tm: X509TrustManager): OkHttpClient {
+        val sc = SSLContext.getInstance("TLS")
+        sc.init(null, arrayOf(tm), java.security.SecureRandom())
+        return newBuilder()
+            .sslSocketFactory(sc.socketFactory, tm)
+            .hostnameVerifier(HostnameVerifier { _, _ -> true }) // fingerprint auth replaces hostname auth
+            .build()
+    }
+
+    /**
+     * Pairing: probe the device over TLS with a permissive trust manager,
+     * report the fingerprint + SAS code (the human compares against the
+     * sender's on-screen code), then pin the fingerprint for this session.
+     * Returns the pairing code, or null when the probe fails.
+     */
+    suspend fun probePairing(): Pair<String, String>? = withContext(Dispatchers.IO) {
+        val probeTm = ProbeTrustManager()
+        val probeClient = http.forTrust(probeTm)
+        try {
+            val request = Request.Builder()
+                .url("https://$host:$signalingPort/ulp/pairing")
+                .build()
+            probeClient.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@withContext null
+                val obj = JSONObject(response.body!!.string())
+                val fp = probeTm.lastFingerprint ?: return@withContext null
+                Pair(obj.optString("pairingCode", ""), fp)
+            }
+        } catch (e: Exception) {
+            _error.value = "pairing probe failed: ${e.message}"
+            null
+        }
+    }
+
+    /** Persist the pinned fingerprint (call after the human confirms SAS). */
+    fun pinFingerprint(fp: String) {
+        pinnedFingerprint = fp
+    }
+
+    @Volatile var pinnedFingerprint: String? = null
 
     /** Bind first (so the OS picks a free UDP port), then announce it. */
     suspend fun connect(tier: CaptureTier): Boolean = withContext(Dispatchers.IO) {
@@ -80,7 +167,7 @@ class DirectRtpClient(private val host: String, private val signalingPort: Int) 
 
         try {
             val request = Request.Builder()
-                .url("http://$host:$signalingPort/signaling")
+                .url("https://$host:$signalingPort/signaling")
                 .post(body.toRequestBody("application/json".toMediaType()))
                 .build()
             http.newCall(request).execute().use { response ->

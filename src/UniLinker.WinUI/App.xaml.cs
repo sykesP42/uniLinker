@@ -80,9 +80,20 @@ public partial class App : Application
         var config = _platform.Context.Config.Get<PlatformConfig>("platform");
 
         _bridge = new WebBridge(_platform);
+        // Device identity (M4): self-signed cert persisted DPAPI-encrypted;
+        // its fingerprint is the device identity and the pairing code is
+        // derived from it (shown on-screen to the human during pairing).
+        var identity = UniLinker.Core.DeviceIdentity.LoadOrCreate(
+            Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                "uniLinker", "identity"));
+        Log.Info($"Device fingerprint: {identity.FingerprintSha256}");
+        Log.Info($"Pairing code: {identity.PairingCode}");
+
         _signalingServer = new SignalingKestrelHost(
             config.HttpPort > 0 ? config.HttpPort : 9527,
-            _platform.PeerMesh);
+            _platform.PeerMesh,
+            identity.Certificate);
 
         Services = new AppServices(_platform, _bridge, _signalingServer);
 
@@ -135,7 +146,12 @@ public partial class App : Application
             try
             {
                 app._signalingServer?.Stop();
-                app._signalingServer = new SignalingKestrelHost(httpPort, app._platform.PeerMesh);
+                var runtimeIdentity = UniLinker.Core.DeviceIdentity.LoadOrCreate(
+                    Path.Combine(
+                        Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                        "uniLinker", "identity"));
+                app._signalingServer = new SignalingKestrelHost(
+                    httpPort, app._platform.PeerMesh, runtimeIdentity.Certificate);
                 Services = new AppServices(app._platform, app._bridge!, app._signalingServer);
                 await app._signalingServer.StartAsync();
             }

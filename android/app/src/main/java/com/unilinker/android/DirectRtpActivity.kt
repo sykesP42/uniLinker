@@ -52,6 +52,7 @@ import com.unilinker.android.ui.theme.UniLinkerTheme
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Direct-RTP receiver screen (M3, docs/spec/M3-direct-rtp.md).
@@ -135,10 +136,46 @@ fun DirectRtpScreen(initialAddress: String?) {
             .putInt("tier_fps", fpsIdx)
             .apply()
         val tier = CaptureTier(resOptions[resIdx].first, resOptions[resIdx].second, brOptions[brIdx], fpsOptions[fpsIdx])
+        val pairingPort = parsed.getOrNull(2)?.toIntOrNull() ?: 9528
         val newClient = DirectRtpClient(parsed[0], parsed[1].toIntOrNull() ?: 9527)
+        newClient.pinnedFingerprint = prefs.getString("pinned_fp", null)
         client = newClient
         statusText = "Connecting…"
         scope.launch {
+            // M4 pairing: first contact probes the sender's TLS certificate;
+            // the human compares the 6-digit SAS code with the code shown on
+            // the sender (pairing.txt / sender UI) and confirms. The
+            // fingerprint is then pinned — every later connection verifies it.
+            if (newClient.pinnedFingerprint == null) {
+                val probe = newClient.probePairing()
+                if (probe == null) {
+                    statusText = "Error: ${newClient.error.value}"
+                    client = null
+                    return@launch
+                }
+                val (sasCode, fingerprint) = probe
+                val confirmed = withContext(kotlinx.coroutines.Dispatchers.Main) {
+                    kotlinx.coroutines.suspendCancellableCoroutine { cont ->
+                        val dlg = android.app.AlertDialog.Builder(context as android.app.Activity)
+                            .setTitle("配对确认")
+                            .setMessage(
+                                "请在分享端核对配对码是否为:\n\n    $sasCode\n\n设备指纹:\n$fingerprint\n\n两端一致后点击确认建立信任。"
+                            )
+                            .setPositiveButton("确认一致") { _, _ -> cont.resume(true, null) }
+                            .setNegativeButton("不一致") { _, _ -> cont.resume(false, null) }
+                            .setOnCancelListener { cont.resume(false, null) }
+                            .show()
+                        cont.invokeOnCancellation { dlg.dismiss() }
+                    }
+                }
+                if (!confirmed) {
+                    statusText = "Error: 配对被拒绝"
+                    client = null
+                    return@launch
+                }
+                newClient.pinFingerprint(fingerprint)
+                prefs.edit().putString("pinned_fp", fingerprint).apply()
+            }
             val ok = newClient.connect(tier)
             if (!ok) {
                 statusText = "Error: ${newClient.error.value}"
