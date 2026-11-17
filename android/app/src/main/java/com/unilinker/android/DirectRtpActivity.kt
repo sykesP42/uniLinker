@@ -10,6 +10,7 @@ import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.compose.foundation.background
 import androidx.compose.foundation.gestures.detectDragGestures
+import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -310,19 +311,20 @@ private fun FloatingBall(expanded: Boolean, streaming: Boolean, onToggle: () -> 
                 .size(52.dp)
                 .clip(CircleShape)
             .background(if (dimmed) Color(0x33C0C0C0) else Color(0x99C0C0C0))
+            // Tap and drag as SEPARATE pointer inputs: a tap toggles the
+            // panel, a drag moves the ball. (An earlier single
+            // detectDragGestures with a tiny-drag tap heuristic never fired
+            // its toggle — taps must use detectTapGestures.)
             .pointerInput(Unit) {
-                var totalDrag = 0f
+                detectTapGestures(onTap = { onToggle() })
+            }
+            .pointerInput(Unit) {
                 detectDragGestures(
-                    onDragStart = { lastTouch = System.currentTimeMillis(); totalDrag = 0f },
                     onDrag = { change, drag ->
                         change.consume()
                         offsetX += drag.x
                         offsetY += drag.y
-                        totalDrag += kotlin.math.abs(drag.x) + kotlin.math.abs(drag.y)
                         lastTouch = System.currentTimeMillis()
-                    },
-                    onDragEnd = {
-                        if (totalDrag < 12f) onToggle()
                     },
                 )
             },
