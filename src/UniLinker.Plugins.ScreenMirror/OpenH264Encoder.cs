@@ -35,13 +35,14 @@ public class OpenH264Encoder : IEncoder
     /// <see cref="ForceKeyFrame"/>. Without it, a key-frame request racing an
     /// in-flight encode or a resolution change can hit a disposed encoder.</summary>
     private readonly object _encoderGate = new();
-    private readonly SemaphoreSlim _workSignal = new(0, 1);
+    private readonly SemaphoreSlim _workSignal = new(0, 128);
     private Thread? _worker;
     private volatile bool _running;
 
     public event Action<EncodedPacket>? PacketEncoded;
     private int _emittedFrames;
     private int _framesSinceIdr;
+    private int _consecutiveErrors;
 
     public bool Initialize(int width, int height, int fps, int bitrateKbps)
     {
@@ -70,7 +71,15 @@ public class OpenH264Encoder : IEncoder
         {
             _pendingFrame = frame;
         }
-        _workSignal.Release();
+        try
+        {
+            _workSignal.Release();
+        }
+        catch (SemaphoreFullException)
+        {
+            // Worker still busy: _pendingFrame already holds the NEWEST
+            // frame (latest-wins), so a skipped wake-up loses nothing.
+        }
     }
 
     public void ForceKeyFrame()
@@ -124,7 +133,28 @@ public class OpenH264Encoder : IEncoder
             }
             catch (Exception ex)
             {
-                System.Diagnostics.Debug.WriteLine($"[OpenH264] encode error: {ex.Message}");
+                _consecutiveErrors++;
+                System.Diagnostics.Debug.WriteLine($"[OpenH264] encode error ({_consecutiveErrors}): {ex.Message}");
+                if (_consecutiveErrors >= 5)
+                {
+                    // Native encoder wedged: rebuild it and keep streaming.
+                    Log.Error($"[OpenH264] rebuilding encoder after {_consecutiveErrors} consecutive errors");
+                    try
+                    {
+                        lock (_encoderGate)
+                        {
+                            _encoder?.Dispose();
+                            _encoder = null;
+                            _configuredWidth = 0;
+                        }
+                    }
+                    catch { }
+                    _consecutiveErrors = 0;
+                }
+                else
+                {
+                    await Task.Delay(100);
+                }
             }
         }
     }
