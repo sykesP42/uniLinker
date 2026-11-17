@@ -223,3 +223,13 @@ shared runtime（本机已有 9.0.9；分发时用 self-contained publish 可打
 | P2 SRTP 复用 | ✅ FEASIBLE | 直连 RTP 档设计进协议规范（控制=HTTP、媒体=UDP+SRTP） |
 | P3 Kestrel-in-WinUI | ✅ FEASIBLE | SignalingServer 迁移按「strangler」进行：新路由进 Kestrel、旧路由保持字节兼容 |
 | P1 平板浏览器接收 | 部分预验证（§12.5） | 页面加载/信令正常但 ICE 跨设备失败 → 浏览器兜底不解决媒体问题；改为验证「直连 RTP 到平板自定义接收端」 |
+
+## 11. M4 硬件编码路线探测补充（2026-11-18）
+
+- **Media Foundation 编码器：正式出局**。本机（build 26300）MFTEnumEx(MFT_CATEGORY_VIDEO_ENCODER, H264, ALL-flags) 枚举结果 **0 个**（独立探针实测，hr=0 成功调用）——与 09 §4.1 的 MF 判定一致，此路彻底关闭。
+- **Vortice.Direct3D11 3.8.3：无 D3D11 VideoEncoder 封装**（ID3D11VideoEncoder / D3D11_VIDEO_ENCODER_* 类型缺失）——D3D11VE 需要升级 Vortice 4.x 或自写 COM vtable interop（后者脆弱，不推荐）。
+- **硬件编码剩余路线（按推荐序）**：
+  1. **NVENC 直调**（nvEncodeAPI64.dll P/Invoke，GeForce 驱动自带；Moonlight 同路线）——~600-800 行结构体绑定 + D3D11 设备注册；输入可直接挂 WGC 纹理（NV12 转换由 NVENC/VP 完成）——**推荐**，4070 实测目标 720p < 5ms；
+  2. **Vortice 升级到 4.x+**（若封装 D3D11VE）——升级会破坏现有 D3D11 代码（3.x→4.x API 大改），需评估；
+  3. 维持 OpenH264 软编（现状 720p 6-16ms，动态场景 50ms@22fps）——作为 NVENC 不可用时的兜底。
+- 触发条件：用户对动态内容帧率/延迟不满意（当前实测：动态游戏 ~22fps、静态桌面满帧）即启动路线 1。
