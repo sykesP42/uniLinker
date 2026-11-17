@@ -233,3 +233,10 @@ shared runtime（本机已有 9.0.9；分发时用 self-contained publish 可打
   2. **Vortice 升级到 4.x+**（若封装 D3D11VE）——升级会破坏现有 D3D11 代码（3.x→4.x API 大改），需评估；
   3. 维持 OpenH264 软编（现状 720p 6-16ms，动态场景 50ms@22fps）——作为 NVENC 不可用时的兜底。
 - 触发条件：用户对动态内容帧率/延迟不满意（当前实测：动态游戏 ~22fps、静态桌面满帧）即启动路线 1。
+
+## 12. NVENC 裸绑定探针结论（2026-11-18）
+
+- nvEncodeAPI64.dll 存在（System32，GeForce 驱动自带），加载成功；
+- `NvEncodeAPICreateInstance` 返回 **0xF（NOT_ENOUGH_BUFFER）**——函数表结构与驱动版本不匹配（SDK 12.x 的 NV_ENC_FUNCTIONS 有 ~30 个函数指针，且字段顺序必须与 SDK 头精确一致；凭记忆重建不可行）；
+- **结论：NVENC 裸 P/Invoke 需要 NVIDIA Video Codec SDK 头文件做精确绑定**（代理环境拉 SDK 包受阻）。**推荐替代**：**FFmpeg.AutoGen**（h264_nvenc 成熟 C# 绑定，OBS 同路线）——代价是 ffmpeg DLL 分发（~60-100MB）；
+- 决策：软编现状（720p 静态满帧/动态 22fps）作为基线保留，硬编在 FFmpeg.AutoGen 评估后启动。
