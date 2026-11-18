@@ -72,7 +72,12 @@ class DirectRtpActivity : ComponentActivity() {
 
         setContent {
             UniLinkerTheme {
-                DirectRtpScreen(intent?.getStringExtra("connect"))
+                DirectRtpScreen(
+                    intent?.getStringExtra("connect"),
+                    intent.getIntExtra("chaos_loss", 0),
+                    intent.getIntExtra("chaos_dup", 0),
+                    intent.getIntExtra("chaos_lag", 0),
+                )
             }
         }
     }
@@ -101,7 +106,12 @@ private val brOptions = listOf(4000, 8000, 16000)
 private val fpsOptions = listOf(30, 60)
 
 @Composable
-fun DirectRtpScreen(initialAddress: String?) {
+fun DirectRtpScreen(
+    initialAddress: String?,
+    chaosLoss: Int = 0,
+    chaosDup: Int = 0,
+    chaosLag: Int = 0,
+) {
     val context = LocalContext.current
     var address by remember { mutableStateOf(initialAddress ?: "") }
     var client by remember { mutableStateOf<DirectRtpClient?>(null) }
@@ -207,6 +217,10 @@ fun DirectRtpScreen(initialAddress: String?) {
         // TLS at the plain-HTTP 9527 listener fails WRONG_VERSION_NUMBER.
         val tlsPort = parsed.getOrNull(2)?.toIntOrNull() ?: 9528
         val newClient = DirectRtpClient(parsed[0], tlsPort)
+        newClient.chaosLossPct = chaosLoss
+        newClient.chaosDupPct = chaosDup
+        newClient.chaosLagMs = chaosLag
+        android.util.Log.d("DirectRtp", "chaos: loss=$chaosLoss% dup=$chaosDup% lag=${chaosLag}ms")
         newClient.pinnedFingerprint = prefs.getString("pinned_fp", null)
         android.util.Log.d("DirectRtp", "toggle: pinned=${newClient.pinnedFingerprint} tls=$tlsPort")
         client = newClient

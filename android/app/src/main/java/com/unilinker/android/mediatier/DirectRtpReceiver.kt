@@ -38,6 +38,15 @@ class DirectRtpReceiver(
     private var socket: DatagramSocket? = null
     private var loop: Job? = null
 
+    // ── Chaos injection (docs/spec/chaos-acceptance.md C1–C5) ──
+    // Settable at runtime via adb (`--ei chaos_loss 5` deep-link extras);
+    // 0 = off. Injection happens in handle() BEFORE any accounting so the
+    // seq-gap detector sees injected loss exactly like real network loss.
+    @Volatile var chaosLossPct: Int = 0
+    @Volatile var chaosDupPct: Int = 0
+    @Volatile var chaosLagMs: Int = 0
+    private val chaosRandom = java.util.Random()
+
     /** Packets accepted (RTP video, unprotected OK). For diagnostics. */
     @Volatile var receivedPackets: Int = 0
         private set
@@ -105,31 +114,75 @@ class DirectRtpReceiver(
         if (bytes.size < 12) return
         // RTCP rides the same mux port (PT byte ≥ 64); only video RTP here.
         if ((bytes[1].toInt() and 0x7F) != 96) return
+
+        // Chaos injection (C1–C5 acceptance): drop BEFORE any accounting so
+        // the next packet's seq-gap detection sees the loss exactly like a
+        // real network drop. 0 = off.
+        if (chaosLossPct > 0 && chaosRandom.nextInt(100) < chaosLossPct) return
+
         receivedPackets++
 
-        // Sequence continuity FIRST (from the plaintext RTP header): gaps are
-        // network loss — the packet never arrived, so record lost placeholders
-        // in the sliding window BEFORE the current packet's entry.
+        // Sequence continuity FIRST (from the plaintext RTP header). RFC 3550
+        // delta handling: forward = gap loss; duplicate (delta 0) and small
+        // backward deltas (reorder) must NOT count as loss — the naive
+        // modulo formula turned a duplicate into a 65535-packet "loss".
         val seq = ((bytes[2].toInt() and 0xFF) shl 8) or (bytes[3].toInt() and 0xFF)
         val nowArrival = System.currentTimeMillis()
         synchronized(lossGate) {
             if (lastSeq >= 0) {
-                val gap = (seq - lastSeq - 1 + 65536) % 65536
-                if (gap > 0) {
-                    lostPackets += gap
-                    repeat(gap.coerceAtMost(400)) { lossWindow.add(Pair(nowArrival, true)) }
-                    android.util.Log.w("DirectRtp", "seq gap $lastSeq->$seq (lost $gap pkts)")
-                    // Loss detected: ask the sender for an IDR (rate-limited
-                    // to one per 500 ms — each IDR is a large burst).
-                    if (onKeyFrameNeeded != null && nowArrival - lastPliMs >= 500L) {
-                        lastPliMs = nowArrival
-                        try { onKeyFrameNeeded.invoke() } catch (_: Exception) { }
+                val delta = (seq - lastSeq + 65536) % 65536
+                when {
+                    delta == 0 -> return  // duplicate — already accounted
+                    delta < 32768 -> {    // forward
+                        val gap = delta - 1
+                        if (gap > 0) {
+                            lostPackets += gap
+                            repeat(gap.coerceAtMost(400)) { lossWindow.add(Pair(nowArrival, true)) }
+                            android.util.Log.w("DirectRtp", "seq gap $lastSeq->$seq (lost $gap pkts)")
+                            // Loss detected: ask the sender for an IDR (rate-limited
+                            // to one per 500 ms — each IDR is a large burst).
+                            if (onKeyFrameNeeded != null && nowArrival - lastPliMs >= 500L) {
+                                lastPliMs = nowArrival
+                                try { onKeyFrameNeeded.invoke() } catch (_: Exception) { }
+                            }
+                        }
+                        lastSeq = seq
                     }
+                    // backward (reorder): tolerate small jumps silently; a big
+                    // jump (stream switch) just re-baselines, no loss counted.
+                    delta < 65536 - 64 -> { }
+                    else -> lastSeq = seq
                 }
+            } else {
+                lastSeq = seq
             }
-            lastSeq = seq
         }
 
+        // Chaos duplication (C4): process a second copy — exercises the
+        // duplicate path above.
+        if (chaosDupPct > 0 && chaosRandom.nextInt(100) < chaosDupPct) {
+            receivedPackets++
+            handlePayload(bytes, System.currentTimeMillis() + 1)
+        }
+
+        // Chaos lag (C3): deliver late on a worker instead of inline.
+        if (chaosLagMs > 0) {
+            val lag = chaosLagMs
+            scope.launch {
+                kotlinx.coroutines.delay(lag.toLong())
+                handlePayload(bytes, System.currentTimeMillis())
+            }
+            return
+        }
+        handlePayload(bytes, nowArrival)
+    }
+
+    /** Unprotect + depacketize + HUD accounting, shared by the inline and
+     *  chaos-lagged delivery paths. SERIALIZED: nalBuffer and the
+     *  depacketizer assume a single consumer (lag deliveries arrive on
+     *  parallel coroutine workers — concurrent mutation crashed both). */
+    private val payloadGate = Any()
+    private fun handlePayload(bytes: ByteArray, nowArrival: Long) = synchronized(payloadGate) {
         val clear = unprotector.unprotect(bytes)
         if (clear == null) {
             authFailures++
@@ -138,16 +191,15 @@ class DirectRtpReceiver(
                 "DirectRtp",
                 "auth failure #$authFailures (pkts=$receivedPackets len=${bytes.size})",
             )
-            return
+            return@synchronized
         }
 
         // RFC-3550-style interarrival jitter, exponentially smoothed.
-        val nowMs = System.currentTimeMillis()
         if (lastArrivalMs > 0) {
-            val delta = (nowMs - lastArrivalMs).coerceAtLeast(0).toDouble()
+            val delta = (nowArrival - lastArrivalMs).coerceAtLeast(0).toDouble()
             jitterMs += (kotlin.math.abs(delta - 33.3) - jitterMs) / 16.0
         }
-        lastArrivalMs = nowMs
+        lastArrivalMs = nowArrival
         bytesReceived += bytes.size
 
         val marker = (clear[1].toInt() and 0x80) != 0

@@ -70,6 +70,12 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
 
     @Volatile private var receiver: DirectRtpReceiver? = null
 
+    // Chaos injection passthrough (docs/spec/chaos-acceptance.md C1-C5),
+    // set from the deep-link extras and applied to the receiver at connect.
+    @Volatile var chaosLossPct: Int = 0
+    @Volatile var chaosDupPct: Int = 0
+    @Volatile var chaosLagMs: Int = 0
+
     /** Latest receiver counters, for the HUD (null while not streaming). */
     val receiverStats: Triple<Int, Int, Long>?
         get() = receiver?.let { Triple(it.receivedPackets, it.lostPackets, it.bytesReceived) }
@@ -215,6 +221,9 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
                     onAu = { au -> _frames.tryEmit(au) },
                     onKeyFrameNeeded = { sendPli() },
                 )
+                receiver.chaosLossPct = chaosLossPct
+                receiver.chaosDupPct = chaosDupPct
+                receiver.chaosLagMs = chaosLagMs
                 receiver.start()
                 this@DirectRtpClient.receiver = receiver
                 _state.value = State.STREAMING
