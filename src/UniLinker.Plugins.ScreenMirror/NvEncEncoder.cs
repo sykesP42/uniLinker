@@ -34,6 +34,7 @@ public unsafe class NvEncEncoder : IEncoder
     private long _swsTicks;
     private long _encTicks;
     private long _encTotalTicks;
+    private long _auBytes;
     private int _loopCount;
     private int _configuredWidth;
     private int _configuredHeight;
@@ -96,13 +97,22 @@ public unsafe class NvEncEncoder : IEncoder
         _codecCtx->max_b_frames = 0;
         // VBV bounds the per-frame burst: an unconstrained CBR IDR spikes to
         // 400+KB (~180 UDP packets at once, receiver buffer loss + PLI
-        // storm). A 250ms window caps the worst frame at ~tier/4.
+        // storm). A 330ms window caps the worst frame at ~tier/3 (the
+        // packet pacer then spreads even that over ~40ms).
         _codecCtx->rc_max_rate = _codecCtx->bit_rate;
-        _codecCtx->rc_buffer_size = (int)(_codecCtx->bit_rate / 4);
+        _codecCtx->rc_buffer_size = (int)(_codecCtx->bit_rate / 3);
 
-        av_opt_set(_codecCtx->priv_data, "preset", "p1", 0);
+        // Quality: preset p1 was the lowest-quality/fastest tier and showed
+        // visible blocking on motion; p4 costs ~2-3ms more GPU time at this
+        // resolution and restores most of it. High profile + CABAC save
+        // ~10-15% bitrate at equal quality; spatial AQ spends bits where
+        // the eye looks (flat regions stay clean under CBR).
+        av_opt_set(_codecCtx->priv_data, "preset", "p4", 0);
         av_opt_set(_codecCtx->priv_data, "tune", "ull", 0);
         av_opt_set(_codecCtx->priv_data, "rc", "cbr", 0);
+        av_opt_set(_codecCtx->priv_data, "profile", "high", 0);
+        av_opt_set(_codecCtx->priv_data, "coder", "cabac", 0);
+        av_opt_set(_codecCtx->priv_data, "spatial-aq", "1", 0);
         av_opt_set(_codecCtx->priv_data, "delay", "0", 0);
         av_opt_set(_codecCtx->priv_data, "zerolatency", "1", 0);
 
@@ -285,16 +295,19 @@ public unsafe class NvEncEncoder : IEncoder
                 _isKey = isKey;
 
                 _emittedFrames++;
+                _auBytes += au.Length;
                 if (_isKey) _keyFrames++;
                 if (_emittedFrames % 60 == 1)
                 {
                     var avgSws = _swsTicks / 60.0;
                     var avgEnc = _encTicks / 60.0;
                     var avgTotal = _loopCount > 0 ? _encTotalTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency / _loopCount : 0;
-                    Log.Info($"[NvEnc] emitted {_emittedFrames} frames (keys {_keyFrames}, last {au.Length}B key={isKey}) swsAvg={avgSws:F1}ms encAvg={avgEnc:F1}ms encodeTotal={avgTotal:F1}ms loops={_loopCount}");
+                    var avgAu = _auBytes / 60.0 / 1000.0;
+                    Log.Info($"[NvEnc] emitted {_emittedFrames} frames (keys {_keyFrames}, last {au.Length}B key={isKey}) avgAu={avgAu:F1}KB ({avgAu * 60 * 8 / 1000:F1}Mbps) swsAvg={avgSws:F1}ms encAvg={avgEnc:F1}ms loops={_loopCount}");
                     _swsTicks = 0;
                     _encTicks = 0;
                     _encTotalTicks = 0;
+                    _auBytes = 0;
                     _loopCount = 0;
                 }
 
@@ -308,7 +321,11 @@ public unsafe class NvEncEncoder : IEncoder
     public void Dispose()
     {
         _running = false;
-        _worker?.Join(3000);
+        // Unbounded join: the worker checks _running every iteration and the
+        // current EncodeOne holds _encoderGate — freeing the codec while the
+        // worker is mid-encode was a use-after-free (coreclr 0xc0000005
+        // crash, observed when the viewer disconnected mid-encode).
+        _worker?.Join();
         _worker = null;
         lock (_encoderGate)
         {

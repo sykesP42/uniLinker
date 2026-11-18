@@ -17,6 +17,10 @@ namespace UniLinker.Core;
 /// and resend on receiver NACKs (0 ms RTT on the tethered link — the
 /// original protected bytes stay inside the receiver's SRTP replay window).
 ///
+/// Packet pacer: AUs arrive on the ENCODE worker; a dedicated thread sends
+/// them through a token bucket so a 300KB IDR trickles over ~40ms instead
+/// of bursting 200 packets into the receiver's UDP buffer.
+///
 /// Wire compatibility: the receiver sees the same crypto line format
 /// ("1 AES_CM_128_HMAC_SHA1_80 inline:base64(key16+salt14)"), the same
 /// PT 96 + FU-A/marker framing, and the same answer JSON fields.
@@ -46,6 +50,21 @@ internal sealed class DirectRtpSender : IDisposable
     private long _lastFrameTsUs = -1;
     private uint _lastDurationRtp = RtpTiming.DefaultDurationRtp;
 
+    // ── Packet pacer (M5) ──
+    // SendAu runs on the ENCODE worker; pacing inline would stall it. AUs
+    // queue here and a dedicated thread sends with a token bucket so a
+    // 300KB IDR trickles over ~40ms instead of bursting 200 packets into
+    // the receiver's UDP buffer. Bucket drains at 1.5× the tier bitrate —
+    // faster than real-time so the queue stays empty in steady state.
+    private readonly System.Collections.Concurrent.BlockingCollection<(byte[] Au, long TsUs)> _pacerQueue =
+        new(6);
+    private Thread? _pacerThread;
+    private readonly CancellationTokenSource _pacerCts = new();
+    private readonly long _pacerBytesPerMs;
+    /// <summary>Instant-burst allowance: the first ~42 packets of a frame go
+    /// out at once, the rest of a large IDR trickles at 1.5× tier.</summary>
+    private const long MaxInstantBurstBytes = 64 * 1024;
+
     /// <summary>The SDES crypto attribute the receiver unprotects with.</summary>
     public string CryptoLine { get; }
     /// <summary>The stream SSRC.</summary>
@@ -59,10 +78,16 @@ internal sealed class DirectRtpSender : IDisposable
     /// <summary>NACK datagrams received (diagnostics).</summary>
     public long NacksReceived { get; private set; }
 
-    public DirectRtpSender(IPEndPoint destination, int bindPort)
+    public DirectRtpSender(IPEndPoint destination, int bindPort, int bitrateKbps = 8000)
     {
         _destination = destination;
         BindPort = bindPort;
+        // 2.5× tier bitrate, in bytes/ms. NVENC's CBR empirically overshoots
+        // the tier ~2× (8Mbps tier → ~16Mbps measured, 32Mbps → 64Mbps), so
+        // the drain must cover the real output or the queue overflows and
+        // drops frames (2fps observed when it didn't). 32000kbps → 32000 ×
+        // 1000b/8 ÷1000ms = 4000 B/s-tier → ×2.5 = 10000 B/ms.
+        _pacerBytesPerMs = (long)bitrateKbps * 25 / 8 / 10;
 
         byte[] masterKey = System.Security.Cryptography.RandomNumberGenerator.GetBytes(16);
         byte[] masterSalt = System.Security.Cryptography.RandomNumberGenerator.GetBytes(14);
@@ -97,6 +122,9 @@ internal sealed class DirectRtpSender : IDisposable
             _udp.Client.IOControl(SIO_UDP_CONNRESET, new byte[] { 0 }, null);
         }
         catch { } // non-Windows
+
+        _pacerThread = new Thread(PacerLoop) { IsBackground = true, Name = "RtpPacer" };
+        _pacerThread.Start();
     }
 
     /// <summary>Start the NACK receive loop.</summary>
@@ -139,11 +167,13 @@ internal sealed class DirectRtpSender : IDisposable
         }
         lock (_sendGate)
         {
+            var misses = new List<ushort>();
             for (int i = 0; i < count; i++)
             {
                 ushort seq = BinaryPrimitives.ReadUInt16BigEndian(datagram.AsSpan(6 + i * 2));
                 // Scan the ring for the seq — NACKs are rare and the ring is
                 // 4096 entries; a cursor-keyed index buys nothing here.
+                bool found = false;
                 for (int slot = 0; slot < _ring.Length; slot++)
                 {
                     var (s, packet) = _ring[slot];
@@ -151,38 +181,113 @@ internal sealed class DirectRtpSender : IDisposable
                     {
                         _udp.Send(packet, packet.Length, _destination);
                         PacketsRetransmitted++;
+                        found = true;
                         break;
                     }
                 }
+                if (!found) misses.Add(seq);
+            }
+            if (misses.Count > 0 && NacksReceived % 20 == 1)
+            {
+                Log.Info($"[RTX] {misses.Count}/{count} seqs missing from ring (first={misses[0]}, ringCursor={_ringCursor})");
             }
         }
     }
 
-    /// <summary>Packetize + protect + send one access unit; store the
-    /// protected packets in the RTX ring. Serialized internally — SRTP
-    /// engines are not thread-safe.</summary>
-    public void SendAu(byte[] annexBAu, long timestampUs)
+    /// <summary>Enqueue one access unit for the paced sender. Bounded: when
+    /// full, drop the oldest AU (stale P frames behind a burst) — a
+    /// keyframe clears the queue outright so recovery frames never wait
+    /// behind stale traffic.</summary>
+    public void SendAu(byte[] annexBAu, long timestampUs, bool isKeyFrame = false)
     {
-        lock (_sendGate)
+        if (_disposed) return;
+        if (isKeyFrame)
         {
-            if (_disposed) return;
-            uint durationRtp = RtpTiming.DurationFor(timestampUs, ref _lastFrameTsUs, ref _lastDurationRtp);
-            _timestamp += durationRtp;
+            while (_pacerQueue.Count > 0) _pacerQueue.TryTake(out _);
+        }
+        else
+        {
+            while (_pacerQueue.Count >= 6) _pacerQueue.TryTake(out _);
+        }
+        try
+        {
+            _pacerQueue.Add((annexBAu, timestampUs), _pacerCts.Token);
+        }
+        catch (InvalidOperationException) { } // completing on dispose
+    }
 
-            var packets = PacketizeAu(annexBAu, _timestamp);
-            foreach (var rtp in packets)
+    /// <summary>Paced sender: packetize + protect + token-bucket send.
+    /// Serialized under the send gate — the SRTP engine is not thread-safe;
+    /// NACK resends take the same gate.</summary>
+    private void PacerLoop()
+    {
+        // Continuous-refill token bucket: credit accumulates at 2.5× tier
+        // bitrate, capped at 64KB instant burst. The earlier "spread from
+        // burst start + carry debt" formulation re-applied the full carried
+        // bytes against a FRESH burst start each AU — a 300ms penalty per
+        // frame that throttled the stream to 2fps.
+        long creditBytes = MaxInstantBurstBytes;
+        var lastRefill = System.Diagnostics.Stopwatch.GetTimestamp();
+
+        void Refill()
+        {
+            var now = System.Diagnostics.Stopwatch.GetTimestamp();
+            var elapsedMs = (now - lastRefill) * 1000 / System.Diagnostics.Stopwatch.Frequency;
+            if (elapsedMs > 0)
             {
-                ushort seq = (ushort)((rtp[2] << 8) | rtp[3]);
-                byte[]? protectedPacket = _transformer.Transform(rtp);
-                if (protectedPacket == null)
+                creditBytes = Math.Min(creditBytes + elapsedMs * _pacerBytesPerMs,
+                    MaxInstantBurstBytes);
+                lastRefill = now;
+            }
+        }
+
+        while (!_pacerCts.IsCancellationRequested)
+        {
+            (byte[] au, long tsUs) item;
+            try
+            {
+                item = _pacerQueue.Take(_pacerCts.Token);
+            }
+            catch (OperationCanceledException) { break; }
+            catch (InvalidOperationException) { break; }
+
+            lock (_sendGate)
+            {
+                if (_disposed) break;
+                try
                 {
-                    Log.Info("[RTX] srtp transform returned null — packet dropped");
-                    continue;
+                    uint durationRtp = RtpTiming.DurationFor(item.tsUs, ref _lastFrameTsUs, ref _lastDurationRtp);
+                    _timestamp += durationRtp;
+                    var packets = PacketizeAu(item.au, _timestamp);
+                    foreach (var rtp in packets)
+                    {
+                        // Wait for credit before committing the packet.
+                        while (!_pacerCts.IsCancellationRequested)
+                        {
+                            Refill();
+                            if (creditBytes >= rtp.Length) break;
+                            Thread.Sleep(2);
+                        }
+                        if (_pacerCts.IsCancellationRequested) break;
+                        creditBytes -= rtp.Length;
+
+                        ushort seq = (ushort)((rtp[2] << 8) | rtp[3]);
+                        byte[]? protectedPacket = _transformer.Transform(rtp);
+                        if (protectedPacket == null)
+                        {
+                            Log.Info("[RTX] srtp transform returned null — packet dropped");
+                            continue;
+                        }
+                        _ringCursor = (_ringCursor + 1) % RingCapacity;
+                        _ring[_ringCursor] = (seq, protectedPacket);
+                        _udp.Send(protectedPacket, protectedPacket.Length, _destination);
+                        PacketsSent++;
+                    }
                 }
-                _ringCursor = (_ringCursor + 1) % RingCapacity;
-                _ring[_ringCursor] = (seq, protectedPacket);
-                _udp.Send(protectedPacket, protectedPacket.Length, _destination);
-                PacketsSent++;
+                catch (Exception ex)
+                {
+                    Log.Error($"[pacer] send failed: {ex.Message}");
+                }
             }
         }
     }
@@ -311,6 +416,8 @@ internal sealed class DirectRtpSender : IDisposable
             if (_disposed) return;
             _disposed = true;
         }
+        _pacerCts.Cancel();
+        try { _pacerThread?.Join(1000); } catch { }
         _nackLoopCts.Cancel();
         try { _udp.Close(); } catch { }
         try { _nackLoop?.Wait(1000); } catch { }

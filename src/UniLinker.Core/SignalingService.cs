@@ -163,13 +163,36 @@ public class SignalingService : IDisposable
         };
 
         // Same peer re-requesting (app restart, reconnect): dispose the stale
-        // channel first so its RTP bind port is free for the new session.
-        _peerMesh.RemoveDirectChannel(peerId)?.Dispose();
+        // channel so its RTP bind port is free for the new session. The
+        // dispose chain (OnClose -> plugin StopSession -> encoder join) once
+        // blocked this request thread for 10+s and timed the tablet out —
+        // bounded to 3s here, then we proceed anyway: the sender's UDP bind
+        // uses ReuseAddress, so the brief overlap is survivable.
+        var staleChannel = _peerMesh.RemoveDirectChannel(peerId);
+        if (staleChannel != null)
+        {
+            try
+            {
+                await Task.Run(() => staleChannel.Dispose())
+                    .WaitAsync(TimeSpan.FromSeconds(3));
+            }
+            catch (Exception ex)
+            {
+                Log.Info($"stale channel dispose for '{peerId}' did not finish in 3s: {ex.Message}");
+            }
+        }
 
-        var channel = new DirectRtpChannel(
-            peerInfo, msg.Capability ?? "screen-capture",
-            new IPEndPoint(remoteIp, msg.RtpPort), bindPort,
-            msg.CaptureWidth, msg.CaptureHeight, msg.BitrateKbps, msg.CaptureFps);
+        IDirectRtpChannel channel = DirectRtpTransport.Mode switch
+        {
+            "rtx" => new DirectRtpChannel(
+                peerInfo, msg.Capability ?? "screen-capture",
+                new IPEndPoint(remoteIp, msg.RtpPort), bindPort,
+                msg.CaptureWidth, msg.CaptureHeight, msg.BitrateKbps, msg.CaptureFps),
+            _ => new DirectRtpChannelLegacy(
+                peerInfo, msg.Capability ?? "screen-capture",
+                new IPEndPoint(remoteIp, msg.RtpPort), bindPort,
+                msg.CaptureWidth, msg.CaptureHeight, msg.BitrateKbps, msg.CaptureFps),
+        };
         try
         {
             await channel.OpenAsync();

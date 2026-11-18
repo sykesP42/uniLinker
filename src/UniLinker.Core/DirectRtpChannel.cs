@@ -131,7 +131,9 @@ internal class DirectRtpChannel : IDirectRtpChannel
     /// identical, so the Android wire contract is unchanged.</summary>
     public Task OpenAsync()
     {
-        var sender = new DirectRtpSender(_destination, _bindPort);
+        var sender = new DirectRtpSender(
+            _destination, _bindPort,
+            RequestedBitrateKbps > 0 ? RequestedBitrateKbps : 8000);
         try
         {
             sender.Start();
@@ -154,7 +156,7 @@ internal class DirectRtpChannel : IDirectRtpChannel
 
     public Task SendPacketAsync(EncodedPacket packet)
     {
-        _sender?.SendAu(packet.Data, packet.TimestampUs);
+        _sender?.SendAu(packet.Data, packet.TimestampUs, packet.IsKeyFrame);
         return Task.CompletedTask;
     }
 

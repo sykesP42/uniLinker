@@ -20,4 +20,15 @@ public interface IDirectRtpChannel : IChannel
 
     /// <summary>Frame rate the receiver requested (0 = sender default).</summary>
     int RequestedFps { get; }
+
+    /// <summary>Bind + start the sender (SDES setup for the legacy session,
+    /// socket bind for the RTX sender). Throws on port conflicts.</summary>
+    Task OpenAsync();
+
+    /// <summary>The SDES crypto attribute the receiver unprotects with
+    /// ("1 AES_CM_128_HMAC_SHA1_80 inline:base64(key16+salt14)").</summary>
+    string CryptoLine { get; }
+
+    /// <summary>The stream SSRC.</summary>
+    uint Ssrc { get; }
 }

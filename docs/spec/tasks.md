@@ -48,6 +48,17 @@
 | M4-T6 | clumsy 混沌验收 | [chaos-acceptance.md](chaos-acceptance.md) C1–C5 场景清单；**第一轮（receiver 内建注入，6402cd7）已跑**：滑窗精度 ✓（2%→1.6%、10%→9.6%）、C4 重复 0.0% ✓、C5 重连恢复 ~3s ✓；核心发现：≥2% 随机丢包无 RTX 不可保证 ≤1s 恢复（P(完整 IDR)=0.98¹⁰⁰≈13%）→ M5 首项 NACK/RTX；真实网络 clumsy 注入待手动（需 UAC） | 注入式验收 ✓ / clumsy 手动 ⬜ |
 | M4-T7 | 沉淀 | architecture.md M4 段 / 记忆 / push | CI 绿（6402cd7） | ✅ |
 
+## M5：RTX 重传 + 传输方式选择（进行中）
+
+| # | 任务 | 产出 | 验收 | 状态 |
+|---|------|------|------|------|
+| M5-T1 | RTX 自有管线 | DirectRtpSender（RFC 6184 打包 + 裸 SRTP + 4096 环形缓冲 + NACK 循环）；接收端重序缓冲（30ms 洞等待 + skip+PLI）；wire 契约不变，fixture 重生成 | C# 35/35；JVM 3/3；注入 2% 丢包画面全净 30fps | ✅ 代码 |
+| M5-T2 | 传输方式选择 | 设置页"投屏传输方式"：Legacy（默认，稳定 46fps/26.5Mbps）/ RTX（实验，2% 丢包下恢复快）；DirectRtpTransport.Mode 运行时切换 | 双模式真机验收 ✓；默认 legacy | ✅ |
+| M5-T3 | RTX 稳态卡死根因 | **待查**：稳态运行一段时间后 expectedSeq 钉死（assembled 停止、HUD 0-2fps、丢包 100%），包持续到达但不投递；已修 4 个相关 bug（CONNRESET 杀循环/baseline 不推进/pacer 3 处公式错/dispose UAF）仍复现；下一步：部署 reorder 状态诊断（expectedSeq/pending/lastSeq 日志已就位） | RTX 模式稳态 ≥10 分钟不掉帧 | ⬜ |
+| M5-T4 | HUD 真实化 | fps 改用解码器 renderedFrames（此前统计 AU 提交数——坏帧也计数，撒谎）；断流归零；损坏 AU 丢弃（skip 后半帧不再喂解码器） | 断流显示 0fps ✓；花屏改为干净冻结 | ✅ |
+
+**用户可见行为（2026-11-19）**：默认 legacy（上一版体验，延迟略高但流畅 46fps）；RTX 在设置页可选——2% 注入丢包下恢复极快，但存在 M5-T3 稳态钉死问题，修复后转正。
+
 ## 依赖顺序
 
 M1 完成 → M2-T1 → M2-T2 → M2-T3 → M2-T4 → M2-T5 → M3。
