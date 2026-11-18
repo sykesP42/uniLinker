@@ -55,7 +55,12 @@ Plugin SDK (interfaces) → Core Platform → Plugins → UI Shell
 3. `PeerMesh.RaiseChannelRequestedAsync` triggers the plugin's `OnChannelRequested`
 4. Plugin starts capture/encoding; `PeerChannel.SendPacketAsync` → `RTCPeerConnection.SendVideoFrame(duration, annexBFrame)` (SIPSorcery parses NALs and fragments FU-A itself)
 
-**Screen mirror pipeline** (`ScreenMirrorPlugin`): WGC capture (BGRA, staging readback) → `OpenH264Encoder` (H264Sharp; emits one complete Annex-B access unit per frame, re-encodes the last frame when the desktop is static) → all open viewer channels. One shared capture session; IDR forced when a viewer joins.
+**Screen mirror pipeline** (`ScreenMirrorPlugin`): WGC capture (BGRA, staging readback, tier-scaled pool) → encoder selection `screen-mirror:encoder = auto | nvenc | openh264` (**auto** tries NVENC first, falls back to CPU on open failure) → all open viewer channels. One shared capture session; IDR forced when a viewer joins (`IEncoder.ForceKeyFrame`, part of the SDK contract).
+
+- `OpenH264Encoder` — H264Sharp CPU encode; one complete Annex-B access unit per frame; re-encodes the last frame when the desktop is static; SemaphoreSlim(0,128) latest-wins slot (capacity overflow at 8ms capture cadence was a real crash).
+- `NvEncEncoder` — FFmpeg.AutoGen `h264_nvenc` (GPU, near-zero CPU): sws_scale BGRA→YUV420P, `pict_type=I` on ForceKeyFrame, preset p1 + tune ull + CBR + delay 0. `Initialize()` opens the codec synchronously so `auto` can fall back. FFmpeg shared DLLs (avcodec-63 etc.) copy from `third_party/ffmpeg/` at build time — h264_nvenc P/Invokes resolve against the exe dir.
+
+**Direct-RTP tier (M3/M4, the primary Win↔Android path):** the Android app sends `type=rtp` (its UDP port + requested CaptureWidth/Height/BitrateKbps/CaptureFps tier) over the HTTPS 9528 pairing channel → `SignalingService.HandleRtpSessionAsync` builds a `DirectRtpChannel` (SIPSorcery RTPSession, SDES keying, crypto line **taken from the sender's announced offer** — externally injected keys do not protect outbound) and pre-registers it in PeerMesh. Sender: SRTP-protected Annex-B over UDP. Receiver (Android): `DirectRtpReceiver` reorders by seq-gap BEFORE unprotect, jitsi-srtp unprotect (needs `SunJceAlias.register()`), RFC 6184 FU-A/STAP-A reassembly, marker-bit frame boundary, `H264SurfaceDecoder` (MediaCodec→Surface). Diagnostics: 5s sliding-window loss (seq-gap) + RFC-3550 jitter shown on the on-device HUD. Chaos acceptance: docs/spec/chaos-acceptance.md.
 
 ## Critical Implementation Notes
 
@@ -74,6 +79,13 @@ Plugin SDK (interfaces) → Core Platform → Plugins → UI Shell
 
 - `MFCreateMemoryByteStream` does not exist as an export — the old Media Foundation SinkWriter encoder could never initialize; do not resurrect it
 - H264Sharp's `RgbImage(Bgra, w, h, stride, data)` handles stride-padded WGC frames natively
+
+**NVENC encoder (NvEncEncoder.cs):**
+
+- Raw `NV_ENC_FUNCTIONS` binding fails with 0xF (SDK struct version mismatch) — **FFmpeg.AutoGen is the only viable binding**; `avcodec_find_encoder_by_name("h264_nvenc")` + `avcodec_open2` + sws_scale + send/receive works (probed on RTX 5070 Ti, driver 610.x)
+- FFmpeg shared DLLs resolve against the **exe dir**, not the plugin dir — the csproj `<None CopyToOutputDirectory>` item flows them from `third_party/ffmpeg/` into the host output via the ProjectReference
+- `Initialize()` must open the codec **synchronously** (not lazily on first frame) — `encoder=auto` falls back to OpenH264 only if it can fail early; WGC frames may be `0`-configured tiers, pass `WgcCapture.OutputWidth/Height` (actual per-frame dims), never the config tier
+- FFmpeg.AutoGen 9 API: sws flags live in the `SwsFlags` enum, picture types in `AVPictureType`; `avcodec_free_context`/`av_frame_free`/`av_packet_free` take `&local` — `&classField` is CS0212 without pinning
 
 **Signaling port:** default 9527, configurable in Settings (saving restarts the server at runtime). First run triggers a Windows Firewall prompt — required for LAN access.
 
