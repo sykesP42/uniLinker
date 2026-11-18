@@ -207,4 +207,98 @@ public class DirectRtpChannelTests
 
         channel.Dispose();
     }
+
+    // ── M5 RTX: own-pipeline sender ──
+
+    /// <summary>Access the channel's internal sender for packetization/NACK
+    /// assertions (internal type, InternalsVisibleTo covers the tests).</summary>
+    private static UniLinker.Core.DirectRtpSender GetSender(UniLinker.Core.DirectRtpChannel channel)
+    {
+        var field = typeof(UniLinker.Core.DirectRtpChannel).GetField("_sender",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        return (UniLinker.Core.DirectRtpSender)field!.GetValue(channel)!;
+    }
+
+    [Fact]
+    public void PacketizeAu_splits_large_nal_into_fua_with_marker_on_last()
+    {
+        var nal1 = new byte[2004];
+        nal1[0] = 0x65;
+        new Random(1337).NextBytes(nal1.AsSpan(1));
+        var nal2 = new byte[] { 0x68, 0xEB, 0xEC, 0xB2, 0x2C, 0xD0 };
+        var au = new byte[4 + nal1.Length + 4 + nal2.Length];
+        au[0] = au[4 + nal1.Length] = 0x00;
+        au[1] = au[5 + nal1.Length] = 0x00;
+        au[2] = au[6 + nal1.Length] = 0x00;
+        au[3] = au[7 + nal1.Length] = 0x01;
+        Array.Copy(nal1, 0, au, 4, nal1.Length);
+        Array.Copy(nal2, 0, au, 8 + nal1.Length, nal2.Length);
+
+        var senderType = typeof(UniLinker.Core.DirectRtpSender);
+        var method = senderType.GetMethod("PacketizeAu",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance)!;
+        using var sender = new UniLinker.Core.DirectRtpSender(
+            new IPEndPoint(IPAddress.Loopback, 5600), bindPort: 0);
+        var packets = (List<byte[]>)method.Invoke(sender, new object[] { au, 3000u })!;
+
+        // IDR 2004 B → FU-A chunks of 1398 payload: ceil(2003/1398) = 2;
+        // PPS 6 B → 1 single-NAL packet.
+        packets.Count.Should().Be(3);
+        packets[0][1].Should().Be(96, "no marker on the first FU chunk");
+        packets[1][1].Should().Be(96, "no marker on the IDR's last chunk (PPS follows)");
+        packets[2][1].Should().Be(0x80 | 96, "marker on the AU's last packet (the PPS single-NAL)");
+        packets[0][12].Should().Be(0x7C, "FU indicator: NRI=11 | type=28");
+        packets[0][13].Should().Be(0x80 | 5, "FU header: S=1, type=5 (IDR)");
+        packets[1][13].Should().Be(0x40 | 5, "FU header: E=1");
+        // Reassembled FU payload = the NAL body; the receiver rebuilds the
+        // NAL header from indicator NRI + FU type: (0x7C & 0x60) | 5 = 0x65.
+        var fuPayload = packets[0][14..].Concat(packets[1][14..]).ToArray();
+        fuPayload.Length.Should().Be(nal1.Length - 1, "FU chunks carry the NAL body (header rides the indicator)");
+        fuPayload.Should().Equal(nal1[1..]);
+        ((packets[0][12] & 0x60) | (packets[0][13] & 0x1F)).Should().Be(nal1[0],
+            "indicator NRI + FU type rebuild the original NAL header");
+        packets[2][12..].Should().Equal(nal2);
+        // All packets share the AU timestamp, and sequence numbers increment.
+        var ts = (uint)((packets[0][4] << 24) | (packets[0][5] << 16) | (packets[0][6] << 8) | packets[0][7]);
+        ts.Should().Be(3000u);
+    }
+
+    [Fact]
+    public async Task Nack_datagram_triggers_retransmission_of_ring_packets()
+    {
+        using var receiver = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));
+        var destPort = ((IPEndPoint)receiver.Client.LocalEndPoint!).Port;
+
+        var channel = new UniLinker.Core.DirectRtpChannel(
+            MakePeer(), "screen-capture",
+            new IPEndPoint(IPAddress.Loopback, destPort),
+            bindPort: 0);
+        await channel.OpenAsync();
+        var sender = GetSender(channel);
+        sender.Start();
+
+        var au = new byte[64];
+        new Random(9).NextBytes(au);
+        await channel.SendPacketAsync(new EncodedPacket(au, 1_000_000, IsKeyFrame: true));
+
+        // Receive the one wire packet and read its seq.
+        using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var wire = (await receiver.ReceiveAsync(cts.Token)).Buffer;
+        var seq = (ushort)((wire[2] << 8) | wire[3]);
+
+        // Craft the NACK the Android receiver sends: "UNIN" + count + seq.
+        var nack = new byte[8];
+        BitConverter.GetBytes(0x554E494Eu).CopyTo(nack, 0);
+        Array.Reverse(nack, 0, 4); // big-endian magic
+        nack[4] = 0; nack[5] = 1;
+        nack[6] = (byte)(seq >> 8); nack[7] = (byte)seq;
+        sender.HandleDatagram(nack);
+
+        // The retransmission arrives with the SAME protected bytes.
+        using var cts2 = new CancellationTokenSource(TimeSpan.FromSeconds(5));
+        var resent = (await receiver.ReceiveAsync(cts2.Token)).Buffer;
+        resent.Should().Equal(wire, "RTX resends the original protected packet");
+        sender.PacketsRetransmitted.Should().Be(1);
+        channel.Dispose();
+    }
 }

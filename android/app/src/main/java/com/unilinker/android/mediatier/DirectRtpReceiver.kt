@@ -28,15 +28,31 @@ class DirectRtpReceiver(
      *  sends a PLI so the sender forces an IDR instead of waiting for the
      *  periodic GOP boundary (up to 2 s of artifacts). */
     private val onKeyFrameNeeded: (() -> Unit)? = null,
+    /** NACK target (the sender's RTP bind port host:port from the answer).
+     *  Null = RTX disabled (gaps go straight to the skip + PLI path). */
+    private val nackTarget: java.net.InetSocketAddress? = null,
 ) : AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val unprotector = SrtpUnprotector(masterKey, masterSalt)
     private val depacketizer = H264RtpDepacketizer()
     private val nalBuffer = ArrayList<ByteArray>()
-    private var lastSeq = -1
-    private var lastPliMs = 0L
     private var socket: DatagramSocket? = null
     private var loop: Job? = null
+    private var lastPliMs = 0L
+
+    // ── Reorder buffer + NACK (M5 RTX) ──
+    // Single-threaded by construction (only the socket receive loop touches
+    // these). In-order packets deliver immediately; a hole parks followers
+    // in [pending], NACKs the range, and skips (with loss accounting + PLI)
+    // after [recoveryTimeoutMs] without a fill. RTX copies carry their
+    // ORIGINAL seq, so a fill simply advances expectedSeq through pending.
+    private val pending = java.util.TreeMap<Int, ByteArray>()
+    private var expectedSeq = -1
+    private var holeSinceMs = 0L
+    private var lastNackMs = 0L
+    private var lastNackedEnd = -1
+    private val recoveryTimeoutMs: Long = 30L
+    private val nackRetryMs: Long = 15L
 
     // ── Chaos injection (docs/spec/chaos-acceptance.md C1–C5) ──
     // Settable at runtime via adb (`--ei chaos_loss 5` deep-link extras);
@@ -116,65 +132,134 @@ class DirectRtpReceiver(
         if ((bytes[1].toInt() and 0x7F) != 96) return
 
         // Chaos injection (C1–C5 acceptance): drop BEFORE any accounting so
-        // the next packet's seq-gap detection sees the loss exactly like a
-        // real network drop. 0 = off.
+        // the reorder detector sees injected loss exactly like real loss.
         if (chaosLossPct > 0 && chaosRandom.nextInt(100) < chaosLossPct) return
 
         receivedPackets++
 
-        // Sequence continuity FIRST (from the plaintext RTP header). RFC 3550
-        // delta handling: forward = gap loss; duplicate (delta 0) and small
-        // backward deltas (reorder) must NOT count as loss — the naive
-        // modulo formula turned a duplicate into a 65535-packet "loss".
         val seq = ((bytes[2].toInt() and 0xFF) shl 8) or (bytes[3].toInt() and 0xFF)
-        val nowArrival = System.currentTimeMillis()
-        synchronized(lossGate) {
-            if (lastSeq >= 0) {
-                val delta = (seq - lastSeq + 65536) % 65536
-                when {
-                    delta == 0 -> return  // duplicate — already accounted
-                    delta < 32768 -> {    // forward
-                        val gap = delta - 1
-                        if (gap > 0) {
-                            lostPackets += gap
-                            repeat(gap.coerceAtMost(400)) { lossWindow.add(Pair(nowArrival, true)) }
-                            android.util.Log.w("DirectRtp", "seq gap $lastSeq->$seq (lost $gap pkts)")
-                            // Loss detected: ask the sender for an IDR (rate-limited
-                            // to one per 500 ms — each IDR is a large burst).
-                            if (onKeyFrameNeeded != null && nowArrival - lastPliMs >= 500L) {
-                                lastPliMs = nowArrival
-                                try { onKeyFrameNeeded.invoke() } catch (_: Exception) { }
-                            }
-                        }
-                        lastSeq = seq
-                    }
-                    // backward (reorder): tolerate small jumps silently; a big
-                    // jump (stream switch) just re-baselines, no loss counted.
-                    delta < 65536 - 64 -> { }
-                    else -> lastSeq = seq
+        val now = System.currentTimeMillis()
+
+        // ── Reorder + NACK pipeline (single-threaded, lazy timeout) ──
+        if (expectedSeq == -1) {
+            expectedSeq = seq
+            deliver(bytes, now)
+            return
+        }
+        val delta = (seq - expectedSeq + 65536) % 65536
+        when {
+            // The expected packet arrived (in-order or as an RTX fill) —
+            // deliver it, advance the baseline, and flush followers. Without
+            // the advance+drain the baseline pinned at the hole and RTX
+            // resent it forever (NACK storm → dup resends → REPLAY_FAIL).
+            delta == 0 -> {
+                deliver(bytes, now)
+                expectedSeq = (expectedSeq + 1) % 65536
+                drainPending(now)
+            }
+            delta == 1 -> {
+                expectedSeq = (expectedSeq + 1) % 65536
+                deliver(bytes, now)
+                drainPending(now)
+            }
+            delta < 32768 -> {
+                // Forward jump: hole of (delta-1) packets. Park, NACK, and
+                // wait briefly for RTX before skipping.
+                pending[seq] = bytes
+                if (holeSinceMs == 0L) {
+                    holeSinceMs = now
+                    lastNackedEnd = -1
                 }
-            } else {
-                lastSeq = seq
+                sendNack(expectedSeq, seq - 1, now)
+                drainPending(now)
+                giveUpCheck(now)
+            }
+            // Backward delta: a late RTX for an already-skipped seq, or an
+            // old duplicate — silently ignore.
+        }
+    }
+
+    /** Deliver every consecutive pending packet starting at expectedSeq. */
+    private fun drainPending(now: Long) {
+        while (true) {
+            val next = pending.remove(expectedSeq) ?: break
+            deliver(next, now)
+            expectedSeq = (expectedSeq + 1) % 65536
+        }
+        if (pending.isEmpty() && holeSinceMs != 0L) holeSinceMs = 0L
+    }
+
+    /** Give up on the current hole after [recoveryTimeoutMs]: account the
+     *  skipped range as loss, jump to the next pending packet, and ask the
+     *  encoder for an IDR (rate-limited). */
+    private fun giveUpCheck(now: Long) {
+        if (holeSinceMs == 0L || now - holeSinceMs <= recoveryTimeoutMs) return
+        val nextPending = pending.firstKey()
+        val skipped = (nextPending - expectedSeq + 65536) % 65536
+        if (skipped > 0) {
+            lostPackets += skipped
+            synchronized(lossGate) {
+                repeat(skipped.coerceAtMost(400)) { lossWindow.add(Pair(now, true)) }
+            }
+            android.util.Log.w("DirectRtp", "gap $expectedSeq->${nextPending} unrecovered (lost $skipped, waited ${now - holeSinceMs}ms)")
+            if (onKeyFrameNeeded != null && now - lastPliMs >= 500L) {
+                lastPliMs = now
+                try { onKeyFrameNeeded.invoke() } catch (_: Exception) { }
             }
         }
+        expectedSeq = nextPending
+        holeSinceMs = 0L
+        drainPending(now)
+    }
 
-        // Chaos duplication (C4): process a second copy — exercises the
-        // duplicate path above.
-        if (chaosDupPct > 0 && chaosRandom.nextInt(100) < chaosDupPct) {
-            receivedPackets++
-            handlePayload(bytes, System.currentTimeMillis() + 1)
+    /** Send a NACK for [fromSeq]..[toSeq] to the sender's RTP port, rate-
+     *  limited to one datagram per [nackRetryMs] for the same range. */
+    private fun sendNack(fromSeq: Int, toSeq: Int, now: Long) {
+        val target = nackTarget ?: return
+        if (fromSeq == toSeq + 1) return // empty range
+        val sameRange = (toSeq - lastNackedEnd + 65536) % 65536 < 4
+        if (sameRange && now - lastNackMs < nackRetryMs) return
+        lastNackMs = now
+        lastNackedEnd = toSeq
+        val seqs = mutableListOf<Int>()
+        var s = fromSeq
+        while ((s - toSeq - 1 + 65536) % 65536 != 0 && seqs.size < 32) {
+            seqs.add(s)
+            s = (s + 1) % 65536
         }
+        val buf = ByteArray(6 + seqs.size * 2)
+        buf[0] = 0x55; buf[1] = 0x4E; buf[2] = 0x49; buf[3] = 0x4E // "UNIN"
+        buf[4] = (seqs.size shr 8).toByte(); buf[5] = seqs.size.toByte()
+        seqs.forEachIndexed { i, v ->
+            buf[6 + i * 2] = (v shr 8).toByte()
+            buf[7 + i * 2] = v.toByte()
+        }
+        android.util.Log.d("DirectRtp", "nack: $fromSeq..$toSeq (${seqs.size} seqs) -> $target")
+        try {
+            socket?.send(DatagramPacket(buf, buf.size, target.address, target.port))
+        } catch (_: Exception) {
+            // NACK delivery is best-effort; skip + PLI is the fallback.
+        }
+    }
 
-        // Chaos lag (C3): deliver late on a worker instead of inline.
-        if (chaosLagMs > 0) {
-            val lag = chaosLagMs
+    /** Delivery entry from the reorder pipeline: applies chaos dup/lag
+     *  injection, then runs the serialized payload work. */
+    private fun deliver(bytes: ByteArray, nowArrival: Long) {
+        val lag = chaosLagMs
+        if (lag > 0) {
+            // C3: deliver late on a worker (parallel workers = reorder; the
+            // payload gate keeps the shared state intact).
             scope.launch {
                 kotlinx.coroutines.delay(lag.toLong())
-                handlePayload(bytes, System.currentTimeMillis())
+                payloadWork(bytes, System.currentTimeMillis())
             }
             return
         }
-        handlePayload(bytes, nowArrival)
+        payloadWork(bytes, nowArrival)
+        if (chaosDupPct > 0 && chaosRandom.nextInt(100) < chaosDupPct) {
+            receivedPackets++
+            payloadWork(bytes, nowArrival + 1)
+        }
     }
 
     /** Unprotect + depacketize + HUD accounting, shared by the inline and
@@ -182,7 +267,7 @@ class DirectRtpReceiver(
      *  depacketizer assume a single consumer (lag deliveries arrive on
      *  parallel coroutine workers — concurrent mutation crashed both). */
     private val payloadGate = Any()
-    private fun handlePayload(bytes: ByteArray, nowArrival: Long) = synchronized(payloadGate) {
+    private fun payloadWork(bytes: ByteArray, nowArrival: Long) = synchronized(payloadGate) {
         val clear = unprotector.unprotect(bytes)
         if (clear == null) {
             authFailures++

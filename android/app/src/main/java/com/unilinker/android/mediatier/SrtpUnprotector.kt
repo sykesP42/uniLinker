@@ -16,6 +16,9 @@ import org.jitsi.utils.logging2.LoggerImpl
  * Meet) — no hand-written crypto anywhere in this module.
  */
 class SrtpUnprotector(masterKey: ByteArray, masterSalt: ByteArray) : AutoCloseable {
+    /** Throttled rejection diagnostics (replay vs auth distinction). */
+    private var rejections = 0
+
     init {
         // jitsi-srtp resolves its ciphers through a JCE provider literally
         // named "SunJCE" (OpenJDK-only). On Android that name does not exist
@@ -52,7 +55,13 @@ class SrtpUnprotector(masterKey: ByteArray, masterSalt: ByteArray) : AutoCloseab
         }
         val bab = View(packet, offset, length)
         val status = context.reverseTransformPacket(bab, /* authTag present = */ false)
-        if (status != SrtpErrorStatus.OK) return null
+        if (status != SrtpErrorStatus.OK) {
+            if (rejections % 50 == 1) {
+                android.util.Log.w("DirectRtp", "unprotect rejected #$rejections: $status len=$length")
+            }
+            rejections++
+            return null
+        }
         // reverseTransform shrank the view: auth tag stripped, payload decrypted.
         return packet.copyOfRange(offset, offset + bab.length)
     }

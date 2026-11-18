@@ -214,12 +214,14 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
                     return@withContext false
                 }
                 val kv = Base64.getDecoder().decode(inline)
+                val receiverPort = answer.optInt("rtpPort", 5004)
                 val receiver = DirectRtpReceiver(
                     listenPort = localPort,
                     masterKey = kv.copyOfRange(0, 16),
                     masterSalt = kv.copyOfRange(16, kv.size),
                     onAu = { au -> _frames.tryEmit(au) },
                     onKeyFrameNeeded = { sendPli() },
+                    nackTarget = java.net.InetSocketAddress(host, receiverPort),
                 )
                 receiver.chaosLossPct = chaosLossPct
                 receiver.chaosDupPct = chaosDupPct
