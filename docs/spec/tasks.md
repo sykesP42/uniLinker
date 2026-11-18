@@ -45,8 +45,8 @@
 | M4-T3 | 丢包滑窗 | DirectRtpReceiver 5s 滑动窗口（seq-gap 计丢）替换累计值；RFC-3550 抖动 | 注入 10% 丢包时 HUD 显示 ≈10% 并随注入停止回落（见 chaos-acceptance.md C2） | ✅ 代码 / 混沌手动 |
 | M4-T4 | SAS 配对上端 | PC 端 /ulp/pairing 显示配对码；Android probePairing 全屏比对对话框 | 设备验收：两端同屏六位码一致 | ✅ 设备 |
 | M4-T5 | NVENC 硬编 | FFmpeg.AutoGen h264_nvenc 封装 NvEncEncoder : IEncoder；encoder=auto \| nvenc \| openh264，同步 open 失败自动回退 CPU；third_party DLL 构建期复制 | 单测绿（33/33）；探针 RTX 5070 Ti 出包（2 pkts/33718B）；commit 37cc9c0 | ✅ |
-| M4-T6 | clumsy 混沌验收 | [chaos-acceptance.md](chaos-acceptance.md) C1–C5 场景清单 | 手动执行勾选 | ⬜ 手动 |
-| M4-T7 | 沉淀 | architecture.md M4 段 / 记忆 / push | CI 绿 | ⬜ |
+| M4-T6 | clumsy 混沌验收 | [chaos-acceptance.md](chaos-acceptance.md) C1–C5 场景清单；**第一轮（receiver 内建注入，6402cd7）已跑**：滑窗精度 ✓（2%→1.6%、10%→9.6%）、C4 重复 0.0% ✓、C5 重连恢复 ~3s ✓；核心发现：≥2% 随机丢包无 RTX 不可保证 ≤1s 恢复（P(完整 IDR)=0.98¹⁰⁰≈13%）→ M5 首项 NACK/RTX；真实网络 clumsy 注入待手动（需 UAC） | 注入式验收 ✓ / clumsy 手动 ⬜ |
+| M4-T7 | 沉淀 | architecture.md M4 段 / 记忆 / push | CI 绿（6402cd7） | ✅ |
 
 ## 依赖顺序
 
