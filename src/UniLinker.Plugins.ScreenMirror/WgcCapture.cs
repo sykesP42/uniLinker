@@ -194,7 +194,11 @@ public class WgcCapture : ICapture
                 // delivered per session). Recreate is WGC's own recovery API
                 // and rebuilds that pipeline.
                 _emptyPolls++;
-                if (_emptyPolls >= 10)
+                // x50 (~400ms of empty polls): a static desktop legitimately
+                // yields no compositor frames — recreating at x10 churned the
+                // pool 10x/s and hid the real "content change rate" signal.
+                // The original corruption recovery still triggers, just later.
+                if (_emptyPolls >= 50)
                 {
                     Log.Info("WGC: poolX empty x10 — recreating frame pool");
                     _framePool.Recreate(_winrtDevice!, DirectXPixelFormat.B8G8R8A8UIntNormalized, 2, _poolSize);

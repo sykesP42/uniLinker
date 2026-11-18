@@ -6,6 +6,7 @@ using Microsoft.AspNetCore.Hosting;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
 using UniLinker.Core;
+using UniLinker.Plugin.Sdk;
 
 namespace UniLinker.WinUI.Services;
 
@@ -129,6 +130,25 @@ public sealed class SignalingKestrelHost : IDisposable
                 Log.Error($"pairing endpoint failed: {ex}");
                 return Results.Text("pairing error: " + ex.Message, "text/plain", statusCode: 500);
             }
+        });
+
+        // M4 PLI: media-plane key-frame request from a loss-detecting receiver.
+        // Body is informational; the requester's IP is logged for diagnostics.
+        app.MapPost("/ulp/pli", async (HttpContext ctx) =>
+        {
+            string body = "";
+            try
+            {
+                using var reader = new StreamReader(ctx.Request.Body);
+                body = await reader.ReadToEndAsync();
+            }
+            catch
+            {
+                // An unreadable body still counts as a request.
+            }
+            var remote = ctx.Connection.RemoteIpAddress?.MapToIPv4()?.ToString() ?? "unknown";
+            var honored = KeyFrameBroker.Request(remote);
+            return Results.Json(new { honored }, jsonOpts);
         });
 
         app.MapGet("/info", () => Results.Json(_service.GetInfo(), jsonOpts));

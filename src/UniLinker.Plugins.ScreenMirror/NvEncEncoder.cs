@@ -33,6 +33,8 @@ public unsafe class NvEncEncoder : IEncoder
     private bool _isKey;
     private long _swsTicks;
     private long _encTicks;
+    private long _encTotalTicks;
+    private int _loopCount;
     private int _configuredWidth;
     private int _configuredHeight;
     private int _bitrateKbps;
@@ -92,6 +94,11 @@ public unsafe class NvEncEncoder : IEncoder
         // every extra frame of pipeline is latency on the mirrored link.
         _codecCtx->gop_size = _fps * 2;
         _codecCtx->max_b_frames = 0;
+        // VBV bounds the per-frame burst: an unconstrained CBR IDR spikes to
+        // 400+KB (~180 UDP packets at once, receiver buffer loss + PLI
+        // storm). A 250ms window caps the worst frame at ~tier/4.
+        _codecCtx->rc_max_rate = _codecCtx->bit_rate;
+        _codecCtx->rc_buffer_size = (int)(_codecCtx->bit_rate / 4);
 
         av_opt_set(_codecCtx->priv_data, "preset", "p1", 0);
         av_opt_set(_codecCtx->priv_data, "tune", "ull", 0);
@@ -184,7 +191,10 @@ public unsafe class NvEncEncoder : IEncoder
                 {
                     _lastFrame = frame;
                     _lastFrameCachedAt = System.Diagnostics.Stopwatch.GetTimestamp();
+                    var loopStart = System.Diagnostics.Stopwatch.GetTimestamp();
                     EncodeOne(frame);
+                    _encTotalTicks += System.Diagnostics.Stopwatch.GetTimestamp() - loopStart;
+                    _loopCount++;
                 }
                 else if (_lastFrame != null && _forceIdr)
                 {
@@ -280,9 +290,12 @@ public unsafe class NvEncEncoder : IEncoder
                 {
                     var avgSws = _swsTicks / 60.0;
                     var avgEnc = _encTicks / 60.0;
-                    Log.Info($"[NvEnc] emitted {_emittedFrames} frames (keys {_keyFrames}, last {au.Length}B key={isKey}) swsAvg={avgSws:F1}ms encAvg={avgEnc:F1}ms");
+                    var avgTotal = _loopCount > 0 ? _encTotalTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency / _loopCount : 0;
+                    Log.Info($"[NvEnc] emitted {_emittedFrames} frames (keys {_keyFrames}, last {au.Length}B key={isKey}) swsAvg={avgSws:F1}ms encAvg={avgEnc:F1}ms encodeTotal={avgTotal:F1}ms loops={_loopCount}");
                     _swsTicks = 0;
                     _encTicks = 0;
+                    _encTotalTicks = 0;
+                    _loopCount = 0;
                 }
 
                 PacketEncoded?.Invoke(new EncodedPacket(au, frame.TimestampUs, isKey));

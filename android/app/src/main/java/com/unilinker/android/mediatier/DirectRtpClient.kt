@@ -212,7 +212,9 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
                     listenPort = localPort,
                     masterKey = kv.copyOfRange(0, 16),
                     masterSalt = kv.copyOfRange(16, kv.size),
-                ) { au -> _frames.tryEmit(au) }
+                    onAu = { au -> _frames.tryEmit(au) },
+                    onKeyFrameNeeded = { sendPli() },
+                )
                 receiver.start()
                 this@DirectRtpClient.receiver = receiver
                 _state.value = State.STREAMING
@@ -223,6 +225,29 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
             _error.value = e.message ?: "connect failed"
             _state.value = State.ERROR
             false
+        }
+    }
+
+    /** Media-plane PLI: ask the sender for an IDR over the TLS pairing
+     *  channel. Fire-and-forget — the next loss event re-requests anyway. */
+    private fun sendPli() {
+        try {
+            val body = JSONObject().put("type", "pli").put("fromPeerId", "android-direct")
+            val request = Request.Builder()
+                .url("https://$host:$tlsPort/ulp/pli")
+                .post(body.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+            http.newCall(request).enqueue(object : okhttp3.Callback {
+                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                    response.close()
+                }
+
+                override fun onFailure(call: okhttp3.Call, e: java.io.IOException) {
+                    android.util.Log.w("DirectRtp", "pli send failed: ${e.message}")
+                }
+            })
+        } catch (e: Exception) {
+            android.util.Log.w("DirectRtp", "pli build failed: ${e.message}")
         }
     }
 

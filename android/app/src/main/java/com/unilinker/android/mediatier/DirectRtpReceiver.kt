@@ -24,12 +24,17 @@ class DirectRtpReceiver(
     masterKey: ByteArray,
     masterSalt: ByteArray,
     private val onAu: (ByteArray) -> Unit,
+    /** Called (rate-limited) when a sequence gap means loss — the client
+     *  sends a PLI so the sender forces an IDR instead of waiting for the
+     *  periodic GOP boundary (up to 2 s of artifacts). */
+    private val onKeyFrameNeeded: (() -> Unit)? = null,
 ) : AutoCloseable {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val unprotector = SrtpUnprotector(masterKey, masterSalt)
     private val depacketizer = H264RtpDepacketizer()
     private val nalBuffer = ArrayList<ByteArray>()
     private var lastSeq = -1
+    private var lastPliMs = 0L
     private var socket: DatagramSocket? = null
     private var loop: Job? = null
 
@@ -114,6 +119,12 @@ class DirectRtpReceiver(
                     lostPackets += gap
                     repeat(gap.coerceAtMost(400)) { lossWindow.add(Pair(nowArrival, true)) }
                     android.util.Log.w("DirectRtp", "seq gap $lastSeq->$seq (lost $gap pkts)")
+                    // Loss detected: ask the sender for an IDR (rate-limited
+                    // to one per 500 ms — each IDR is a large burst).
+                    if (onKeyFrameNeeded != null && nowArrival - lastPliMs >= 500L) {
+                        lastPliMs = nowArrival
+                        try { onKeyFrameNeeded.invoke() } catch (_: Exception) { }
+                    }
                 }
             }
             lastSeq = seq

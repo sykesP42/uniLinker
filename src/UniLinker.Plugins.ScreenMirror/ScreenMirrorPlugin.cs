@@ -8,6 +8,15 @@ public class ScreenMirrorPlugin : IPlugin
     private WgcCapture? _capture;
     private IEncoder? _encoder;
 
+    // Windows Thread.Sleep granularity is ~15.6ms unless the process raises
+    // the timer resolution — the encoder worker paces at 33ms and overshoots
+    // to ~46ms (16fps instead of 30). Raise it for this process's lifetime.
+    [System.Runtime.InteropServices.DllImport("winmm.dll")]
+    private static extern uint timeBeginPeriod(uint msPeriod);
+
+    [System.Runtime.InteropServices.DllImport("winmm.dll")]
+    private static extern uint timeEndPeriod(uint msPeriod);
+
     private readonly object _sessionGate = new();
     private readonly List<IChannel> _viewers = new();
 
@@ -29,9 +38,16 @@ public class ScreenMirrorPlugin : IPlugin
         });
 
         _ctx.Peers.ChannelRequested += OnChannelRequested;
+        // Media-plane PLI: a loss-detecting receiver asks for an IDR via
+        // /ulp/pli (rate-limited in KeyFrameBroker) instead of waiting for
+        // the periodic GOP boundary.
+        KeyFrameBroker.KeyFrameRequested += OnKeyFrameRequested;
+        timeBeginPeriod(1);
         context.Logger.Info("ScreenMirror plugin initialized");
         return Task.FromResult(true);
     }
+
+    private void OnKeyFrameRequested() => _encoder?.ForceKeyFrame();
 
     private async Task<IChannel?> OnChannelRequested(PeerInfo peer, string capability)
     {
@@ -230,6 +246,8 @@ public class ScreenMirrorPlugin : IPlugin
     public async Task Shutdown()
     {
         _ctx!.Peers.ChannelRequested -= OnChannelRequested;
+        KeyFrameBroker.KeyFrameRequested -= OnKeyFrameRequested;
+        timeEndPeriod(1);
         lock (_sessionGate)
         {
             _viewers.Clear();
