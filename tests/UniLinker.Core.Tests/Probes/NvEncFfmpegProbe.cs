@@ -24,8 +24,19 @@ public class NvEncFfmpegProbe : IDisposable
     [Fact]
     public unsafe void Probe_NvEncEncodeAndProduceBitstream()
     {
-        // 1) Find the NVENC encoder
-        var codec = avcodec_find_encoder_by_name("h264_nvenc");
+        // 1) Find the NVENC encoder. FFmpeg native DLLs are machine-local
+        // (third_party/ffmpeg/setup.ps1, ~127MB — not committed); on a CI
+        // checkout the first P/Invoke throws DllNotFoundException → SKIP.
+        AVCodec* codec;
+        try
+        {
+            codec = avcodec_find_encoder_by_name("h264_nvenc");
+        }
+        catch (DllNotFoundException)
+        {
+            _output.WriteLine("VERDICT: SKIP — FFmpeg native DLLs not provisioned (third_party/ffmpeg/setup.ps1); hardware encode untestable here");
+            return;
+        }
         if (codec == null)
         {
             _output.WriteLine("VERDICT: SKIP — h264_nvenc not found in FFmpeg build");
