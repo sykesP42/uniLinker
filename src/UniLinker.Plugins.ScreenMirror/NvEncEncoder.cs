@@ -31,6 +31,8 @@ public unsafe class NvEncEncoder : IEncoder
     private int _emittedFrames;
     private int _keyFrames;
     private bool _isKey;
+    private long _swsTicks;
+    private long _encTicks;
     private int _configuredWidth;
     private int _configuredHeight;
     private int _bitrateKbps;
@@ -41,6 +43,7 @@ public unsafe class NvEncEncoder : IEncoder
     private SwsContext* _swsCtx;
     private AVFrame* _yuvFrame;
     private AVPacket* _pkt;
+    private byte[]? _compactBuf;
 
     public event Action<EncodedPacket>? PacketEncoded;
 
@@ -207,30 +210,52 @@ public unsafe class NvEncEncoder : IEncoder
         {
             if (!_initialized || _codecCtx == null || _swsCtx == null || _yuvFrame == null) return;
 
-            int bgraSize = frame.Width * 4 * frame.Height;
-            var bgraPtr = Marshal.AllocHGlobal(bgraSize);
+            // sws_scale reads straight from the PINNED managed frame buffer —
+            // no per-frame 4MB HGlobal alloc+copy (measured: this was the
+            // 16fps bottleneck; pinned-direct restores the 30fps tier).
+            var srcData = new byte*[4];
+            var srcStride = new int[4];
+            GCHandle pinned = default;
             try
             {
-                Marshal.Copy(frame.RawData, 0, bgraPtr, Math.Min(frame.RawData.Length, bgraSize));
+                if (frame.Pitch == frame.Width * 4)
+                {
+                    pinned = GCHandle.Alloc(frame.RawData, GCHandleType.Pinned);
+                    srcData[0] = (byte*)pinned.AddrOfPinnedObject();
+                    srcStride[0] = frame.Pitch;
+                }
+                else
+                {
+                    // Pitch-padded frame: compact into a reusable buffer.
+                    int bgraSize = frame.Width * 4 * frame.Height;
+                    if (_compactBuf == null || _compactBuf.Length < bgraSize)
+                        _compactBuf = new byte[bgraSize];
+                    int toCopy = Math.Min(frame.RawData.Length, bgraSize);
+                    // Row-wise copy honoring the source pitch.
+                    for (int y = 0; y < frame.Height; y++)
+                        Buffer.BlockCopy(frame.RawData, y * frame.Pitch,
+                            _compactBuf, y * frame.Width * 4, frame.Width * 4);
+                    pinned = GCHandle.Alloc(_compactBuf, GCHandleType.Pinned);
+                    srcData[0] = (byte*)pinned.AddrOfPinnedObject();
+                    srcStride[0] = frame.Width * 4;
+                    _ = toCopy;
+                }
 
-                // sws_scale takes managed arrays (byte*[]/int[]), not raw
-                // pointers — stackalloc'd buffers don't match the signature.
-                var srcData = new byte*[4];
-                var srcStride = new int[4];
-                srcData[0] = (byte*)bgraPtr;
-                srcStride[0] = frame.Width * 4;
-
+                var swsStart = System.Diagnostics.Stopwatch.GetTimestamp();
                 sws_scale(_swsCtx, srcData, srcStride, 0, frame.Height,
                     _yuvFrame->data, _yuvFrame->linesize);
+                _swsTicks += (System.Diagnostics.Stopwatch.GetTimestamp() - swsStart) * 1000 / System.Diagnostics.Stopwatch.Frequency;
             }
             finally
             {
-                Marshal.FreeHGlobal(bgraPtr);
+                if (pinned.IsAllocated) pinned.Free();
             }
 
             _yuvFrame->pts = frame.TimestampUs * _fps / 1_000_000;
             _yuvFrame->pict_type = _forceIdr ? AVPictureType.AV_PICTURE_TYPE_I : AVPictureType.AV_PICTURE_TYPE_NONE;
             _forceIdr = false;
+
+            var encStart = System.Diagnostics.Stopwatch.GetTimestamp();
 
             int sendRc = avcodec_send_frame(_codecCtx, _yuvFrame);
             if (sendRc < 0)
@@ -253,11 +278,17 @@ public unsafe class NvEncEncoder : IEncoder
                 if (_isKey) _keyFrames++;
                 if (_emittedFrames % 60 == 1)
                 {
-                    Log.Info($"[NvEnc] emitted {_emittedFrames} frames (keys {_keyFrames}, last {au.Length}B key={isKey} pts={_pkt->pts})");
+                    var avgSws = _swsTicks / 60.0;
+                    var avgEnc = _encTicks / 60.0;
+                    Log.Info($"[NvEnc] emitted {_emittedFrames} frames (keys {_keyFrames}, last {au.Length}B key={isKey}) swsAvg={avgSws:F1}ms encAvg={avgEnc:F1}ms");
+                    _swsTicks = 0;
+                    _encTicks = 0;
                 }
 
                 PacketEncoded?.Invoke(new EncodedPacket(au, frame.TimestampUs, isKey));
             }
+
+            _encTicks += (System.Diagnostics.Stopwatch.GetTimestamp() - encStart) * 1000 / System.Diagnostics.Stopwatch.Frequency;
         }
     }
 
