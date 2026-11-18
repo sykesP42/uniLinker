@@ -176,8 +176,8 @@ public partial class LocalizationService : ObservableObject
     public string DefaultBitrate => LanguageIndex == 0 ? "Default Bitrate" : "默认码率";
     public string TransportMode => LanguageIndex == 0 ? "Screen Mirror Transport" : "投屏传输方式";
     public string TransportModeDesc => LanguageIndex == 0
-        ? "RTX: own pipeline with packet retransmission — low latency under loss. Legacy: SIPSorcery session — proven steady, higher latency."
-        : "RTX：自研管线 + 丢包重传，抗损低延迟；Legacy：SIPSorcery 会话，稳定但延迟略高。";
+        ? "SIPSorcery: RTPSession pipeline — proven steady, no retransmission. Native RTX: own RFC 6184 packetizer + NACK retransmission — fast loss recovery, experimental."
+        : "SIPSorcery：RTPSession 会话管线，稳定但丢包无重传；Native RTX：自研 RFC 6184 打包 + NACK 重传，丢包恢复快（实验性）。";
     public string Plugins => LanguageIndex == 0 ? "Plugins" : "插件";
     public string ScreenMirror => LanguageIndex == 0 ? "Screen Mirror" : "屏幕投屏";
     public string LowLatencyScreenCapture => LanguageIndex == 0 ? "Low-latency screen capture and streaming" : "低延迟屏幕捕获和流传输";

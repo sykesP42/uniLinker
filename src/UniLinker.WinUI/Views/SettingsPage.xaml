@@ -283,8 +283,8 @@
                 <ComboBox SelectedIndex="{Binding Settings.TransportIndex, Mode=TwoWay}"
                           HorizontalAlignment="Stretch"
                           MinHeight="36">
-                    <x:String>Legacy (stable, higher latency)</x:String>
-                    <x:String>RTX (experimental, retransmission)</x:String>
+                    <x:String>SIPSorcery（RTPSession 会话，稳定）</x:String>
+                    <x:String>Native RTX（自研管线 + NACK 重传）</x:String>
                 </ComboBox>
             </StackPanel>
 

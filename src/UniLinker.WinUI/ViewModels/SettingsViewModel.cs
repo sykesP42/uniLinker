@@ -22,7 +22,7 @@ public partial class SettingsViewModel : ObservableObject
     [ObservableProperty] private int _defaultResolution = 0; // 0: 1080p, 1: 2K, 2: 4K
     [ObservableProperty] private int _defaultFps = 0;        // 0: 30fps, 1: 60fps
     [ObservableProperty] private int _defaultBitrate = 1;    // 0: 10M, 1: 15M, 2: 20M
-    [ObservableProperty] private int _transportIndex = 1;    // 0: RTX (experimental), 1: Legacy (stable default)
+    [ObservableProperty] private int _transportIndex = 1;    // 0: Native RTX, 1: SIPSorcery (stable default)
 
     [ObservableProperty] private int _languageIndex = 0; // 0: English, 1: 中文
 
@@ -166,7 +166,7 @@ public partial class SettingsViewModel : ObservableObject
             SetAutostartRegistration(AutoStart);
 
             // Transport applies to NEW rtp sessions immediately.
-            UniLinker.Core.DirectRtpTransport.Mode = TransportIndex == 0 ? "rtx" : "legacy";
+            UniLinker.Core.DirectRtpTransport.Mode = TransportIndex == 0 ? "rtx" : "sipsorcery";
 
             // Push device name / port into the running platform (recreates
             // discovery and restarts the signaling server when needed).
@@ -284,7 +284,7 @@ internal class AppSettings
     public int DefaultFps { get; set; } = 0;
     public int DefaultBitrate { get; set; } = 1;
     public int LanguageIndex { get; set; } = 0;
-    /// <summary>Direct-RTP transport: 0 = RTX (own pipeline, experimental),
-    /// 1 = Legacy (SIPSorcery session — stable default).</summary>
+    /// <summary>Direct-RTP transport: 0 = Native RTX (own pipeline,
+    /// experimental), 1 = SIPSorcery session (stable default).</summary>
     public int TransportIndex { get; set; } = 1;
 }

@@ -186,9 +186,9 @@ public partial class App : Application
                         _ => ElementTheme.Default
                     };
                     ApplyTheme(_currentTheme);
-                    // Direct-RTP transport choice (rtx = experimental, legacy = default).
+                    // Direct-RTP transport by core stack: sipsorcery | rtx.
                     UniLinker.Core.DirectRtpTransport.Mode =
-                        settings.TransportIndex == 0 ? "rtx" : "legacy";
+                        settings.TransportIndex == 0 ? "rtx" : "sipsorcery";
                 }
             }
             catch
@@ -219,7 +219,7 @@ public partial class App : Application
     internal class AppSettings
     {
         public int ThemeIndex { get; set; }
-        /// <summary>Direct-RTP transport: 0 = RTX (experimental), 1 = Legacy.</summary>
+        /// <summary>Direct-RTP transport: 0 = Native RTX, 1 = SIPSorcery.</summary>
         public int TransportIndex { get; set; } = 1;
     }
 }
