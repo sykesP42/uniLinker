@@ -18,4 +18,11 @@
     <PackageReference Include="Vortice.Direct3D11" Version="3.8.3" />
     <PackageReference Include="Vortice.DXGI" Version="3.8.3" />
   </ItemGroup>
+  <ItemGroup>
+    <!-- FFmpeg 9 shared DLLs from third_party/ffmpeg/setup.ps1 (gyan.dev).
+         Copied next to the plugin assembly and transitively into the WinUI
+         host dir — h264_nvenc P/Invokes resolve against the exe dir. -->
+    <None Include="..\..\third_party\ffmpeg\*.dll" Link="%(Filename)%(Extension)"
+          CopyToOutputDirectory="PreserveNewest" />
+  </ItemGroup>
 </Project>

@@ -6,7 +6,7 @@ public class ScreenMirrorPlugin : IPlugin
 {
     private IPluginContext? _ctx;
     private WgcCapture? _capture;
-    private OpenH264Encoder? _encoder;
+    private IEncoder? _encoder;
 
     private readonly object _sessionGate = new();
     private readonly List<IChannel> _viewers = new();
@@ -95,8 +95,13 @@ public class ScreenMirrorPlugin : IPlugin
             return;
         }
 
-        _encoder = new OpenH264Encoder();
-        _encoder.Initialize(0, 0, fps, bitrateKbps);
+        _encoder = CreateEncoder(config, _capture.OutputWidth, _capture.OutputHeight, fps, bitrateKbps);
+        if (_encoder == null)
+        {
+            _capture.Dispose();
+            _capture = null;
+            return;
+        }
 
         _capture.FrameCaptured += frame => _encoder?.Encode(frame);
         _encoder.PacketEncoded += packet =>
@@ -116,6 +121,43 @@ public class ScreenMirrorPlugin : IPlugin
         };
 
         _ctx?.Logger.Info("Screen sharing session started");
+    }
+
+    /// <summary>
+    /// Encoder selection: "nvenc" forces hardware (fail the session if it
+    /// cannot open), "openh264" forces CPU, "auto" (default) tries NVENC
+    /// first and silently falls back to the CPU encoder — the 60fps unlock
+    /// with a guaranteed floor.
+    /// </summary>
+    private IEncoder? CreateEncoder(ScreenMirrorConfig? config, int width, int height, int fps, int bitrateKbps)
+    {
+        var choice = (config?.Encoder ?? "auto").ToLowerInvariant();
+        if (choice == "openh264")
+        {
+            return StartOpenH264(fps, bitrateKbps);
+        }
+
+        if (choice == "nvenc" || choice == "auto")
+        {
+            var nvenc = new NvEncEncoder();
+            if (nvenc.Initialize(width, height, fps, bitrateKbps))
+            {
+                _ctx?.Logger.Info($"Encoder: NVENC {width}x{height}@{fps} {bitrateKbps}kbps");
+                return nvenc;
+            }
+            nvenc.Dispose();
+            _ctx?.Logger.Warn("NVENC unavailable — falling back to OpenH264 (CPU)");
+            if (choice == "nvenc") return null;
+        }
+
+        return StartOpenH264(fps, bitrateKbps);
+    }
+
+    private IEncoder StartOpenH264(int fps, int bitrateKbps)
+    {
+        var encoder = new OpenH264Encoder();
+        encoder.Initialize(0, 0, fps, bitrateKbps);
+        return encoder;
     }
 
     private async Task SendSafeAsync(IChannel viewer, EncodedPacket packet)
@@ -190,4 +232,6 @@ public class ScreenMirrorConfig
     public int CaptureHeight { get; set; }
     public int CaptureFps { get; set; } = 30;
     public int BitrateKbps { get; set; } = 8000;
+    /// <summary>"auto" (NVENC first, CPU fallback) | "nvenc" | "openh264".</summary>
+    public string Encoder { get; set; } = "auto";
 }

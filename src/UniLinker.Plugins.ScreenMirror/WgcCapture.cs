@@ -555,6 +555,12 @@ public class WgcCapture : ICapture
 
     public CaptureInfo GetInfo() => new(_width, _height, _fps, "WGC-D3D11");
 
+    /// <summary>Actual per-frame output dimensions (native pool size when no
+    /// tier was configured) — encoders initialized from the capture must use
+    /// these, not the configured tier which may be 0/1920-fallback.</summary>
+    public int OutputWidth => _outWidth;
+    public int OutputHeight => _outHeight;
+
     public void Dispose() => Stop();
 
     // ── D3D Device Creation via raw P/Invoke + Vortice wrapping ──
