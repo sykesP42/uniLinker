@@ -19,6 +19,11 @@ namespace UniLinker.Plugins.ScreenMirror;
 /// </summary>
 public unsafe class NvEncEncoder : IEncoder
 {
+    /// <summary>Constant-quality target (0-51, lower = better). 19 keeps
+    /// desktop text visually transparent while static frames cost 3-15KB;
+    /// motion rides to the tier's maxrate cap.</summary>
+    public const int CqLevel = 19;
+
     private readonly object _slotGate = new();
     private CaptureFrame? _pendingFrame;
     private CaptureFrame? _lastFrame;
@@ -95,10 +100,10 @@ public unsafe class NvEncEncoder : IEncoder
         // every extra frame of pipeline is latency on the mirrored link.
         _codecCtx->gop_size = _fps * 2;
         _codecCtx->max_b_frames = 0;
-        // VBV bounds the per-frame burst: an unconstrained CBR IDR spikes to
-        // 400+KB (~180 UDP packets at once, receiver buffer loss + PLI
-        // storm). A 330ms window caps the worst frame at ~tier/3 (the
-        // packet pacer then spreads even that over ~40ms).
+        // The tier bitrate is now a LINK CAP, not a quality target (vbr+cq
+        // above decides spend). VBV bounds the per-frame burst: cap the
+        // worst frame at tier/3 (~half a second of budget) — the packet
+        // pacer then spreads even that over tens of ms.
         _codecCtx->rc_max_rate = _codecCtx->bit_rate;
         _codecCtx->rc_buffer_size = (int)(_codecCtx->bit_rate / 3);
 
@@ -106,15 +111,23 @@ public unsafe class NvEncEncoder : IEncoder
         // visible blocking on motion; p4 costs ~2-3ms more GPU time at this
         // resolution and restores most of it. High profile + CABAC save
         // ~10-15% bitrate at equal quality; spatial AQ spends bits where
-        // the eye looks (flat regions stay clean under CBR).
+        // the eye looks.
         av_opt_set(_codecCtx->priv_data, "preset", "p4", 0);
         av_opt_set(_codecCtx->priv_data, "tune", "ull", 0);
-        av_opt_set(_codecCtx->priv_data, "rc", "cbr", 0);
         av_opt_set(_codecCtx->priv_data, "profile", "high", 0);
         av_opt_set(_codecCtx->priv_data, "coder", "cabac", 0);
         av_opt_set(_codecCtx->priv_data, "spatial-aq", "1", 0);
         av_opt_set(_codecCtx->priv_data, "delay", "0", 0);
         av_opt_set(_codecCtx->priv_data, "zerolatency", "1", 0);
+
+        // Rate control: quality-targeted VBR (the OBS "cq" mode) instead of
+        // CBR. Measured: CBR PADDING padded static-desktop P frames to
+        // ~130KB (16-64Mbps) regardless of content — flat regions soaked up
+        // the budget as compression noise. With rc=vbr + cq=19 screen text
+        // is visually transparent at 3-15KB/frame and motion spikes ride to
+        // the maxrate cap (the RTX ring + pacer absorb the spread).
+        av_opt_set(_codecCtx->priv_data, "rc", "vbr", 0);
+        av_opt_set(_codecCtx->priv_data, "cq", CqLevel.ToString(), 0);
 
         Log.Info("[NvEnc] opening h264_nvenc codec context...");
         int rc = avcodec_open2(_codecCtx, codec, null);

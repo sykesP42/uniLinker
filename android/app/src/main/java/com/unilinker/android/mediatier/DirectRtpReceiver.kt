@@ -51,6 +51,17 @@ class DirectRtpReceiver(
     private var holeSinceMs = 0L
     private var lastNackMs = 0L
     private var lastNackedEnd = -1
+    /** Set when a hole was skipped MID-FRAME: everything in nalBuffer since
+     *  the last marker belongs to a corrupt frame — drop it at the boundary
+     *  instead of feeding the decoder garbage (PLI already requested). */
+    @Volatile private var frameCorrupted = false
+    // Assembly diagnostics (throttled log every ~2s)
+    @Volatile var assembledAUs: Int = 0
+        private set
+    @Volatile var droppedCorruptAUs: Int = 0
+        private set
+    @Volatile var nalsBuffered: Int = 0
+        private set
     private val recoveryTimeoutMs: Long = 30L
     private val nackRetryMs: Long = 15L
 
@@ -118,8 +129,11 @@ class DirectRtpReceiver(
                     handle(packet)
                 } catch (_: java.net.SocketTimeoutException) {
                     // continue
-                } catch (_: Exception) {
+                } catch (e: Exception) {
                     if (sock.isClosed || !isActive) break
+                    // Swallowed exceptions here once silently froze the whole
+                    // receive pipeline (pending-empty giveUp) — log them.
+                    android.util.Log.e("DirectRtp", "receive loop error", e)
                 }
             }
         }
@@ -194,10 +208,17 @@ class DirectRtpReceiver(
      *  encoder for an IDR (rate-limited). */
     private fun giveUpCheck(now: Long) {
         if (holeSinceMs == 0L || now - holeSinceMs <= recoveryTimeoutMs) return
+        if (pending.isEmpty()) {
+            // Hole with nothing parked: keep waiting (the RTX fill may still
+            // land); the 5s loss-window trim bounds the accounting.
+            holeSinceMs = 0L
+            return
+        }
         val nextPending = pending.firstKey()
         val skipped = (nextPending - expectedSeq + 65536) % 65536
         if (skipped > 0) {
             lostPackets += skipped
+            frameCorrupted = true
             synchronized(lossGate) {
                 repeat(skipped.coerceAtMost(400)) { lossWindow.add(Pair(now, true)) }
             }
@@ -271,6 +292,7 @@ class DirectRtpReceiver(
         val clear = unprotector.unprotect(bytes)
         if (clear == null) {
             authFailures++
+            frameCorrupted = true
             depacketizer.reset()
             android.util.Log.w(
                 "DirectRtp",
@@ -289,6 +311,7 @@ class DirectRtpReceiver(
 
         val marker = (clear[1].toInt() and 0x80) != 0
         nalBuffer.addAll(depacketizer.push(H264RtpDepacketizer.rtpPayload(clear)))
+        if (nalBuffer.size % 50 == 0 && nalBuffer.size > 0) nalsBuffered = nalBuffer.size
         synchronized(lossGate) {
             lossWindow.add(Pair(nowArrival, false))
             val cutoff = nowArrival - 5000L
@@ -298,6 +321,18 @@ class DirectRtpReceiver(
         if (marker && nalBuffer.isNotEmpty()) {
             val au = concat(nalBuffer)
             nalBuffer.clear()
+            assembledAUs++
+            if (frameCorrupted) {
+                // A skipped packet landed inside this frame — feeding the
+                // decoder garbage poisons references for the whole GOP and
+                // reads as ~1fps mush. Freeze cleanly instead: drop the AU,
+                // the PLI (already fired) rebuilds with the next IDR.
+                frameCorrupted = false
+                depacketizer.reset()
+                droppedCorruptAUs++
+                if (droppedCorruptAUs % 20 == 1) android.util.Log.w("DirectRtp", "dropped corrupt AU #$droppedCorruptAUs after mid-frame skip (${au.size}B)")
+                return@synchronized
+            }
             if (au.isNotEmpty()) onAu(au)
         }
     }

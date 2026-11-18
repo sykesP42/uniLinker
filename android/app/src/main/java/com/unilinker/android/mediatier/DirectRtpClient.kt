@@ -86,6 +86,11 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
     val receiverLossWindow: Pair<Int, Int>?
         get() = receiver?.lossWindowStats()
 
+    // Assembly diagnostics (HUD/adb debugging of the RTX reorder pipeline).
+    val receiverAssembledAUs: Int get() = receiver?.assembledAUs ?: 0
+    val receiverDroppedCorruptAUs: Int get() = receiver?.droppedCorruptAUs ?: 0
+    val receiverNalsBuffered: Int get() = receiver?.nalsBuffered ?: 0
+
     /** SHA-256 fingerprint of a DER-encoded certificate, uppercase hex. */
     private fun fingerprintOf(cert: X509Certificate): String =
         MessageDigest.getInstance("SHA-256").digest(cert.encoded)
@@ -235,6 +240,43 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
             android.util.Log.e("DirectRtp", "connect failed", e)
             _error.value = e.message ?: "connect failed"
             _state.value = State.ERROR
+            false
+        }
+    }
+
+    /** Read the sender's current transport mode ("sipsorcery" | "rtx").
+     *  Returns null when the request fails. */
+    suspend fun getTransport(): String? = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder()
+                .url("https://$host:$tlsPort/ulp/transport")
+                .get()
+                .build()
+            http.newCall(request).execute().use { response ->
+                if (!response.isSuccessful) return@use null
+                val body = response.body?.string() ?: return@use null
+                org.json.JSONObject(body).optString("mode", null)
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("DirectRtp", "getTransport failed: ${e.message}")
+            null
+        }
+    }
+
+    /** Set the sender's transport mode over the TLS pairing channel and
+     *  wait for the apply (the sender persists the choice). True on success. */
+    suspend fun setTransport(mode: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            val body = JSONObject().put("mode", mode)
+            val request = Request.Builder()
+                .url("https://$host:$tlsPort/ulp/transport")
+                .post(body.toString().toRequestBody("application/json".toMediaType()))
+                .build()
+            http.newCall(request).execute().use { response ->
+                response.isSuccessful
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("DirectRtp", "setTransport failed: ${e.message}")
             false
         }
     }
