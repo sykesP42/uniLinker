@@ -51,6 +51,18 @@ class DirectRtpReceiver(
         private set
     private var lastArrivalMs: Long = -1
 
+    /** Sliding loss window: (timestampMs, lost?) per packet, trimmed to 5 s. */
+    private val lossWindow = ArrayDeque<Pair<Long, Boolean>>()
+
+    /** (lost, total) within the last [windowMs] milliseconds. */
+    fun lossWindowStats(windowMs: Long = 5000L): Pair<Int, Int> {
+        val cutoff = System.currentTimeMillis() - windowMs
+        while (lossWindow.isNotEmpty() && lossWindow.first().first < cutoff) lossWindow.removeFirst()
+        var lost = 0
+        for ((_, wasLost) in lossWindow) if (wasLost) lost++
+        return Pair(lost, lossWindow.size)
+    }
+
     fun start() {
         if (loop?.isActive == true) return
         val sock = DatagramSocket(null).apply {
@@ -85,6 +97,21 @@ class DirectRtpReceiver(
         if ((bytes[1].toInt() and 0x7F) != 96) return
         receivedPackets++
 
+        // Sequence continuity FIRST (from the plaintext RTP header): gaps are
+        // network loss — the packet never arrived, so record lost placeholders
+        // in the sliding window BEFORE the current packet's entry.
+        val seq = ((bytes[2].toInt() and 0xFF) shl 8) or (bytes[3].toInt() and 0xFF)
+        val nowArrival = System.currentTimeMillis()
+        if (lastSeq >= 0) {
+            val gap = (seq - lastSeq - 1 + 65536) % 65536
+            if (gap > 0) {
+                lostPackets += gap
+                repeat(gap.coerceAtMost(400)) { lossWindow.add(Pair(nowArrival, true)) }
+                android.util.Log.w("DirectRtp", "seq gap $lastSeq->$seq (lost $gap pkts)")
+            }
+        }
+        lastSeq = seq
+
         val clear = unprotector.unprotect(bytes)
         if (clear == null) {
             authFailures++
@@ -96,36 +123,24 @@ class DirectRtpReceiver(
             return
         }
 
-        // Loss detection: a sequence gap means the IDR-size packet bursts are
-        // being dropped somewhere between sender socket and our socket.
-        val seq = ((clear[2].toInt() and 0xFF) shl 8) or (clear[3].toInt() and 0xFF)
-        if (lastSeq >= 0) {
-            val gap = (seq - lastSeq - 1 + 65536) % 65536
-            if (gap > 0) {
-                lostPackets += gap
-                android.util.Log.w("DirectRtp", "seq gap $lastSeq->$seq (lost $gap pkts)")
-            }
-        }
+        // RFC-3550-style interarrival jitter, exponentially smoothed.
         val nowMs = System.currentTimeMillis()
         if (lastArrivalMs > 0) {
             val delta = (nowMs - lastArrivalMs).coerceAtLeast(0).toDouble()
             jitterMs += (kotlin.math.abs(delta - 33.3) - jitterMs) / 16.0
         }
         lastArrivalMs = nowMs
-        lastSeq = seq
         bytesReceived += bytes.size
 
         val marker = (clear[1].toInt() and 0x80) != 0
         nalBuffer.addAll(depacketizer.push(H264RtpDepacketizer.rtpPayload(clear)))
+        lossWindow.add(Pair(nowArrival, false))
+        val cutoff = nowArrival - 5000L
+        while (lossWindow.isNotEmpty() && lossWindow.first().first < cutoff) lossWindow.removeFirst()
+
         if (marker && nalBuffer.isNotEmpty()) {
             val au = concat(nalBuffer)
             nalBuffer.clear()
-            if (receivedPackets % 150 < 3) {
-                android.util.Log.i(
-                    "DirectRtp",
-                    "pkts=$receivedPackets au=${au.size}B",
-                )
-            }
             if (au.isNotEmpty()) onAu(au)
         }
     }

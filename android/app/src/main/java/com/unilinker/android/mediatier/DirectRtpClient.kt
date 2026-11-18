@@ -70,6 +70,9 @@ class DirectRtpClient(private val host: String, private val signalingPort: Int) 
     val receiverJitter: Double
         get() = receiver?.jitterMs ?: 0.0
 
+    val receiverLossWindow: Pair<Int, Int>?
+        get() = receiver?.lossWindowStats()
+
     /** SHA-256 fingerprint of a DER-encoded certificate, uppercase hex. */
     private fun fingerprintOf(cert: X509Certificate): String =
         MessageDigest.getInstance("SHA-256").digest(cert.encoded)

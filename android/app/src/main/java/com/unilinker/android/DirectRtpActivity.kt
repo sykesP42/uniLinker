@@ -20,6 +20,7 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
@@ -123,45 +124,63 @@ fun DirectRtpScreen(initialAddress: String?) {
     var hudJitter by remember { mutableStateOf(0.0) }
 
     // HUD dashboard: per-metric switches (persisted) + draggable position.
-    data class HudItem(val key: String, val label: String, val default: Boolean)
-    val hudItems = listOf(
-        HudItem("fps", "帧率", true),
-        HudItem("mbps", "码率", true),
-        HudItem("jitter", "抖动", true),
-        HudItem("loss", "丢包", true),
-        HudItem("res", "分辨率", true),
+    var hudFpsOn by remember { mutableStateOf(prefs.getBoolean("hud_fps", true)) }
+    var hudMbpsOn by remember { mutableStateOf(prefs.getBoolean("hud_mbps", true)) }
+    var hudJitterOn by remember { mutableStateOf(prefs.getBoolean("hud_jitter", true)) }
+    var hudLossOn by remember { mutableStateOf(prefs.getBoolean("hud_loss", true)) }
+    var hudResOn by remember { mutableStateOf(prefs.getBoolean("hud_res", true)) }
+    val hudOn = mapOf(
+        "fps" to hudFpsOn,
+        "mbps" to hudMbpsOn,
+        "jitter" to hudJitterOn,
+        "loss" to hudLossOn,
+        "res" to hudResOn,
     )
-    val hudOn = hudItems.associate { it.key to mutableStateOf(prefs.getBoolean("hud_" + it.key, it.default)) }
     var hudOffsetX by remember { mutableIntStateOf(prefs.getInt("hud_x", 0)) }
     var hudOffsetY by remember { mutableIntStateOf(prefs.getInt("hud_y", 0)) }
     fun persistHud() {
         prefs.edit()
-            .putBoolean("hud_fps", hudOn["fps"]!!.value)
-            .putBoolean("hud_mbps", hudOn["mbps"]!!.value)
-            .putBoolean("hud_jitter", hudOn["jitter"]!!.value)
-            .putBoolean("hud_loss", hudOn["loss"]!!.value)
-            .putBoolean("hud_res", hudOn["res"]!!.value)
+            .putBoolean("hud_fps", hudFpsOn)
+            .putBoolean("hud_mbps", hudMbpsOn)
+            .putBoolean("hud_jitter", hudJitterOn)
+            .putBoolean("hud_loss", hudLossOn)
+            .putBoolean("hud_res", hudResOn)
             .putInt("hud_x", hudOffsetX)
             .putInt("hud_y", hudOffsetY)
             .apply()
     }
-    fun hudLines(): List<String> {
+    // HUD metric rows: (label, value, color). Value colors encode health:
+    // green = good, amber = degraded, red = bad. Fixed-width numeric fields
+    // plus tabular numbers keep the panel from wobbling on every refresh.
+    fun hudRows(): List<Triple<String, String, Color>> {
         val st = client?.receiverStats
-        val lines = mutableListOf<String>()
-        if (hudOn["fps"]!!.value) lines.add("帧率 %.0f fps".format(hudFps))
-        if (hudOn["mbps"]!!.value) lines.add("码率 %.1f Mbps".format(hudMbps))
-        if (hudOn["jitter"]!!.value) lines.add("抖动 %.0f ms".format(hudJitter))
-        if (hudOn["loss"]!!.value) {
-            val total = st?.first?.plus(st.second ?: 0) ?: 0
-            val loss = st?.second ?: 0
-            lines.add("丢包 %.2f%% (%d/%d)".format(if (total > 0) loss * 100.0 / total else 0.0, loss, total))
+        val rows = mutableListOf<Triple<String, String, Color>>()
+        if (hudFpsOn) {
+            val v = hudFps
+            val c = when { v >= 25 -> Color(0xFF4CAF50); v >= 15 -> Color(0xFFFFC107); else -> Color(0xFFF44336) }
+            rows.add(Triple("帧率", "%2.0f fps".format(v), c))
         }
-        if (hudOn["res"]!!.value) {
+        if (hudMbpsOn) {
+            val v = hudMbps
+            val c = when { v >= 6 -> Color(0xFF4CAF50); v >= 3 -> Color(0xFFFFC107); else -> Color(0xFFF44336) }
+            rows.add(Triple("码率", "%4.1f Mbps".format(v), c))
+        }
+        if (hudJitterOn) {
+            val v = hudJitter
+            val c = when { v < 30 -> Color(0xFF4CAF50); v < 60 -> Color(0xFFFFC107); else -> Color(0xFFF44336) }
+            rows.add(Triple("抖动", "%3.0f ms".format(v), c))
+        }
+        if (hudLossOn) {
+            val (lost, total) = client?.receiverLossWindow ?: Pair(0, 0)
+            val pct = if (total > 0) lost * 100.0 / total else 0.0
+            val c = when { pct < 1 -> Color(0xFF4CAF50); pct < 5 -> Color(0xFFFFC107); else -> Color(0xFFF44336) }
+            rows.add(Triple("丢包", "%4.1f%%".format(pct), c))
+        }
+        if (hudResOn) {
             val r = decoder?.streamSize?.value
-            lines.add("分辨率 " + (r?.let { "${it.first}×${it.second}" } ?: "—"))
+            rows.add(Triple("分辨率", r?.let { "${it.first}×${it.second}" } ?: "—", Color(0xFFBDBDBD)))
         }
-        lines.add("帧数 $decodedCount")
-        return lines
+        return rows
     }
 
     fun toggleConnect() {
@@ -322,7 +341,8 @@ fun DirectRtpScreen(initialAddress: String?) {
                 .align(Alignment.TopEnd)
                 .padding(10.dp)
                 .offset { IntOffset(hudOffsetX, hudOffsetY) }
-                .background(Color(0x55000000), RoundedCornerShape(8.dp))
+                .width(190.dp)
+                .background(Color(0xAA101418), RoundedCornerShape(8.dp))
                 .padding(horizontal = 8.dp, vertical = 5.dp)
                 .pointerInput(Unit) {
                     detectDragGestures(
@@ -336,8 +356,20 @@ fun DirectRtpScreen(initialAddress: String?) {
                 },
             verticalArrangement = Arrangement.spacedBy(1.dp),
         ) {
-            hudLines().forEach { line ->
-                Text(line, style = MaterialTheme.typography.labelSmall, color = Color(0xFFC8E6C9))
+            hudRows().forEach { (label, value, color) ->
+                Row(modifier = Modifier.fillMaxWidth()) {
+                    Text(
+                        label,
+                        modifier = Modifier.weight(1f),
+                        style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
+                        color = Color(0xFF9E9E9E),
+                    )
+                    Text(
+                        value,
+                        style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
+                        color = color,
+                    )
+                }
             }
         }
 
@@ -375,6 +407,16 @@ fun DirectRtpScreen(initialAddress: String?) {
                 brIdx = brIdx,
                 fpsIdx = fpsIdx,
                 streaming = client != null,
+                hudFpsOn = hudFpsOn,
+                hudMbpsOn = hudMbpsOn,
+                hudJitterOn = hudJitterOn,
+                hudLossOn = hudLossOn,
+                hudResOn = hudResOn,
+                onHudFps = { hudFpsOn = it; persistHud() },
+                onHudMbps = { hudMbpsOn = it; persistHud() },
+                onHudJitter = { hudJitterOn = it; persistHud() },
+                onHudLoss = { hudLossOn = it; persistHud() },
+                onHudRes = { hudResOn = it; persistHud() },
                 onCycleRes = {
                     resIdx = (resIdx + 1) % resOptions.size
                     prefs.edit().putInt("tier_res", resIdx).apply()
@@ -473,6 +515,16 @@ private fun FloatingPanel(
     brIdx: Int,
     fpsIdx: Int,
     streaming: Boolean,
+    hudFpsOn: Boolean,
+    hudMbpsOn: Boolean,
+    hudJitterOn: Boolean,
+    hudLossOn: Boolean,
+    hudResOn: Boolean,
+    onHudFps: (Boolean) -> Unit,
+    onHudMbps: (Boolean) -> Unit,
+    onHudJitter: (Boolean) -> Unit,
+    onHudLoss: (Boolean) -> Unit,
+    onHudRes: (Boolean) -> Unit,
     onCycleRes: () -> Unit,
     onCycleBr: () -> Unit,
     onCycleFps: () -> Unit,
@@ -484,39 +536,83 @@ private fun FloatingPanel(
             modifier = Modifier
                 .align(Alignment.TopEnd)
                 .padding(16.dp)
-                .fillMaxWidth(0.44f)
+                .fillMaxWidth(0.46f)
                 .clip(RoundedCornerShape(10.dp))
-                .background(Color(0xE6141414))
+                .background(Color(0xF00E1114))
                 .padding(12.dp),
             verticalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             Text("uniLinker · Direct", style = MaterialTheme.typography.titleSmall, color = Color.White)
             Text(statusText, style = MaterialTheme.typography.bodySmall, color = Color(0xFF9BE29B))
-            Text(hudText.ifEmpty { "no stats yet" }, style = MaterialTheme.typography.bodySmall, color = Color(0xFFBDBDBD))
-            Text("decoded frames: $decodedCount", style = MaterialTheme.typography.bodySmall, color = Color(0xFFBDBDBD))
 
+            // Capture tier
+            Text("画质档位", style = MaterialTheme.typography.labelMedium, color = Color(0xFF9E9E9E))
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(onClick = onCycleRes, modifier = Modifier.weight(1f)) {
-                    Text("${resOptions[resIdx].first}×${resOptions[resIdx].second}")
-                }
+                Button(
+                    onClick = onCycleRes,
+                    modifier = Modifier.weight(1f),
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF23272E), contentColor = Color.White),
+                ) { Text("${resOptions[resIdx].first}×${resOptions[resIdx].second}") }
+                Button(
+                    onClick = onCycleBr,
+                    modifier = Modifier.weight(1f),
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF23272E), contentColor = Color.White),
+                ) { Text("${brOptions[brIdx] / 1000} Mbps") }
+                Button(
+                    onClick = onCycleFps,
+                    modifier = Modifier.weight(1f),
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF23272E), contentColor = Color.White),
+                ) { Text("${fpsOptions[fpsIdx]} fps") }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(onClick = onCycleBr, modifier = Modifier.weight(1f)) { Text("${brOptions[brIdx] / 1000} Mbps") }
-                Button(onClick = onCycleFps, modifier = Modifier.weight(1f)) { Text("${fpsOptions[fpsIdx]} fps") }
-            }
+
+            // HUD controls: per-metric visibility switches.
+            Text("HUD 显示项", style = MaterialTheme.typography.labelMedium, color = Color(0xFF9E9E9E))
+            HudToggleRow("帧率", hudFpsOn, onHudFps)
+            HudToggleRow("码率", hudMbpsOn, onHudMbps)
+            HudToggleRow("抖动", hudJitterOn, onHudJitter)
+            HudToggleRow("丢包", hudLossOn, onHudLoss)
+            HudToggleRow("分辨率", hudResOn, onHudRes)
+
             Text(
                 "tier changes apply on the next connect (断开重连生效)",
                 style = MaterialTheme.typography.labelSmall,
                 color = Color(0xFF9E9E9E),
             )
             Row(horizontalArrangement = Arrangement.spacedBy(6.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(onClick = onReconnect, modifier = Modifier.weight(1f)) { Text("Reconnect") }
+                Button(
+                    onClick = onReconnect,
+                    modifier = Modifier.weight(1f),
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF23272E), contentColor = Color.White),
+                ) { Text("Reconnect") }
                 Button(
                     onClick = onDisconnect,
                     modifier = Modifier.weight(1f),
                     enabled = streaming,
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = Color(0xFF23272E), contentColor = Color.White),
                 ) { Text("Disconnect") }
             }
         }
+    }
+}
+
+/** One HUD-metric visibility row: label + Switch, dark-styled. */
+@Composable
+private fun HudToggleRow(label: String, state: Boolean, onToggle: (Boolean) -> Unit) {
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
+    ) {
+        Text(label, style = MaterialTheme.typography.bodySmall, color = Color.White)
+        androidx.compose.material3.Switch(
+            checked = state,
+            onCheckedChange = { onToggle(it) },
+            modifier = Modifier.size(34.dp, 20.dp),
+        )
     }
 }
