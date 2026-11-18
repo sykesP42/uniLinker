@@ -29,6 +29,8 @@ public unsafe class NvEncEncoder : IEncoder
     private Thread? _worker;
     private volatile bool _forceIdr;
     private int _emittedFrames;
+    private int _keyFrames;
+    private bool _isKey;
     private int _configuredWidth;
     private int _configuredHeight;
     private int _bitrateKbps;
@@ -94,12 +96,14 @@ public unsafe class NvEncEncoder : IEncoder
         av_opt_set(_codecCtx->priv_data, "delay", "0", 0);
         av_opt_set(_codecCtx->priv_data, "zerolatency", "1", 0);
 
+        Log.Info("[NvEnc] opening h264_nvenc codec context...");
         int rc = avcodec_open2(_codecCtx, codec, null);
         if (rc < 0)
         {
             Log.Error($"[NvEnc] avcodec_open2 failed rc={rc} (no NVIDIA GPU or driver too old?)");
             return false;
         }
+        Log.Info("[NvEnc] codec context open");
 
         // BGRA -> YUV420P conversion context. NVENC accepts yuv420p system
         // memory frames; the GPU-D3D11 NV12 path is a later optimization.
@@ -243,11 +247,13 @@ public unsafe class NvEncEncoder : IEncoder
                 var au = new byte[_pkt->size];
                 Marshal.Copy((nint)_pkt->data, au, 0, _pkt->size);
                 bool isKey = (_pkt->flags & AV_PKT_FLAG_KEY) != 0;
+                _isKey = isKey;
 
                 _emittedFrames++;
+                if (_isKey) _keyFrames++;
                 if (_emittedFrames % 60 == 1)
                 {
-                    Log.Info($"[NvEnc] emitted {_emittedFrames} frames (last {au.Length}B key={isKey})");
+                    Log.Info($"[NvEnc] emitted {_emittedFrames} frames (keys {_keyFrames}, last {au.Length}B key={isKey} pts={_pkt->pts})");
                 }
 
                 PacketEncoded?.Invoke(new EncodedPacket(au, frame.TimestampUs, isKey));

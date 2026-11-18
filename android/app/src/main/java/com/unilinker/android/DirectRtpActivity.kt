@@ -191,7 +191,7 @@ fun DirectRtpScreen(initialAddress: String?) {
             return
         }
         val parsed = address.split(":")
-        if (parsed.size != 2) {
+        if (parsed.size < 2) {
             statusText = "Error: address must be ip:port"
             return
         }
@@ -201,10 +201,14 @@ fun DirectRtpScreen(initialAddress: String?) {
             .putInt("tier_fps", fpsIdx)
             .apply()
         val tier = CaptureTier(resOptions[resIdx].first, resOptions[resIdx].second, brOptions[brIdx], fpsOptions[fpsIdx])
-        val pairingPort = parsed.getOrNull(2)?.toIntOrNull() ?: 9528
-        val newClient = DirectRtpClient(parsed[0], parsed[1].toIntOrNull() ?: 9527)
+        // Deep link "ip:signalingPort[:pairingPort]" — the app talks TLS only
+        // (device-cert pairing channel, default 9528). The second segment is
+        // accepted for compatibility with browser-style addresses; pointing
+        // TLS at the plain-HTTP 9527 listener fails WRONG_VERSION_NUMBER.
+        val tlsPort = parsed.getOrNull(2)?.toIntOrNull() ?: 9528
+        val newClient = DirectRtpClient(parsed[0], tlsPort)
         newClient.pinnedFingerprint = prefs.getString("pinned_fp", null)
-        android.util.Log.d("DirectRtp", "toggle: pinned=${newClient.pinnedFingerprint}")
+        android.util.Log.d("DirectRtp", "toggle: pinned=${newClient.pinnedFingerprint} tls=$tlsPort")
         client = newClient
         statusText = "Connecting…"
         scope.launch {

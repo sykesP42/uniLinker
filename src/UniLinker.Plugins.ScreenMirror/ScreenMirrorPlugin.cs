@@ -43,7 +43,12 @@ public class ScreenMirrorPlugin : IPlugin
         var fps = config.CaptureFps > 0 ? config.CaptureFps : 30;
         var bitrate = config.BitrateKbps > 0 ? config.BitrateKbps : 8000;
 
-        var channel = await _ctx.Peers.CreateChannel(peer, capability);
+        // ConfigureAwait(false): the continuation must NOT resume on the WinUI
+        // STA UI thread — NvEncEncoder's avcodec_open2 (NVENC/CUDA init)
+        // deadlocks there (driver call marshaled back to the pumping STA,
+        // empirically verified 2026-11-19). Everything downstream
+        // (WGC CreateFreeThreaded, encoders, channels) is threadpool-safe.
+        var channel = await _ctx.Peers.CreateChannel(peer, capability).ConfigureAwait(false);
         if (channel == null)
         {
             _ctx.Logger.Warn($"Failed to create channel for {peer.Name}");
@@ -132,6 +137,7 @@ public class ScreenMirrorPlugin : IPlugin
     private IEncoder? CreateEncoder(ScreenMirrorConfig? config, int width, int height, int fps, int bitrateKbps)
     {
         var choice = (config?.Encoder ?? "auto").ToLowerInvariant();
+        _ctx?.Logger.Info($"CreateEncoder: choice={choice} {width}x{height}@{fps} {bitrateKbps}kbps");
         if (choice == "openh264")
         {
             return StartOpenH264(fps, bitrateKbps);
@@ -139,15 +145,22 @@ public class ScreenMirrorPlugin : IPlugin
 
         if (choice == "nvenc" || choice == "auto")
         {
-            var nvenc = new NvEncEncoder();
-            if (nvenc.Initialize(width, height, fps, bitrateKbps))
+            try
             {
-                _ctx?.Logger.Info($"Encoder: NVENC {width}x{height}@{fps} {bitrateKbps}kbps");
-                return nvenc;
+                var nvenc = new NvEncEncoder();
+                if (nvenc.Initialize(width, height, fps, bitrateKbps))
+                {
+                    _ctx?.Logger.Info($"Encoder: NVENC {width}x{height}@{fps} {bitrateKbps}kbps");
+                    return nvenc;
+                }
+                nvenc.Dispose();
+                _ctx?.Logger.Warn("NVENC unavailable — falling back to OpenH264 (CPU)");
+                if (choice == "nvenc") return null;
             }
-            nvenc.Dispose();
-            _ctx?.Logger.Warn("NVENC unavailable — falling back to OpenH264 (CPU)");
-            if (choice == "nvenc") return null;
+            catch (Exception ex)
+            {
+                _ctx?.Logger.Error($"NVENC init threw ({ex.GetType().Name}: {ex.Message}) — falling back to OpenH264", ex);
+            }
         }
 
         return StartOpenH264(fps, bitrateKbps);

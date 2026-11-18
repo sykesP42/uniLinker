@@ -38,8 +38,15 @@ data class CaptureTier(
     val fps: Int,
 )
 
-class DirectRtpClient(private val host: String, private val signalingPort: Int) {
+class DirectRtpClient(private val host: String, private val tlsPort: Int) {
     enum class State { IDLE, CONNECTING, STREAMING, ERROR }
+
+    // NOTE: tlsPort is the sender's PAIRING port (HTTPS with the device
+    // certificate, default 9528) — pairing and the rtp session request both
+    // ride it. The deep link's second segment is the plain-HTTP signaling
+    // port for browser compatibility; the app NEVER talks plain HTTP, so
+    // this port is TLS-only (pointing it at 9527 breaks the handshake with
+    // WRONG_VERSION_NUMBER — empirically verified 2026-11-19).
 
     private val baseHttp = OkHttpClient.Builder()
         .connectTimeout(5, TimeUnit.SECONDS)
@@ -127,7 +134,7 @@ class DirectRtpClient(private val host: String, private val signalingPort: Int) 
         val probeClient = http.forTrust(probeTm)
         try {
             val request = Request.Builder()
-                .url("https://$host:$signalingPort/ulp/pairing")
+                .url("https://$host:$tlsPort/ulp/pairing")
                 .build()
             android.util.Log.d("DirectRtp", "probe: executing request")
             probeClient.newCall(request).execute().use { response ->
@@ -177,7 +184,7 @@ class DirectRtpClient(private val host: String, private val signalingPort: Int) 
 
         try {
             val request = Request.Builder()
-                .url("https://$host:$signalingPort/signaling")
+                .url("https://$host:$tlsPort/signaling")
                 .post(body.toRequestBody("application/json".toMediaType()))
                 .build()
             http.newCall(request).execute().use { response ->
@@ -212,6 +219,7 @@ class DirectRtpClient(private val host: String, private val signalingPort: Int) 
                 true
             }
         } catch (e: Exception) {
+            android.util.Log.e("DirectRtp", "connect failed", e)
             _error.value = e.message ?: "connect failed"
             _state.value = State.ERROR
             false

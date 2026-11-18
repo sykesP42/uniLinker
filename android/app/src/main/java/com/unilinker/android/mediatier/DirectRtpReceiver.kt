@@ -51,16 +51,21 @@ class DirectRtpReceiver(
         private set
     private var lastArrivalMs: Long = -1
 
-    /** Sliding loss window: (timestampMs, lost?) per packet, trimmed to 5 s. */
+    /** Sliding loss window: (timestampMs, lost?) per packet, trimmed to 5 s.
+     *  Guarded by [lossGate] — the RTP loop mutates it while the HUD poller
+     *  iterates on the UI thread (ConcurrentModificationException crash). */
     private val lossWindow = ArrayDeque<Pair<Long, Boolean>>()
+    private val lossGate = Any()
 
     /** (lost, total) within the last [windowMs] milliseconds. */
     fun lossWindowStats(windowMs: Long = 5000L): Pair<Int, Int> {
         val cutoff = System.currentTimeMillis() - windowMs
-        while (lossWindow.isNotEmpty() && lossWindow.first().first < cutoff) lossWindow.removeFirst()
-        var lost = 0
-        for ((_, wasLost) in lossWindow) if (wasLost) lost++
-        return Pair(lost, lossWindow.size)
+        synchronized(lossGate) {
+            while (lossWindow.isNotEmpty() && lossWindow.first().first < cutoff) lossWindow.removeFirst()
+            var lost = 0
+            for ((_, wasLost) in lossWindow) if (wasLost) lost++
+            return Pair(lost, lossWindow.size)
+        }
     }
 
     fun start() {
@@ -102,15 +107,17 @@ class DirectRtpReceiver(
         // in the sliding window BEFORE the current packet's entry.
         val seq = ((bytes[2].toInt() and 0xFF) shl 8) or (bytes[3].toInt() and 0xFF)
         val nowArrival = System.currentTimeMillis()
-        if (lastSeq >= 0) {
-            val gap = (seq - lastSeq - 1 + 65536) % 65536
-            if (gap > 0) {
-                lostPackets += gap
-                repeat(gap.coerceAtMost(400)) { lossWindow.add(Pair(nowArrival, true)) }
-                android.util.Log.w("DirectRtp", "seq gap $lastSeq->$seq (lost $gap pkts)")
+        synchronized(lossGate) {
+            if (lastSeq >= 0) {
+                val gap = (seq - lastSeq - 1 + 65536) % 65536
+                if (gap > 0) {
+                    lostPackets += gap
+                    repeat(gap.coerceAtMost(400)) { lossWindow.add(Pair(nowArrival, true)) }
+                    android.util.Log.w("DirectRtp", "seq gap $lastSeq->$seq (lost $gap pkts)")
+                }
             }
+            lastSeq = seq
         }
-        lastSeq = seq
 
         val clear = unprotector.unprotect(bytes)
         if (clear == null) {
@@ -134,9 +141,11 @@ class DirectRtpReceiver(
 
         val marker = (clear[1].toInt() and 0x80) != 0
         nalBuffer.addAll(depacketizer.push(H264RtpDepacketizer.rtpPayload(clear)))
-        lossWindow.add(Pair(nowArrival, false))
-        val cutoff = nowArrival - 5000L
-        while (lossWindow.isNotEmpty() && lossWindow.first().first < cutoff) lossWindow.removeFirst()
+        synchronized(lossGate) {
+            lossWindow.add(Pair(nowArrival, false))
+            val cutoff = nowArrival - 5000L
+            while (lossWindow.isNotEmpty() && lossWindow.first().first < cutoff) lossWindow.removeFirst()
+        }
 
         if (marker && nalBuffer.isNotEmpty()) {
             val au = concat(nalBuffer)
