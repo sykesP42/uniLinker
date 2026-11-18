@@ -32,9 +32,12 @@ public class NvEncFfmpegProbe : IDisposable
         {
             codec = avcodec_find_encoder_by_name("h264_nvenc");
         }
-        catch (DllNotFoundException)
+        catch (Exception ex) when (ex is DllNotFoundException or NotSupportedException or EntryPointNotFoundException)
         {
-            _output.WriteLine("VERDICT: SKIP — FFmpeg native DLLs not provisioned (third_party/ffmpeg/setup.ps1); hardware encode untestable here");
+            // FFmpeg.AutoGen's resolver throws NotSupportedException when the
+            // native libraries are absent (CI checkout), DllNotFoundException
+            // when a partial set exists. Either way: machine-local provision.
+            _output.WriteLine($"VERDICT: SKIP — FFmpeg native DLLs not provisioned ({ex.GetType().Name}; run third_party/ffmpeg/setup.ps1) hardware encode untestable here");
             return;
         }
         if (codec == null)
