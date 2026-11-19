@@ -20,10 +20,11 @@ import android.view.Surface
  * Gate A instrumentation: per-tile decode time is logged (throttled) -
  * <=15ms/tile keeps JPEG; >30ms/tile switches to LZ4 lossless.
  */
-class TileRenderer(surfaceTexture: android.graphics.SurfaceTexture, private val dumpDir: String? = null) : AutoCloseable {
+class TileRenderer(private val surfaceTexture: android.graphics.SurfaceTexture, private val dumpDir: String? = null) : AutoCloseable {
     private val surface = Surface(surfaceTexture)
 
     private var backbuffer: Bitmap? = null
+    private var bufferSizedFor = 0 to 0
     private val decodeOptions = BitmapFactory.Options()
 
     // Gate A instrumentation
@@ -63,6 +64,17 @@ class TileRenderer(surfaceTexture: android.graphics.SurfaceTexture, private val 
             val old = backbuffer
             backbuffer = Bitmap.createBitmap(frameW, frameH, Bitmap.Config.ARGB_8888)
             old?.recycle()
+            // The TextureView's SurfaceTexture defaults its buffer to the
+            // VIEW size (2560x1600 on this panel); an unscaled 1280x800
+            // blit then covers only the top-left quadrant and the rest of
+            // the displayed texture is stale buffer garbage (reads as the
+            // "tiled mosaic" artifact). Pin the buffer to the video size —
+            // 1:1 blits, TextureView upscales cleanly; MediaCodec adapts
+            // to the same buffer size for the H264 path.
+            if (bufferSizedFor != frameW to frameH) {
+                try { surfaceTexture.setDefaultBufferSize(frameW, frameH) } catch (_: Exception) { }
+                bufferSizedFor = frameW to frameH
+            }
         }
         val bmp = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, decodeOptions)
         if (bmp == null) {
@@ -115,7 +127,10 @@ class TileRenderer(surfaceTexture: android.graphics.SurfaceTexture, private val 
                 android.util.Log.w("DirectRtp",
                     "present: canvas=${canvas.width}x${canvas.height} backbuffer=${backbuffer!!.width}x${backbuffer!!.height}")
             }
-            canvas.drawBitmap(backbuffer!!, 0f, 0f, null)
+            // Scale-fill: correct even if the buffer size didn't take (e.g.,
+            // a resize race) — the backbuffer always covers the full canvas.
+            canvas.drawBitmap(backbuffer!!, null,
+                android.graphics.Rect(0, 0, canvas.width, canvas.height), null)
         } finally {
             surface.unlockCanvasAndPost(canvas)
         }
