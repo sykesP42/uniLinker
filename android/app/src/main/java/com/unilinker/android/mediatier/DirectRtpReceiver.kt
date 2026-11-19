@@ -312,6 +312,22 @@ class DirectRtpReceiver(
             )
             return@synchronized
         }
+        // Shared accounting (jitter/bytes/loss-window) runs for BOTH payload
+        // types — the tile branch once returned early and skipped it, making
+        // the HUD report 100% loss on a healthy stream.
+        // RFC-3550-style interarrival jitter, exponentially smoothed.
+        if (lastArrivalMs > 0) {
+            val delta = (nowArrival - lastArrivalMs).coerceAtLeast(0).toDouble()
+            jitterMs += (kotlin.math.abs(delta - 33.3) - jitterMs) / 16.0
+        }
+        lastArrivalMs = nowArrival
+        bytesReceived += bytes.size
+        synchronized(lossGate) {
+            lossWindow.add(Pair(nowArrival, false))
+            val cutoff = nowArrival - 5000L
+            while (lossWindow.isNotEmpty() && lossWindow.first().first < cutoff) lossWindow.removeFirst()
+        }
+
         // Tile transport dispatch (PT 97): the assembled tile frame flows to
         // the renderer; corruption handling matches the H264 path.
         if ((clear[1].toInt() and 0x7F) == 97) {
@@ -332,7 +348,6 @@ class DirectRtpReceiver(
                     try { onKeyFrameNeeded.invoke() } catch (_: Exception) { }
                 }
             }
-            bytesReceived += bytes.size
             return@synchronized
         }
 
