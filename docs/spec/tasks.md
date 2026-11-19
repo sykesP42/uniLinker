@@ -57,7 +57,7 @@
 | M5-T3 | RTX 稳态卡死根因 | **待查**：稳态运行一段时间后 expectedSeq 钉死（assembled 停止、HUD 0-2fps、丢包 100%），包持续到达但不投递；已修 4 个相关 bug（CONNRESET 杀循环/baseline 不推进/pacer 3 处公式错/dispose UAF）仍复现；下一步：部署 reorder 状态诊断（expectedSeq/pending/lastSeq 日志已就位） | RTX 模式稳态 ≥10 分钟不掉帧 | ⬜ |
 | M5-T4 | HUD 真实化 | fps 改用解码器 renderedFrames（此前统计 AU 提交数——坏帧也计数，撒谎）；断流归零；损坏 AU 丢弃（skip 后半帧不再喂解码器） | 断流显示 0fps ✓；花屏改为干净冻结 | ✅ |
 
-**用户可见行为（2026-11-19）**：默认 SIPSorcery（上一版体验，稳定 44-51fps）；Native RTX 在设置页可选——2% 注入丢包下恢复极快，但存在 M5-T3 稳态钉死问题，修复后转正。
+**用户可见行为（2026-11-19/20）**：默认 SIPSorcery；Native RTX 与 Tile 可选。**WiFi 验证矩阵（Windows 热点 192.168.137.x）**：SIPSorcery 22-44fps/0 坏帧 ✓；Tile 20-25fps/12% 真实 WiFi 丢包被 RTX+250ms 窗口干净处理、无级联 ✓（此前"条带平铺"实为 bilibili 真实网格内容——误判）；RTX 未测。USB（RNDIS）：SIPSorcery 44-51fps ✓、Tile 24-40fps ✓、RTX 稳态钉死 ⬜。传输层 IP 无关（any-IP bind + 回程自动推导）已实证。
 
 **M5-T5 画质/码率重构（nvenc rc=vbr+cq，OBS 同款质量目标模式）**：CBR 实测把静态桌面 P 帧填充到 ~130KB（16-64Mbps）——平坦区域白白吸收码率预算。改 rc=vbr + cq=19（质量目标 + maxrate 封顶）：静态桌面 1.6-2.8Mbps（降 10-20 倍）且近无损（文字透明），运动 30fps 仅 3.3Mbps，encAvg 不变。悬浮球面板同步重构：分区布局（画质预设/高级档位/传输方式/HUD/连接）、高对比芯片选择器、传输方式远程切换（/ulp/transport POST 持久化 + 自动重连生效）。遗留：面板传输芯片的自动化点击验证未完成（手动即可），HEVC 探针（v7a 解码能力）列为后续压缩升级候选。
 

@@ -16,7 +16,7 @@ import android.view.TextureView
  * Gate A instrumentation: per-frame decode time is logged (throttled) —
  * ≤15ms/tile keeps JPEG; >30ms/tile switches the design to LZ4 lossless.
  */
-class TileRenderer(surfaceTexture: android.graphics.SurfaceTexture) : AutoCloseable {
+class TileRenderer(surfaceTexture: android.graphics.SurfaceTexture, private val dumpDir: String? = null) : AutoCloseable {
     // Present via the SurfaceTexture's buffer queue DIRECTLY. The earlier
     // TextureView.lockCanvas path posted buffers that never reached the
     // display on this device/Compose combo (63fps rendered, screen black) —
@@ -103,6 +103,16 @@ class TileRenderer(surfaceTexture: android.graphics.SurfaceTexture) : AutoClosea
         renderedFrames++
         lastTileCount = tiles.size
         lastFrameDecodeMs = decodeMs
+        // DEBUG: dump received tile JPEGs periodically — isolates assembly
+        // corruption (tile content wrong here) from draw bugs.
+        if (dumpDir != null && renderedFrames % 40 == 1) {
+            try {
+                tiles.take(3).forEachIndexed { i, (tileIdx, jpeg) ->
+                    java.io.FileOutputStream("$dumpDir/tile_r${renderedFrames}_t${tileIdx}.jpg")
+                        .use { it.write(jpeg) }
+                }
+            } catch (_: Exception) { }
+        }
         if (failures > 0) decodeFailures += failures
         if (renderedFrames % 60 == 1) {
             android.util.Log.d("DirectRtp",

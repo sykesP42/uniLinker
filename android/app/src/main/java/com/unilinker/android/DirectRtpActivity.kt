@@ -289,8 +289,10 @@ fun DirectRtpScreen(
                     newClient.tileFrames.collect { tf ->
                         if (surfaceReady) {
                             val renderer = tileRenderer ?: run {
+                                val dumpDir = (textureViewRef?.context as? android.app.Activity)
+                                    ?.getExternalFilesDir(null)?.absolutePath
                                 val r = com.unilinker.android.mediatier.TileRenderer(
-                                    pendingSurface ?: return@collect)
+                                    pendingSurface ?: return@collect, dumpDir)
                                 tileRenderer = r
                                 r
                             }
