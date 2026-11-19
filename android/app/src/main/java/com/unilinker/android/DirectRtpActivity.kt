@@ -290,7 +290,7 @@ fun DirectRtpScreen(
                         if (surfaceReady) {
                             val renderer = tileRenderer ?: run {
                                 val r = com.unilinker.android.mediatier.TileRenderer(
-                                    textureViewRef ?: return@collect)
+                                    pendingSurface ?: return@collect)
                                 tileRenderer = r
                                 r
                             }
@@ -341,13 +341,13 @@ fun DirectRtpScreen(
                             width: Int,
                             height: Int,
                         ) {
-                            decoder?.close()
-                            decoder = H264SurfaceDecoder(Surface(st))
-                            // Tile transport renders via canvas on the same
-                            // view — both paths coexist; the collect job
-                            // branches on the session's transport.
-                            tileRenderer?.close()
-                            tileRenderer = com.unilinker.android.mediatier.TileRenderer(tv)
+                            // Store the surface; the mode-specific pipeline
+                            // (MediaCodec OR tile canvas) is created LAZILY
+                            // at first data. Attaching MediaCodec to the
+                            // SurfaceTexture AND drawing tiles via canvas put
+                            // two producers on one buffer queue = black screen.
+                            pendingSurface = st
+                            textureViewRef = tv
                             surfaceReady = true
                         }
 

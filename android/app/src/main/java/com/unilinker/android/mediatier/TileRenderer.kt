@@ -2,6 +2,7 @@ package com.unilinker.android.mediatier
 
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
+import android.view.Surface
 import android.view.TextureView
 
 /**
@@ -15,7 +16,12 @@ import android.view.TextureView
  * Gate A instrumentation: per-frame decode time is logged (throttled) —
  * ≤15ms/tile keeps JPEG; >30ms/tile switches the design to LZ4 lossless.
  */
-class TileRenderer(private val textureView: TextureView) : AutoCloseable {
+class TileRenderer(surfaceTexture: android.graphics.SurfaceTexture) : AutoCloseable {
+    // Present via the SurfaceTexture's buffer queue DIRECTLY. The earlier
+    // TextureView.lockCanvas path posted buffers that never reached the
+    // display on this device/Compose combo (63fps rendered, screen black) —
+    // Surface.lockHardwareCanvas is the reliable route.
+    private val surface = android.view.Surface(surfaceTexture)
 
     private var backbuffer: Bitmap? = null
     private val decodeOptions = BitmapFactory.Options()
@@ -29,6 +35,43 @@ class TileRenderer(private val textureView: TextureView) : AutoCloseable {
         private set
     var decodeFailures: Int = 0
         private set
+
+    private var testPhase = 0
+    private var lastRenderMs = 0L
+
+    /** DEBUG: animated test pattern — proves the lockCanvas presentation
+     *  path independent of tile content. Runs when no tiles arrive for
+     *  500ms (call from the collect loop's idle branch). */
+    fun renderTestPattern(frameW: Int, frameH: Int) {
+        val now = System.currentTimeMillis()
+        if (now - lastRenderMs < 100) return
+        lastRenderMs = now
+        if (backbuffer == null || backbuffer!!.width != frameW || backbuffer!!.height != frameH) {
+            backbuffer?.recycle()
+            backbuffer = Bitmap.createBitmap(frameW, frameH, Bitmap.Config.ARGB_8888)
+        }
+        val canvas = android.graphics.Canvas(backbuffer!!)
+        testPhase++
+        val hue = (testPhase * 8) % 360
+        canvas.drawColor(android.graphics.Color.HSVToColor(floatArrayOf(hue.toFloat(), 0.7f, 0.9f)))
+        val paint = android.graphics.Paint().apply {
+            color = android.graphics.Color.WHITE
+            textSize = 80f
+            isAntiAlias = true
+        }
+        canvas.drawText("TILE-TEST $testPhase", 100f, frameH / 2.0f, paint)
+        present()
+        renderedFrames++
+    }
+
+    private fun present() {
+        val canvas = surface.lockHardwareCanvas()
+        try {
+            canvas.drawBitmap(backbuffer!!, 0f, 0f, null)
+        } finally {
+            surface.unlockCanvasAndPost(canvas)
+        }
+    }
 
     /** Draw one assembled tile frame. [tiles] = (tileIdx, jpeg bytes). */
     fun renderTileFrame(frameId: Long, gridCols: Int, gridRows: Int, frameW: Int, frameH: Int, tiles: List<Pair<Int, ByteArray>>) {
@@ -55,15 +98,7 @@ class TileRenderer(private val textureView: TextureView) : AutoCloseable {
         }
         val decodeMs = (System.nanoTime() - start) / 1e6
 
-        // Present: lock the TextureView canvas and blit the backbuffer.
-        val surface = textureView.lockCanvas(null)
-        if (surface != null) {
-            try {
-                surface.drawBitmap(backbuffer!!, 0f, 0f, null)
-            } finally {
-                textureView.unlockCanvasAndPost(surface)
-            }
-        }
+        present()
 
         renderedFrames++
         lastTileCount = tiles.size

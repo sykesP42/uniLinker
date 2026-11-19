@@ -88,6 +88,9 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
     val tileFrames: kotlinx.coroutines.flow.SharedFlow<TileFrameEvent> = _tileFrames
     @Volatile var transportIsTile = false
     @Volatile var transportMode = "sipsorcery"
+    /** Link medium inferred from the connected host's subnet:
+     *  192.168.42.x = USB RNDIS tether, 192.168.137.x = WiFi hotspot. */
+    @Volatile var medium = "网络"
 
     // Chaos injection passthrough (docs/spec/chaos-acceptance.md C1-C5),
     // set from the deep-link extras and applied to the receiver at connect.
@@ -244,6 +247,11 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
                 val receiverPort = answer.optInt("rtpPort", 5004)
                 transportMode = getTransport() ?: "sipsorcery"
                 transportIsTile = transportMode == "tile"
+                medium = when {
+                    host.startsWith("192.168.42.") -> "USB"
+                    host.startsWith("192.168.137.") -> "WiFi"
+                    else -> "LAN"
+                }
                 val gridCols = (tier.width + 319) / 320
                 val gridRows = (tier.height + 199) / 200
                 val receiver = DirectRtpReceiver(
