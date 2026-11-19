@@ -160,11 +160,10 @@ internal class DirectRtpChannel : IDirectRtpChannel
     {
         if (_tileMode)
         {
-            // Tile wire payload: [...jpeg][flags u8], flags bit0 = last
-            // packet of the tile frame (the RTP marker source).
-            _sender?.SendTileAu(packet.Data, packet.TimestampUs,
-                isLast: (packet.Data[^1] & 1) != 0,
-                isKeyFrame: packet.IsKeyFrame);
+            // Tile mode: packet.Data is the whole frame blob (wire packets
+            // concatenated, u16-length-prefixed) — the sender splits and
+            // paces it.
+            _sender?.SendTileAu(packet.Data, packet.TimestampUs, packet.IsKeyFrame);
             return Task.CompletedTask;
         }
         _sender?.SendAu(packet.Data, packet.TimestampUs, packet.IsKeyFrame);

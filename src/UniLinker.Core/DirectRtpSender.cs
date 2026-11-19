@@ -58,8 +58,8 @@ internal sealed class DirectRtpSender : IDisposable
     // faster than real-time so the queue stays empty in steady state.
     private readonly System.Collections.Concurrent.BlockingCollection<(byte[] Au, long TsUs)> _pacerQueue =
         new(6);
-    private readonly System.Collections.Concurrent.BlockingCollection<(byte[] Payload, long TsUs, bool IsLast)> _tileQueue =
-        new(24);
+    private readonly System.Collections.Concurrent.BlockingCollection<(byte[] Blob, long TsUs, bool IsKey)> _tileQueue =
+        new(4);
     private Thread? _pacerThread;
     private readonly CancellationTokenSource _pacerCts = new();
     private readonly long _pacerBytesPerMs;
@@ -221,24 +221,24 @@ internal sealed class DirectRtpSender : IDisposable
         catch (InvalidOperationException) { } // completing on dispose
     }
 
-    /// <summary>Tile mode: enqueue one pre-framed RTP payload (the TileEncoder
-    /// emits wire-ready packets, PT/marker patched at send time). isLast =
-    /// last packet of the tile frame → RTP marker; the receiver's frame
-    /// assembly completes on it.</summary>
-    public void SendTileAu(byte[] payload, long timestampUs, bool isLast, bool isKeyFrame)
+    /// <summary>Tile mode: enqueue one frame blob (all wire packets
+    /// concatenated, u16-length-prefixed). Queue cap 4 FRAMES — dropping a
+    /// whole stale frame is safe (latest-frame-wins rendering); tearing a
+    /// full refresh into queue-overflow holes painted black tiles.</summary>
+    public void SendTileAu(byte[] blob, long timestampUs, bool isKeyFrame)
     {
         if (_disposed) return;
         if (isKeyFrame)
         {
-            while (_pacerQueue.Count > 0) _pacerQueue.TryTake(out _);
+            while (_tileQueue.Count > 0) _tileQueue.TryTake(out _);
         }
         else
         {
-            while (_pacerQueue.Count >= 12) _pacerQueue.TryTake(out _);
+            while (_tileQueue.Count >= 4) _tileQueue.TryTake(out _);
         }
         try
         {
-            _tileQueue.Add((payload, timestampUs, isLast), _pacerCts.Token);
+            _tileQueue.Add((blob, timestampUs, isKeyFrame), _pacerCts.Token);
         }
         catch (InvalidOperationException) { }
     }
@@ -275,8 +275,8 @@ internal sealed class DirectRtpSender : IDisposable
             {
                 if (_tileMode)
                 {
-                    var (pl, ts, last) = _tileQueue.Take(_pacerCts.Token);
-                    item = (pl, ts, last);
+                    var (blob, ts, key) = _tileQueue.Take(_pacerCts.Token);
+                    item = (blob, ts, key);
                 }
                 else
                 {
@@ -302,21 +302,30 @@ internal sealed class DirectRtpSender : IDisposable
                             _timestamp += durationRtp;
                             _lastTileTsUs = item.TsUs;
                         }
-                        var rtp = new byte[12 + item.Au.Length];
-                        rtp[0] = 0x80;
-                        rtp[1] = (byte)(97 | (item.IsLast == true ? 0x80 : 0));
-                        FillRtpHeader(rtp, _timestamp);
-                        Buffer.BlockCopy(item.Au, 0, rtp, 12, item.Au.Length);
-
-                        Refill();
-                        creditBytes -= rtp.Length;
-                        byte[]? protectedPacket = _transformer.Transform(rtp);
-                        if (protectedPacket != null)
+                        // Split the frame blob into its wire packets and pace
+                        // each; the tile assembler keys on the timestamp.
+                        var pos = 0;
+                        var blobData = item.Au;
+                        while (pos + 2 <= blobData.Length)
                         {
-                            _ringCursor = (_ringCursor + 1) % RingCapacity;
-                            _ring[_ringCursor] = ((ushort)((rtp[2] << 8) | rtp[3]), protectedPacket);
-                            _udp.Send(protectedPacket, protectedPacket.Length, _destination);
-                            PacketsSent++;
+                            int len = (blobData[pos] << 8) | blobData[pos + 1];
+                            var rtp = new byte[12 + len];
+                            rtp[0] = 0x80;
+                            rtp[1] = 97;
+                            FillRtpHeader(rtp, _timestamp);
+                            Buffer.BlockCopy(blobData, pos + 2, rtp, 12, len);
+
+                            Refill();
+                            creditBytes -= rtp.Length;
+                            byte[]? protectedPacket = _transformer.Transform(rtp);
+                            if (protectedPacket != null)
+                            {
+                                _ringCursor = (_ringCursor + 1) % RingCapacity;
+                                _ring[_ringCursor] = ((ushort)((rtp[2] << 8) | rtp[3]), protectedPacket);
+                                _udp.Send(protectedPacket, protectedPacket.Length, _destination);
+                                PacketsSent++;
+                            }
+                            pos += 2 + len;
                         }
                     }
                     else

@@ -192,6 +192,7 @@ public unsafe class TileEncoder : IEncoder
         var framePackets = new List<byte[]>();
         lock (_encoders)
         {
+            var dumped = false;
             foreach (int idx in changed)
             {
                 int tx = idx % _gridCols;
@@ -200,21 +201,39 @@ public unsafe class TileEncoder : IEncoder
                 int th = TileHeight(frame.Height, ty);
                 var jpeg = EncodeTile(frame.Width, frame.Height, tx, ty, tw, th);
                 if (jpeg == null || jpeg.Length == 0) continue;
+                // DEBUG: dump the first full-refresh tile once for content
+                // verification (black tiles here = PC-side slicing bug).
+                if (fullRefresh && !dumped && changed.Count > 1)
+                {
+                    var dumpPath = System.IO.Path.Combine(
+                        System.IO.Path.GetTempPath(), "tile_dump.jpg");
+                    System.IO.File.WriteAllBytes(dumpPath, jpeg);
+                    Log.Info($"[Tile] dumped full-refresh tile idx={idx} ({tw}x{th}, {jpeg.Length}B) -> {dumpPath}");
+                    dumped = true;
+                }
                 ChunkTile(framePackets, idx, _gridCols * _gridRows, jpeg);
             }
         }
         _encTicks += (System.Diagnostics.Stopwatch.GetTimestamp() - encStart) * 1000 / System.Diagnostics.Stopwatch.Frequency;
 
-        // ── Emit: mark the frame's last packet ──
+        // ── Emit: one EncodedPacket per FRAME (all wire packets
+        // concatenated, each prefixed by its u16 BE length). The sender
+        // splits and paces; the queue drops whole stale frames instead of
+        // tearing a full refresh into holes (which painted black tiles).
         if (framePackets.Count > 0)
         {
             var last = framePackets[^1];
             last[^1] |= FlagLastOfFrame; // flags byte is the payload's last byte
-            bool refresh = fullRefresh;
+            var blob = new byte[framePackets.Sum(p => p.Length) + framePackets.Count * 2];
+            int pos = 0;
             foreach (var pkt in framePackets)
             {
-                PacketEncoded?.Invoke(new EncodedPacket(pkt, tsUs, refresh));
+                blob[pos] = (byte)(pkt.Length >> 8);
+                blob[pos + 1] = (byte)pkt.Length;
+                Buffer.BlockCopy(pkt, 0, blob, pos + 2, pkt.Length);
+                pos += 2 + pkt.Length;
             }
+            PacketEncoded?.Invoke(new EncodedPacket(blob, tsUs, fullRefresh));
         }
 
         _frameCounter++;
