@@ -3,120 +3,121 @@ package com.unilinker.android.mediatier
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.view.Surface
-import android.view.TextureView
 
 /**
- * Tile-frame renderer (M6 tile transport): draws decoded tiles onto the
- * TextureView's canvas over a persistent full-size Bitmap backbuffer.
+ * Tile renderer (M6 tile transport) - PER-TILE incremental drawing.
  *
- * Replaces the MediaCodec pipeline in tile mode — CPU JPEG decode
- * (BitmapFactory + inBitmap reuse) + GPU canvas upload bypasses the
- * 2013-era MediaCodec latency floor (~100ms) that dominates the H264 path.
+ * Each completed tile is decoded and blitted onto a persistent full-size
+ * Bitmap backbuffer at its grid position, then presented via
+ * Surface.lockHardwareCanvas (the earlier TextureView.lockCanvas path
+ * posted buffers that never reached the display on this device/Compose
+ * combo - 63fps rendered, screen black).
  *
- * Gate A instrumentation: per-frame decode time is logged (throttled) —
- * ≤15ms/tile keeps JPEG; >30ms/tile switches the design to LZ4 lossless.
+ * No frame-waiting: the screen updates as each tile completes (the VNC
+ * model). Unchanged tiles are never sent, so the backbuffer accumulates
+ * incremental updates - there is no tiling/overlap artifact by design.
+ *
+ * Gate A instrumentation: per-tile decode time is logged (throttled) -
+ * <=15ms/tile keeps JPEG; >30ms/tile switches to LZ4 lossless.
  */
 class TileRenderer(surfaceTexture: android.graphics.SurfaceTexture, private val dumpDir: String? = null) : AutoCloseable {
-    // Present via the SurfaceTexture's buffer queue DIRECTLY. The earlier
-    // TextureView.lockCanvas path posted buffers that never reached the
-    // display on this device/Compose combo (63fps rendered, screen black) —
-    // Surface.lockHardwareCanvas is the reliable route.
-    private val surface = android.view.Surface(surfaceTexture)
+    private val surface = Surface(surfaceTexture)
 
     private var backbuffer: Bitmap? = null
     private val decodeOptions = BitmapFactory.Options()
 
     // Gate A instrumentation
-    var lastFrameDecodeMs: Double = 0.0
+    var renderedTiles: Int = 0
         private set
-    var lastTileCount: Int = 0
-        private set
-    var renderedFrames: Int = 0
+    /** Frame-rate metric for the HUD: incremented on each frame-final tile
+     *  (one per sender frame — tiles/frame varies with screen changes). */
+    var presentedFrames: Int = 0
         private set
     var decodeFailures: Int = 0
         private set
+    var lastDecodeMs: Double = 0.0
+        private set
 
-    private var testPhase = 0
-    private var lastRenderMs = 0L
+    private var logSeq = 0
+    private var lastPresentNs = 0L
+    private var presentPending = false
 
-    /** DEBUG: animated test pattern — proves the lockCanvas presentation
-     *  path independent of tile content. Runs when no tiles arrive for
-     *  500ms (call from the collect loop's idle branch). */
-    fun renderTestPattern(frameW: Int, frameH: Int) {
-        val now = System.currentTimeMillis()
-        if (now - lastRenderMs < 100) return
-        lastRenderMs = now
+    /** Draw ONE completed tile: decode JPEG, blit at its grid rect, present.
+     *  [gridCols]/[frameW]/[frameH] come from the negotiated tier geometry.
+     *
+     *  Present throttling: a full-frame hardware-canvas blit costs ~1-3ms on
+     *  this 2013-era GPU; up to ~10 tiles/frame at 30fps would mean 300
+     *  presents/s (unaffordable). Middle tiles coalesce to ≤1 present per
+     *  12ms (dirty-pending), and the frame's LAST tile always presents
+     *  promptly — latency stays bounded by the tile stream itself. */
+    fun renderTile(tileIdx: Int, tileCount: Int, isLastOfFrame: Boolean, gridCols: Int, frameW: Int, frameH: Int, jpeg: ByteArray) {
+        val start = System.nanoTime()
+        val gridRows = (frameH + 199) / 200 // tile height 200
+        val tileW = frameW / gridCols
+        val tx = tileIdx % gridCols
+        val ty = tileIdx / gridCols
+        val tw = if (tx == gridCols - 1) frameW - tx * tileW else tileW
+        val th = if (ty == gridRows - 1) frameH - ty * 200 else 200
+
         if (backbuffer == null || backbuffer!!.width != frameW || backbuffer!!.height != frameH) {
-            backbuffer?.recycle()
+            val old = backbuffer
             backbuffer = Bitmap.createBitmap(frameW, frameH, Bitmap.Config.ARGB_8888)
+            old?.recycle()
         }
-        val canvas = android.graphics.Canvas(backbuffer!!)
-        testPhase++
-        val hue = (testPhase * 8) % 360
-        canvas.drawColor(android.graphics.Color.HSVToColor(floatArrayOf(hue.toFloat(), 0.7f, 0.9f)))
-        val paint = android.graphics.Paint().apply {
-            color = android.graphics.Color.WHITE
-            textSize = 80f
-            isAntiAlias = true
+        val bmp = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, decodeOptions)
+        if (bmp == null) {
+            decodeFailures++
+            if (++logSeq % 20 == 1) android.util.Log.w("DirectRtp", "tile decode FAIL idx=$tileIdx bytes=${jpeg.size}")
+            return
         }
-        canvas.drawText("TILE-TEST $testPhase", 100f, frameH / 2.0f, paint)
-        present()
-        renderedFrames++
+        try {
+            val rect = android.graphics.Rect(tx * tileW, ty * 200, tx * tileW + tw, ty * 200 + th)
+            val canvas = android.graphics.Canvas(backbuffer!!)
+            canvas.drawBitmap(bmp, null, rect, null)
+        } finally {
+            bmp.recycle()
+        }
+
+        val now = System.nanoTime()
+        val sincePresentMs = (now - lastPresentNs) / 1e6
+        if (isLastOfFrame || sincePresentMs >= 12.0) {
+            present()
+            lastPresentNs = now
+            presentPending = false
+            if (isLastOfFrame) presentedFrames++
+        } else {
+            presentPending = true
+        }
+
+        renderedTiles++
+        lastDecodeMs = (System.nanoTime() - start) / 1e6
+        if (renderedTiles % 120 == 1) {
+            android.util.Log.d("DirectRtp",
+                "tile: rendered=$renderedTiles idx=$tileIdx/$tileCount last=$isLastOfFrame decode=${"%.1f".format(lastDecodeMs)}ms fails=$decodeFailures")
+        }
+        // DEBUG dumps: tile content as received (isolates assembly corruption
+        // from draw bugs) + the composed backbuffer.
+        if (dumpDir != null && renderedTiles % 150 == 1) {
+            try {
+                java.io.FileOutputStream("$dumpDir/tile_n${renderedTiles}_i${tileIdx}.jpg").use { it.write(jpeg) }
+                val out = java.io.FileOutputStream("$dumpDir/backbuffer_n${renderedTiles}.png")
+                backbuffer!!.compress(Bitmap.CompressFormat.PNG, 60, out)
+                out.close()
+            } catch (_: Exception) { }
+        }
     }
 
     private fun present() {
         val canvas = surface.lockHardwareCanvas()
         try {
+            if (logSeq < 3) {
+                logSeq++
+                android.util.Log.w("DirectRtp",
+                    "present: canvas=${canvas.width}x${canvas.height} backbuffer=${backbuffer!!.width}x${backbuffer!!.height}")
+            }
             canvas.drawBitmap(backbuffer!!, 0f, 0f, null)
         } finally {
             surface.unlockCanvasAndPost(canvas)
-        }
-    }
-
-    /** Draw one assembled tile frame. [tiles] = (tileIdx, jpeg bytes). */
-    fun renderTileFrame(frameId: Long, gridCols: Int, gridRows: Int, frameW: Int, frameH: Int, tiles: List<Pair<Int, ByteArray>>) {
-        val start = System.nanoTime()
-
-        if (backbuffer == null || backbuffer!!.width != frameW || backbuffer!!.height != frameH) {
-            backbuffer?.recycle()
-            backbuffer = Bitmap.createBitmap(frameW, frameH, Bitmap.Config.ARGB_8888)
-        }
-        val canvas = android.graphics.Canvas(backbuffer!!)
-        var failures = 0
-        for ((tileIdx, jpeg) in tiles) {
-            val tx = tileIdx % gridCols
-            val ty = tileIdx / gridCols
-            val tw = if (tx == gridCols - 1) frameW - tx * (frameW / gridCols) else frameW / gridCols
-            val th = if (ty == gridRows - 1) frameH - ty * (frameH / gridRows) else frameH / gridRows
-            val bmp = BitmapFactory.decodeByteArray(jpeg, 0, jpeg.size, decodeOptions)
-            if (bmp == null) {
-                failures++
-                continue
-            }
-            canvas.drawBitmap(bmp, null, android.graphics.Rect(tx * (frameW / gridCols), ty * (frameH / gridRows), tx * (frameW / gridCols) + tw, ty * (frameH / gridRows) + th), null)
-            bmp.recycle()
-        }
-        val decodeMs = (System.nanoTime() - start) / 1e6
-
-        present()
-
-        renderedFrames++
-        lastTileCount = tiles.size
-        lastFrameDecodeMs = decodeMs
-        // DEBUG: dump received tile JPEGs periodically — isolates assembly
-        // corruption (tile content wrong here) from draw bugs.
-        if (dumpDir != null && renderedFrames % 40 == 1) {
-            try {
-                tiles.take(3).forEachIndexed { i, (tileIdx, jpeg) ->
-                    java.io.FileOutputStream("$dumpDir/tile_r${renderedFrames}_t${tileIdx}.jpg")
-                        .use { it.write(jpeg) }
-                }
-            } catch (_: Exception) { }
-        }
-        if (failures > 0) decodeFailures += failures
-        if (renderedFrames % 60 == 1) {
-            android.util.Log.d("DirectRtp",
-                "tile: frame=$frameId tiles=${tiles.size} decode=${"%.1f".format(decodeMs)}ms (${("%.1f".format(decodeMs / tiles.size))}ms/tile) failures=$failures")
         }
     }
 

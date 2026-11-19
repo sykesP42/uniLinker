@@ -305,8 +305,8 @@ fun DirectRtpScreen(
                                 tileRenderer = r
                                 r
                             }
-                            renderer.renderTileFrame(
-                                tf.frameId, tf.gridCols, tf.gridRows, tf.frameW, tf.frameH, tf.tiles)
+                            renderer.renderTile(
+                                tf.tileIdx, tf.tileCount, tf.isLastOfFrame, tf.gridCols, tf.frameW, tf.frameH, tf.jpeg)
                             decodedCount++
                         }
                     }
@@ -405,7 +405,7 @@ fun DirectRtpScreen(
                     // (shared TextureView) — a blind Elvis chain would pin
                     // SIPSorcery sessions at 0 rendered frames.
                     val renderedNow = if (c?.transportIsTile == true)
-                        (tileRenderer?.renderedFrames ?: 0)
+                        (tileRenderer?.presentedFrames ?: 0)
                     else
                         (decoder?.decodedFrames ?: 0)
                     if (c == null || c.state.value != com.unilinker.android.mediatier.DirectRtpClient.State.STREAMING) {

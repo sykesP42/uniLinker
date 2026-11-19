@@ -31,14 +31,17 @@ import javax.net.ssl.X509TrustManager
  */
 /** Receiver-driven capture tier: carried in the rtp request, honored by the
  *  sender (values 0 mean "sender default"). */
-/** One assembled tile frame (M6 tile transport). */
+/** One completed tile (M6 tile transport, per-tile incremental): the
+ *  renderer blits it onto its backbuffer at (tileIdx % gridCols)*tileW.
+ *  [isLastOfFrame] = the frame's final packet — forces a prompt present. */
 data class TileFrameEvent(
-    val frameId: Long,
+    val tileIdx: Int,
+    val tileCount: Int,
     val gridCols: Int,
-    val gridRows: Int,
     val frameW: Int,
     val frameH: Int,
-    val tiles: List<Pair<Int, ByteArray>>,
+    val isLastOfFrame: Boolean,
+    val jpeg: ByteArray,
 )
 
 data class CaptureTier(
@@ -261,8 +264,9 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
                     onAu = { au -> _frames.tryEmit(au) },
                     onKeyFrameNeeded = { sendPli() },
                     nackTarget = java.net.InetSocketAddress(host, receiverPort),
-                    onTileFrame = { tiles ->
-                        _tileFrames.tryEmit(TileFrameEvent(0L, gridCols, gridRows, tier.width, tier.height, tiles))
+                    onTile = { tileIdx, tileCount, isLastOfFrame, jpeg ->
+                        _tileFrames.tryEmit(
+                            TileFrameEvent(tileIdx, tileCount, gridCols, tier.width, tier.height, isLastOfFrame, jpeg))
                     },
                     recoveryTimeoutMs = if (host.startsWith("192.168.42.")) 30L else 250L,
                 )

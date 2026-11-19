@@ -31,9 +31,9 @@ class DirectRtpReceiver(
     /** NACK target (the sender's RTP bind port host:port from the answer).
      *  Null = RTX disabled (gaps go straight to the skip + PLI path). */
     private val nackTarget: java.net.InetSocketAddress? = null,
-    /** Tile transport (PT 97): assembled tile frames flow here instead of
-     *  the H264 AU path. Null = H264-only receiver. */
-    private val onTileFrame: ((List<Pair<Int, ByteArray>>) -> Unit)? = null,
+    /** Tile transport (PT 97): each COMPLETED tile flows here immediately
+     *  (per-tile incremental, no frame waiting). Null = H264-only receiver. */
+    private val onTile: ((tileIdx: Int, tileCount: Int, isLastOfFrame: Boolean, jpeg: ByteArray) -> Unit)? = null,
     /** Hole-recovery timeout before skip+PLI: must exceed the NACK→RTX
      *  round trip. USB tether ~0ms RTT → 30ms; WiFi hotspot RTT ~130ms
      *  → 250ms (the client derives this from the host subnet). */
@@ -331,21 +331,21 @@ class DirectRtpReceiver(
             while (lossWindow.isNotEmpty() && lossWindow.first().first < cutoff) lossWindow.removeFirst()
         }
 
-        // Tile transport dispatch (PT 97): the assembled tile frame flows to
-        // the renderer; corruption handling matches the H264 path.
+        // Tile transport dispatch (PT 97): each completed tile flows to the
+        // renderer immediately (per-tile incremental). A tile whose
+        // predecessor chunk was skipped is unrecoverable this round — drop
+        // it and let the next full refresh self-heal (PLI accelerates that).
         if ((clear[1].toInt() and 0x7F) == 97) {
-            if (tileAssembler == null && onTileFrame != null) {
-                tileAssembler = TileAssembler(onTileFrame)
+            if (tileAssembler == null && onTile != null) {
+                tileAssembler = TileAssembler(onTile)
             }
-            val frameId = ((clear[4].toLong() and 0xFF) shl 24) or ((clear[5].toLong() and 0xFF) shl 16) or
-                ((clear[6].toLong() and 0xFF) shl 8) or (clear[7].toLong() and 0xFF)
-            val orphan = tileAssembler?.push(H264RtpDepacketizer.rtpPayload(clear), frameId) ?: false
-            if (orphan) tileOrphans++
-            tileAssembled = tileAssembler?.assembledFrames ?: 0
-            tileDropped = tileAssembler?.droppedFrames ?: 0
-            if (orphan) {
-                // Predecessor chunk skipped — the frame is unrecoverable.
-                frameCorrupted = true
+            val droppedBefore = tileAssembler?.droppedTiles ?: 0
+            tileAssembler?.push(H264RtpDepacketizer.rtpPayload(clear))
+            tileAssembled = tileAssembler?.assembledTiles ?: 0
+            tileDropped = tileAssembler?.droppedTiles ?: 0
+            tileOrphans = tileDropped
+            if (tileDropped > droppedBefore) {
+                frameCorrupted = false // per-tile: no cross-tile reference poisoning
                 if (onKeyFrameNeeded != null && nowArrival - lastPliMs >= 500L) {
                     lastPliMs = nowArrival
                     try { onKeyFrameNeeded.invoke() } catch (_: Exception) { }
