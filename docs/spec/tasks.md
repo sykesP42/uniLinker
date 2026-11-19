@@ -61,6 +61,16 @@
 
 **M5-T5 画质/码率重构（nvenc rc=vbr+cq，OBS 同款质量目标模式）**：CBR 实测把静态桌面 P 帧填充到 ~130KB（16-64Mbps）——平坦区域白白吸收码率预算。改 rc=vbr + cq=19（质量目标 + maxrate 封顶）：静态桌面 1.6-2.8Mbps（降 10-20 倍）且近无损（文字透明），运动 30fps 仅 3.3Mbps，encAvg 不变。悬浮球面板同步重构：分区布局（画质预设/高级档位/传输方式/HUD/连接）、高对比芯片选择器、传输方式远程切换（/ulp/transport POST 持久化 + 自动重连生效）。遗留：面板传输芯片的自动化点击验证未完成（手动即可），HEVC 探针（v7a 解码能力）列为后续压缩升级候选。
 
+## M7 前置研究：低延迟路线图（2026-11-20）
+
+调研文档：[low-latency-roadmap.md](low-latency-roadmap.md)。核心结论：
+①WiFi 省电 RTT ~130ms 是无线延迟的最大单项（WifiLock 一行级修复）；
+②Tile diff 逐字节 FNV 20ms 是编码侧最大单项（向量化 → ≤2ms）；
+③MediaCodec ~100ms 解码地板是 H264 模式的硬约束（API 27 + MSM8974 大概率
+无低延迟键——探测门禁决定），Tile 模式 CPU 解码 2-20ms 是该设备的
+低延迟答案（已建成）。分期：R1 WiFi 锁 + R2 diff 向量化 + R4 自适应窗口
+（立即）→ R5 Tile 60fps + R3 探针 → R6 DDA / LZ4 / 音频（按需）。
+
 ## 依赖顺序
 
 M1 完成 → M2-T1 → M2-T2 → M2-T3 → M2-T4 → M2-T5 → M3。
