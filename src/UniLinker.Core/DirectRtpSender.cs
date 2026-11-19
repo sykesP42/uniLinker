@@ -87,12 +87,12 @@ internal sealed class DirectRtpSender : IDisposable
         _destination = destination;
         BindPort = bindPort;
         _tileMode = tileMode;
-        // 2.5× tier bitrate, in bytes/ms. NVENC's CBR empirically overshoots
-        // the tier ~2× (8Mbps tier → ~16Mbps measured, 32Mbps → 64Mbps), so
-        // the drain must cover the real output or the queue overflows and
-        // drops frames (2fps observed when it didn't). 32000kbps → 32000 ×
-        // 1000b/8 ÷1000ms = 4000 B/s-tier → ×2.5 = 10000 B/ms.
-        _pacerBytesPerMs = (long)bitrateKbps * 25 / 8 / 10;
+        // ~1.1× the tier bitrate, in bytes/ms: the tier IS the link budget
+        // (vbr+cq caps at maxrate), and the WiFi hotspot link carries only
+        // ~its rated capacity — the earlier 2.5× burst rate overflowed the
+        // hotspot airtime and caused real WiFi packet loss (12-34%).
+        // 32000kbps → 4000 B/ms tier → ×1.1 = 4400 B/ms.
+        _pacerBytesPerMs = (long)bitrateKbps * 11 / 80; // 32000kbps -> 4400 B/ms = 4.4MB/s
 
         byte[] masterKey = System.Security.Cryptography.RandomNumberGenerator.GetBytes(16);
         byte[] masterSalt = System.Security.Cryptography.RandomNumberGenerator.GetBytes(14);
