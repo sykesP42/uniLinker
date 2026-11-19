@@ -119,6 +119,11 @@ public unsafe class NvEncEncoder : IEncoder
         av_opt_set(_codecCtx->priv_data, "spatial-aq", "1", 0);
         av_opt_set(_codecCtx->priv_data, "delay", "0", 0);
         av_opt_set(_codecCtx->priv_data, "zerolatency", "1", 0);
+        // Intra-refresh replaces periodic IDRs with intra-coded strips that
+        // sweep across frames — no 200-400KB IDR bursts (join/PLI spikes),
+        // constant wire load, loss regions heal as the sweep passes. The
+        // decoder-side impact: none (plain ISlices in P frames).
+        av_opt_set(_codecCtx->priv_data, "intra_refresh", "1", 0);
 
         // Rate control: quality-targeted VBR (the OBS "cq" mode) instead of
         // CBR. Measured: CBR PADDING padded static-desktop P frames to

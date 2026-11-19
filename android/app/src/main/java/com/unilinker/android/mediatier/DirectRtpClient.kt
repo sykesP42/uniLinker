@@ -264,6 +264,7 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
                     onTileFrame = { tiles ->
                         _tileFrames.tryEmit(TileFrameEvent(0L, gridCols, gridRows, tier.width, tier.height, tiles))
                     },
+                    recoveryTimeoutMs = if (host.startsWith("192.168.42.")) 30L else 250L,
                 )
                 receiver.chaosLossPct = chaosLossPct
                 receiver.chaosDupPct = chaosDupPct

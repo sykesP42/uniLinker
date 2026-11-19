@@ -150,6 +150,7 @@ fun DirectRtpScreen(
     var hudResOn by remember { mutableStateOf(prefs.getBoolean("hud_res", true)) }
     var transportMode by remember { mutableStateOf("sipsorcery") }
     var tileRenderer by remember { mutableStateOf<com.unilinker.android.mediatier.TileRenderer?>(null) }
+    var wifiLock by remember { mutableStateOf<android.net.wifi.WifiManager.WifiLock?>(null) }
     var pendingSurface by remember { mutableStateOf<android.graphics.SurfaceTexture?>(null) }
     var textureViewRef by remember { mutableStateOf<android.view.TextureView?>(null) }
     val hudOn = mapOf(
@@ -283,6 +284,14 @@ fun DirectRtpScreen(
             }
             statusText = "Streaming"
             transportMode = newClient.transportMode
+            // WiFi 省电模式 RTT ~130ms 是无线投屏延迟的最大单项——STREAMING
+            // 期间持有 HIGH_PERF 锁（R1，实测收益 ~120ms）。
+            val wm = context.getSystemService(android.content.Context.WIFI_SERVICE)
+                as android.net.wifi.WifiManager
+            wifiLock?.release()
+            wifiLock = wm.createWifiLock(
+                android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "unilinker-direct")
+                .apply { setReferenceCounted(false); acquire() }
             frameJob?.cancel()
             frameJob = scope.launch {
                 if (newClient.transportIsTile) {
@@ -523,6 +532,8 @@ fun DirectRtpScreen(
                 onDisconnect = {
                     client?.stop()
                     client = null
+                    wifiLock?.release()
+                    wifiLock = null
                     ballExpanded = false
                     statusText = "Idle"
                 },

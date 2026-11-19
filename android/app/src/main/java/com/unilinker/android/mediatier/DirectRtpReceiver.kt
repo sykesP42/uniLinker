@@ -34,6 +34,10 @@ class DirectRtpReceiver(
     /** Tile transport (PT 97): assembled tile frames flow here instead of
      *  the H264 AU path. Null = H264-only receiver. */
     private val onTileFrame: ((List<Pair<Int, ByteArray>>) -> Unit)? = null,
+    /** Hole-recovery timeout before skip+PLI: must exceed the NACK→RTX
+     *  round trip. USB tether ~0ms RTT → 30ms; WiFi hotspot RTT ~130ms
+     *  → 250ms (the client derives this from the host subnet). */
+    private val recoveryTimeoutMs: Long = 250L,
 ) : AutoCloseable {
     private var tileAssembler: TileAssembler? = null
     @Volatile var tileAssembled: Int = 0
@@ -72,12 +76,6 @@ class DirectRtpReceiver(
         private set
     @Volatile var nalsBuffered: Int = 0
         private set
-    // 250ms: must exceed the NACK→retransmit round trip. USB tether RTT is
-    // ~0ms (fills land in ~2ms), but WiFi hotspot RTT measured ~130ms — a
-    // 30ms window skipped EVERY hole over WiFi before the RTX fill landed,
-    // so JPEG tiles always assembled truncated (black render). The window
-    // is a timeout, not a delay: complete frames render as soon as filled.
-    private val recoveryTimeoutMs: Long = 250L
     private val nackRetryMs: Long = 15L
 
     // ── Chaos injection (docs/spec/chaos-acceptance.md C1–C5) ──
