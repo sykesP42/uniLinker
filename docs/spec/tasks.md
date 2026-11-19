@@ -57,7 +57,7 @@
 | M5-T3 | RTX 稳态卡死根因 | **已解决**："钉死"是四个已修 bug 的复合表现——CONNRESET 杀死 NACK 循环（RTX 全废）+ 30ms 窗口跳过一切 + pacer 公式错；四修合并后连续运行 7 分钟验证：11083 帧解码、corruptDropped 仅 5、无钉死无级联，画面正确（bilibili 页面清晰）。reorder 诊断日志保留（expectedSeq/pending/lastSeq） | RTX 模式稳态 ≥7 分钟不掉帧 ✓ | ✅ |
 | M5-T4 | HUD 真实化 | fps 改用解码器 renderedFrames（此前统计 AU 提交数——坏帧也计数，撒谎）；断流归零；损坏 AU 丢弃（skip 后半帧不再喂解码器） | 断流显示 0fps ✓；花屏改为干净冻结 | ✅ |
 
-**用户可见行为（2026-11-19/20）**：默认 SIPSorcery；Native RTX 与 Tile 可选。**WiFi 验证矩阵（Windows 热点 192.168.137.x）**：SIPSorcery 22-44fps/0 坏帧 ✓；Tile 20-25fps/12% 真实 WiFi 丢包被 RTX+250ms 窗口干净处理、无级联 ✓（此前"条带平铺"实为 bilibili 真实网格内容——误判）；RTX 未测。USB（RNDIS）：SIPSorcery 44-51fps ✓、Tile 24-40fps ✓、RTX 稳态钉死 ⬜。传输层 IP 无关（any-IP bind + 回程自动推导）已实证。
+**用户可见行为（2026-11-19/20）**：默认 SIPSorcery；Native RTX 与 Tile 可选。**WiFi 验证矩阵（Windows 热点 192.168.137.x）**：SIPSorcery 22-44fps/0 坏帧 ✓；Tile 20-25fps/12% 真实 WiFi 丢包被 RTX+250ms 窗口干净处理、无级联 ✓此前"条带平铺异常"的最终结论：**全分辨率 A/B 同刻对比（PC CopyFromScreen vs 平板 screencap）确认渲染正确**——ZCode 四列布局、浏览器面板全部对应 PC 真实画面，用户报告的异常 = 修复前旧状态（双生产者黑屏 + lockCanvas 死路 + 30ms 窗口），修复链已全部落地生效。；RTX 未测。USB（RNDIS）：SIPSorcery 44-51fps ✓、Tile 24-40fps ✓、RTX 稳态钉死 ⬜。传输层 IP 无关（any-IP bind + 回程自动推导）已实证。
 
 **M5-T5 画质/码率重构（nvenc rc=vbr+cq，OBS 同款质量目标模式）**：CBR 实测把静态桌面 P 帧填充到 ~130KB（16-64Mbps）——平坦区域白白吸收码率预算。改 rc=vbr + cq=19（质量目标 + maxrate 封顶）：静态桌面 1.6-2.8Mbps（降 10-20 倍）且近无损（文字透明），运动 30fps 仅 3.3Mbps，encAvg 不变。悬浮球面板同步重构：分区布局（画质预设/高级档位/传输方式/HUD/连接）、高对比芯片选择器、传输方式远程切换（/ulp/transport POST 持久化 + 自动重连生效）。遗留：面板传输芯片的自动化点击验证未完成（手动即可），HEVC 探针（v7a 解码能力）列为后续压缩升级候选。
 
