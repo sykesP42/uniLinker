@@ -203,8 +203,19 @@ public sealed class SignalingKestrelHost : IDisposable
                 // An unreadable body still counts as a request.
             }
             var remote = ctx.Connection.RemoteIpAddress?.MapToIPv4()?.ToString() ?? "unknown";
+            ViewerLiveness.Notify(); // a loss-detecting receiver is demonstrably alive
             var honored = KeyFrameBroker.Request(remote);
             return Results.Json(new { honored }, jsonOpts);
+        });
+
+        // Viewer liveness heartbeat: the Android receiver POSTs this every 2 s
+        // while streaming. The screen-mirror plugin's watchdog stops the
+        // session when beats stop (killed app / dead network) — stale
+        // sessions used to encode media into the void for hours.
+        app.MapPost("/ulp/keepalive", () =>
+        {
+            ViewerLiveness.Notify();
+            return Results.Json(new { ok = true }, jsonOpts);
         });
 
         app.MapGet("/info", () => Results.Json(_service.GetInfo(), jsonOpts));

@@ -20,6 +20,14 @@ public class ScreenMirrorPlugin : IPlugin
     private readonly object _sessionGate = new();
     private readonly List<IChannel> _viewers = new();
 
+    // Viewer liveness watchdog (ViewerLiveness): a receiver killed without a
+    // disconnect never fires channel.OnClose, so the session used to encode
+    // and blast media into the void for hours. Beats arrive every 2 s; 8 s
+    // of silence (4 missed beats) means the viewer is gone.
+    private const int ViewerIdleTimeoutMs = 8000;
+    private long _lastViewerBeatMs;
+    private CancellationTokenSource? _watchdogCts;
+
     public string Id => "com.unilinker.screen-mirror";
     public string Name => "Screen Mirror";
     public string Version => "1.0.0";
@@ -42,12 +50,16 @@ public class ScreenMirrorPlugin : IPlugin
         // /ulp/pli (rate-limited in KeyFrameBroker) instead of waiting for
         // the periodic GOP boundary.
         KeyFrameBroker.KeyFrameRequested += OnKeyFrameRequested;
+        // Viewer liveness: any /ulp/* request from the viewer stamps the beat.
+        ViewerLiveness.Heartbeat += OnViewerHeartbeat;
         timeBeginPeriod(1);
         context.Logger.Info("ScreenMirror plugin initialized");
         return Task.FromResult(true);
     }
 
     private void OnKeyFrameRequested() => _encoder?.ForceKeyFrame();
+
+    private void OnViewerHeartbeat() => Volatile.Write(ref _lastViewerBeatMs, Environment.TickCount64);
 
     private async Task<IChannel?> OnChannelRequested(PeerInfo peer, string capability)
     {
@@ -142,6 +154,48 @@ public class ScreenMirrorPlugin : IPlugin
         };
 
         _ctx?.Logger.Info("Screen sharing session started");
+
+        // Arm the liveness watchdog with a full grace window: the receiver
+        // sends its first beat ~2 s after STREAMING.
+        Volatile.Write(ref _lastViewerBeatMs, Environment.TickCount64);
+        _watchdogCts = new CancellationTokenSource();
+        var ct = _watchdogCts.Token;
+        _ = Task.Run(async () =>
+        {
+            while (!ct.IsCancellationRequested)
+            {
+                try { await Task.Delay(2000, ct).ConfigureAwait(false); }
+                catch (TaskCanceledException) { return; }
+                var idleMs = Environment.TickCount64 - Volatile.Read(ref _lastViewerBeatMs);
+                if (idleMs < ViewerIdleTimeoutMs) continue;
+                _ctx?.Logger.Warn($"Viewer idle {idleMs}ms with no keepalive — releasing stale session");
+                ReleaseAllViewers();
+                return;
+            }
+        });
+    }
+
+    /// <summary>Idle-timeout teardown: close every viewer channel (OnClose →
+    /// ReleaseViewer → StopSession) and force the cleanup should a channel
+    /// swallow its close event.</summary>
+    private void ReleaseAllViewers()
+    {
+        IChannel[] stale;
+        lock (_sessionGate)
+        {
+            stale = [.. _viewers];
+        }
+        foreach (var channel in stale)
+        {
+            try { channel.Dispose(); } // Dispose raises OnClose → ReleaseViewer → StopSession
+            catch (Exception ex) { _ctx?.Logger.Warn($"viewer channel close failed: {ex.Message}"); }
+        }
+        lock (_sessionGate)
+        {
+            if (_viewers.Count == 0) return;
+            _viewers.Clear();
+        }
+        StopSession();
     }
 
     /// <summary>
@@ -230,6 +284,8 @@ public class ScreenMirrorPlugin : IPlugin
     private void StopSession()
     {
         _ctx?.Logger.Info("Stopping screen sharing session");
+        _watchdogCts?.Cancel();
+        _watchdogCts = null;
         // Dispose chains can race the capture/encoder worker threads; a throw
         // here must not leave the session half-torn-down nor break the caller
         // (direct-RTP reconnect disposes the stale channel before rebinding).
@@ -261,6 +317,7 @@ public class ScreenMirrorPlugin : IPlugin
     {
         _ctx!.Peers.ChannelRequested -= OnChannelRequested;
         KeyFrameBroker.KeyFrameRequested -= OnKeyFrameRequested;
+        ViewerLiveness.Heartbeat -= OnViewerHeartbeat;
         timeEndPeriod(1);
         lock (_sessionGate)
         {

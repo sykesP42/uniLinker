@@ -1,6 +1,8 @@
 package com.unilinker.android.mediatier
 
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.isActive
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharedFlow
@@ -82,6 +84,33 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
     val frames: SharedFlow<ByteArray> = _frames.asSharedFlow()
 
     @Volatile private var receiver: DirectRtpReceiver? = null
+
+    // Viewer liveness heartbeat: POSTs /ulp/keepalive every 2 s while
+    // STREAMING. The sender's watchdog stops the session when beats stop
+    // (killed app / dead network) — a stale session used to encode media
+    // into the void for hours. Rides the TLS pairing channel, so it works
+    // for all three transports (sipsorcery / rtx / tile).
+    private var keepaliveJob: kotlinx.coroutines.Job? = null
+
+    private fun startKeepalive() {
+        keepaliveJob?.cancel()
+        keepaliveJob = kotlinx.coroutines.CoroutineScope(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob()).launch {
+            val body = JSONObject().put("type", "keepalive").toString()
+            while (isActive) {
+                kotlinx.coroutines.delay(2000)
+                try {
+                    val request = Request.Builder()
+                        .url("https://$host:$tlsPort/ulp/keepalive")
+                        .post(body.toRequestBody("application/json".toMediaType()))
+                        .build()
+                    http.newCall(request).execute().use { }
+                } catch (_: Exception) {
+                    // A failed beat just means the next one carries liveness;
+                    // the sender tolerates ~4 missed beats before teardown.
+                }
+            }
+        }
+    }
 
     /** Tile transport (PT 97): assembled tile frames (frameId + grid geometry
      *  + (tileIdx → jpeg) list) flow here instead of the H264 AU flow. */
@@ -276,6 +305,7 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
                 receiver.start()
                 this@DirectRtpClient.receiver = receiver
                 _state.value = State.STREAMING
+                startKeepalive()
                 true
             }
         } catch (e: Exception) {
@@ -347,6 +377,8 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
     }
 
     fun stop() {
+        keepaliveJob?.cancel()
+        keepaliveJob = null
         receiver?.close()
         receiver = null
         _state.value = State.IDLE
