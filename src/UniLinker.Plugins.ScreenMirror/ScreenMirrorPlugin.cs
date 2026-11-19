@@ -152,6 +152,20 @@ public class ScreenMirrorPlugin : IPlugin
     /// </summary>
     private IEncoder? CreateEncoder(ScreenMirrorConfig? config, int width, int height, int fps, int bitrateKbps)
     {
+        // Tile transport uses its own encoder (JPEG tiles), regardless of
+        // the codec setting which only governs the H264 stream modes.
+        if (DirectRtpTransport.Mode == "tile")
+        {
+            var tile = new TileEncoder();
+            if (tile.Initialize(width, height, fps, bitrateKbps))
+            {
+                _ctx?.Logger.Info($"Encoder: Tile JPEG {width}x{height}@{fps} grid {width / TileEncoder.TileW}x{height / TileEncoder.TileH}");
+                return tile;
+            }
+            tile.Dispose();
+            _ctx?.Logger.Warn("Tile encoder init failed — falling back to the codec ladder");
+        }
+
         var choice = (config?.Encoder ?? "auto").ToLowerInvariant();
         _ctx?.Logger.Info($"CreateEncoder: choice={choice} {width}x{height}@{fps} {bitrateKbps}kbps");
         if (choice == "openh264")

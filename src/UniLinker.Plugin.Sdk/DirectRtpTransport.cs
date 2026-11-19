@@ -1,4 +1,4 @@
-namespace UniLinker.Core;
+namespace UniLinker.Plugin.Sdk;
 
 /// <summary>
 /// Which sender implementation serves the direct-RTP tier, named after the

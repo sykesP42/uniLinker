@@ -166,7 +166,12 @@ public partial class SettingsViewModel : ObservableObject
             SetAutostartRegistration(AutoStart);
 
             // Transport applies to NEW rtp sessions immediately.
-            UniLinker.Core.DirectRtpTransport.Mode = TransportIndex == 0 ? "rtx" : "sipsorcery";
+            UniLinker.Plugin.Sdk.DirectRtpTransport.Mode = TransportIndex switch
+            {
+                0 => "rtx",
+                2 => "tile",
+                _ => "sipsorcery"
+            };
 
             // Push device name / port into the running platform (recreates
             // discovery and restarts the signaling server when needed).
@@ -284,7 +289,7 @@ internal class AppSettings
     public int DefaultFps { get; set; } = 0;
     public int DefaultBitrate { get; set; } = 1;
     public int LanguageIndex { get; set; } = 0;
-    /// <summary>Direct-RTP transport: 0 = Native RTX (own pipeline,
-    /// experimental), 1 = SIPSorcery session (stable default).</summary>
+    /// <summary>Direct-RTP transport: 0 = Native RTX, 1 = SIPSorcery
+    /// (stable default), 2 = Tile.</summary>
     public int TransportIndex { get; set; } = 1;
 }

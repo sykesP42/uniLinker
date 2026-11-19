@@ -31,7 +31,17 @@ class DirectRtpReceiver(
     /** NACK target (the sender's RTP bind port host:port from the answer).
      *  Null = RTX disabled (gaps go straight to the skip + PLI path). */
     private val nackTarget: java.net.InetSocketAddress? = null,
+    /** Tile transport (PT 97): assembled tile frames flow here instead of
+     *  the H264 AU path. Null = H264-only receiver. */
+    private val onTileFrame: ((List<Pair<Int, ByteArray>>) -> Unit)? = null,
 ) : AutoCloseable {
+    private var tileAssembler: TileAssembler? = null
+    @Volatile var tileAssembled: Int = 0
+        private set
+    @Volatile var tileDropped: Int = 0
+        private set
+    @Volatile var tileOrphans: Int = 0
+        private set
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val unprotector = SrtpUnprotector(masterKey, masterSalt)
     private val depacketizer = H264RtpDepacketizer()
@@ -142,8 +152,10 @@ class DirectRtpReceiver(
     private fun handle(packet: DatagramPacket) {
         val bytes = packet.data.copyOfRange(packet.offset, packet.offset + packet.length)
         if (bytes.size < 12) return
-        // RTCP rides the same mux port (PT byte ≥ 64); only video RTP here.
-        if ((bytes[1].toInt() and 0x7F) != 96) return
+        // RTCP rides the same mux port (PT byte ≥ 64); video RTP = PT 96
+        // (H264 stream) and PT 97 (tile transport) share the seq space.
+        val pt = bytes[1].toInt() and 0x7F
+        if (pt != 96 && pt != 97) return
 
         // Chaos injection (C1–C5 acceptance): drop BEFORE any accounting so
         // the reorder detector sees injected loss exactly like real loss.
@@ -298,6 +310,29 @@ class DirectRtpReceiver(
                 "DirectRtp",
                 "auth failure #$authFailures (pkts=$receivedPackets len=${bytes.size})",
             )
+            return@synchronized
+        }
+        // Tile transport dispatch (PT 97): the assembled tile frame flows to
+        // the renderer; corruption handling matches the H264 path.
+        if ((clear[1].toInt() and 0x7F) == 97) {
+            if (tileAssembler == null && onTileFrame != null) {
+                tileAssembler = TileAssembler(onTileFrame)
+            }
+            val frameId = ((clear[4].toLong() and 0xFF) shl 24) or ((clear[5].toLong() and 0xFF) shl 16) or
+                ((clear[6].toLong() and 0xFF) shl 8) or (clear[7].toLong() and 0xFF)
+            val orphan = tileAssembler?.push(H264RtpDepacketizer.rtpPayload(clear), frameId) ?: false
+            if (orphan) tileOrphans++
+            tileAssembled = tileAssembler?.assembledFrames ?: 0
+            tileDropped = tileAssembler?.droppedFrames ?: 0
+            if (orphan) {
+                // Predecessor chunk skipped — the frame is unrecoverable.
+                frameCorrupted = true
+                if (onKeyFrameNeeded != null && nowArrival - lastPliMs >= 500L) {
+                    lastPliMs = nowArrival
+                    try { onKeyFrameNeeded.invoke() } catch (_: Exception) { }
+                }
+            }
+            bytesReceived += bytes.size
             return@synchronized
         }
 

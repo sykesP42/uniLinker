@@ -149,6 +149,9 @@ fun DirectRtpScreen(
     var hudLossOn by remember { mutableStateOf(prefs.getBoolean("hud_loss", true)) }
     var hudResOn by remember { mutableStateOf(prefs.getBoolean("hud_res", true)) }
     var transportMode by remember { mutableStateOf("sipsorcery") }
+    var tileRenderer by remember { mutableStateOf<com.unilinker.android.mediatier.TileRenderer?>(null) }
+    var pendingSurface by remember { mutableStateOf<android.graphics.SurfaceTexture?>(null) }
+    var textureViewRef by remember { mutableStateOf<android.view.TextureView?>(null) }
     val hudOn = mapOf(
         "fps" to hudFpsOn,
         "mbps" to hudMbpsOn,
@@ -279,12 +282,35 @@ fun DirectRtpScreen(
                 return@launch
             }
             statusText = "Streaming"
+            transportMode = newClient.transportMode
             frameJob?.cancel()
             frameJob = scope.launch {
-                newClient.frames.collect { au ->
-                    if (surfaceReady) {
-                        decoder?.submitAnnexB(au, System.nanoTime() / 1000)
-                        decodedCount++
+                if (newClient.transportIsTile) {
+                    newClient.tileFrames.collect { tf ->
+                        if (surfaceReady) {
+                            val renderer = tileRenderer ?: run {
+                                val r = com.unilinker.android.mediatier.TileRenderer(
+                                    textureViewRef ?: return@collect)
+                                tileRenderer = r
+                                r
+                            }
+                            renderer.renderTileFrame(
+                                tf.frameId, tf.gridCols, tf.gridRows, tf.frameW, tf.frameH, tf.tiles)
+                            decodedCount++
+                        }
+                    }
+                } else {
+                    newClient.frames.collect { au ->
+                        if (surfaceReady) {
+                            val dec = decoder ?: run {
+                                val st = pendingSurface ?: return@collect
+                                val d = com.unilinker.android.mediatier.H264SurfaceDecoder(Surface(st))
+                                decoder = d
+                                d
+                            }
+                            dec.submitAnnexB(au, System.nanoTime() / 1000)
+                            decodedCount++
+                        }
                     }
                 }
             }
@@ -307,7 +333,8 @@ fun DirectRtpScreen(
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
-                android.view.TextureView(ctx).apply {
+                val tv = android.view.TextureView(ctx)
+                tv.apply {
                     surfaceTextureListener = object : TextureView.SurfaceTextureListener {
                         override fun onSurfaceTextureAvailable(
                             st: SurfaceTexture,
@@ -316,6 +343,11 @@ fun DirectRtpScreen(
                         ) {
                             decoder?.close()
                             decoder = H264SurfaceDecoder(Surface(st))
+                            // Tile transport renders via canvas on the same
+                            // view — both paths coexist; the collect job
+                            // branches on the session's transport.
+                            tileRenderer?.close()
+                            tileRenderer = com.unilinker.android.mediatier.TileRenderer(tv)
                             surfaceReady = true
                         }
 
@@ -329,6 +361,10 @@ fun DirectRtpScreen(
                             surfaceReady = false
                             decoder?.close()
                             decoder = null
+                            tileRenderer?.close()
+                            tileRenderer = null
+                            pendingSurface = null
+                            textureViewRef = null
                             return true
                         }
 
@@ -346,7 +382,7 @@ fun DirectRtpScreen(
                 // the AU submission count — corrupted AUs that MediaCodec
                 // discards must not show as frames (the HUD lied "30fps"
                 // while the picture was mush). Zeros when the stream stops.
-                var lastFrames = decoder?.decodedFrames ?: 0
+                var lastFrames = 0
                 var lastBytes = 0L
                 var lastTime = System.nanoTime()
                 while (true) {
@@ -354,17 +390,24 @@ fun DirectRtpScreen(
                     val now = System.nanoTime()
                     val dtSec = (now - lastTime) / 1e9
                     val c = client
+                    // Mode-aware: the tile renderer exists in BOTH modes
+                    // (shared TextureView) — a blind Elvis chain would pin
+                    // SIPSorcery sessions at 0 rendered frames.
+                    val renderedNow = if (c?.transportIsTile == true)
+                        (tileRenderer?.renderedFrames ?: 0)
+                    else
+                        (decoder?.decodedFrames ?: 0)
                     if (c == null || c.state.value != com.unilinker.android.mediatier.DirectRtpClient.State.STREAMING) {
                         hudFps = 0.0; hudMbps = 0.0
-                        lastFrames = decoder?.decodedFrames ?: 0
+                        lastFrames = renderedNow
                         lastBytes = 0
                         lastTime = now
                         continue
                     }
                     val st = c.receiverStats ?: continue
-                    val dFrames = (decoder?.decodedFrames ?: 0) - lastFrames
+                    val dFrames = renderedNow - lastFrames
                     val dBytes = st.third - lastBytes
-                    lastFrames = decoder?.decodedFrames ?: 0
+                    lastFrames = renderedNow
                     lastBytes = st.third
                     lastTime = now
                     if (dtSec <= 0) continue
@@ -686,8 +729,14 @@ private fun FloatingPanel(
                     chipSelectedBg, accentBorder, chipBg, chipText, Modifier.weight(1f),
                 ) { onTransport("rtx") }
             }
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                TransportChip(
+                    "Tile（USB 直连）", transportMode == "tile",
+                    chipSelectedBg, accentBorder, chipBg, chipText, Modifier.fillMaxWidth(),
+                ) { onTransport("tile") }
+            }
             Text(
-                "切换后自动重连生效 · SIPSorcery 稳定 / Native RTX 抗丢包",
+                "切换后自动重连生效 · SIPSorcery 稳定 / RTX 抗丢包 / Tile 低延迟高画质",
                 style = MaterialTheme.typography.labelSmall, color = textSecondary,
             )
 

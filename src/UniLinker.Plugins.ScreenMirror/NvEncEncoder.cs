@@ -19,10 +19,10 @@ namespace UniLinker.Plugins.ScreenMirror;
 /// </summary>
 public unsafe class NvEncEncoder : IEncoder
 {
-    /// <summary>Constant-quality target (0-51, lower = better). 19 keeps
-    /// desktop text visually transparent while static frames cost 3-15KB;
-    /// motion rides to the tier's maxrate cap.</summary>
-    public const int CqLevel = 19;
+    /// <summary>Constant-quality target (0-51, lower = better). 16 keeps
+    /// desktop text pixel-transparent while static frames stay tiny; motion
+    /// rides to the tier's maxrate cap (48Mbps on the HD tier).</summary>
+    public const int CqLevel = 16;
 
     private readonly object _slotGate = new();
     private CaptureFrame? _pendingFrame;

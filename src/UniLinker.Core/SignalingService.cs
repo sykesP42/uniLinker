@@ -184,6 +184,10 @@ public class SignalingService : IDisposable
 
         IDirectRtpChannel channel = DirectRtpTransport.Mode switch
         {
+            "tile" => new DirectRtpChannel(
+                peerInfo, msg.Capability ?? "screen-capture",
+                new IPEndPoint(remoteIp, msg.RtpPort), bindPort,
+                msg.CaptureWidth, msg.CaptureHeight, msg.BitrateKbps, msg.CaptureFps),
             "rtx" => new DirectRtpChannel(
                 peerInfo, msg.Capability ?? "screen-capture",
                 new IPEndPoint(remoteIp, msg.RtpPort), bindPort,

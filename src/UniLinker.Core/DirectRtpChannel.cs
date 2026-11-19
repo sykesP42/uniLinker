@@ -67,6 +67,7 @@ internal class DirectRtpChannel : IDirectRtpChannel
     private readonly IPEndPoint _destination;
     private readonly int _bindPort;
     private DirectRtpSender? _sender;
+    private readonly bool _tileMode = DirectRtpTransport.Mode == "tile";
 
     private long _lastFrameTsUs = -1;
     private uint _lastDurationRtp = RtpTiming.DefaultDurationRtp;
@@ -133,7 +134,8 @@ internal class DirectRtpChannel : IDirectRtpChannel
     {
         var sender = new DirectRtpSender(
             _destination, _bindPort,
-            RequestedBitrateKbps > 0 ? RequestedBitrateKbps : 8000);
+            RequestedBitrateKbps > 0 ? RequestedBitrateKbps : 8000,
+            tileMode: DirectRtpTransport.Mode == "tile");
         try
         {
             sender.Start();
@@ -156,6 +158,15 @@ internal class DirectRtpChannel : IDirectRtpChannel
 
     public Task SendPacketAsync(EncodedPacket packet)
     {
+        if (_tileMode)
+        {
+            // Tile wire payload: [...jpeg][flags u8], flags bit0 = last
+            // packet of the tile frame (the RTP marker source).
+            _sender?.SendTileAu(packet.Data, packet.TimestampUs,
+                isLast: (packet.Data[^1] & 1) != 0,
+                isKeyFrame: packet.IsKeyFrame);
+            return Task.CompletedTask;
+        }
         _sender?.SendAu(packet.Data, packet.TimestampUs, packet.IsKeyFrame);
         return Task.CompletedTask;
     }

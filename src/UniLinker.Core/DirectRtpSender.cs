@@ -58,9 +58,13 @@ internal sealed class DirectRtpSender : IDisposable
     // faster than real-time so the queue stays empty in steady state.
     private readonly System.Collections.Concurrent.BlockingCollection<(byte[] Au, long TsUs)> _pacerQueue =
         new(6);
+    private readonly System.Collections.Concurrent.BlockingCollection<(byte[] Payload, long TsUs, bool IsLast)> _tileQueue =
+        new(24);
     private Thread? _pacerThread;
     private readonly CancellationTokenSource _pacerCts = new();
     private readonly long _pacerBytesPerMs;
+    private readonly bool _tileMode;
+    private long _lastTileTsUs = -1;
     /// <summary>Instant-burst allowance: the first ~42 packets of a frame go
     /// out at once, the rest of a large IDR trickles at 1.5× tier.</summary>
     private const long MaxInstantBurstBytes = 64 * 1024;
@@ -78,10 +82,11 @@ internal sealed class DirectRtpSender : IDisposable
     /// <summary>NACK datagrams received (diagnostics).</summary>
     public long NacksReceived { get; private set; }
 
-    public DirectRtpSender(IPEndPoint destination, int bindPort, int bitrateKbps = 8000)
+    public DirectRtpSender(IPEndPoint destination, int bindPort, int bitrateKbps = 8000, bool tileMode = false)
     {
         _destination = destination;
         BindPort = bindPort;
+        _tileMode = tileMode;
         // 2.5× tier bitrate, in bytes/ms. NVENC's CBR empirically overshoots
         // the tier ~2× (8Mbps tier → ~16Mbps measured, 32Mbps → 64Mbps), so
         // the drain must cover the real output or the queue overflows and
@@ -216,6 +221,28 @@ internal sealed class DirectRtpSender : IDisposable
         catch (InvalidOperationException) { } // completing on dispose
     }
 
+    /// <summary>Tile mode: enqueue one pre-framed RTP payload (the TileEncoder
+    /// emits wire-ready packets, PT/marker patched at send time). isLast =
+    /// last packet of the tile frame → RTP marker; the receiver's frame
+    /// assembly completes on it.</summary>
+    public void SendTileAu(byte[] payload, long timestampUs, bool isLast, bool isKeyFrame)
+    {
+        if (_disposed) return;
+        if (isKeyFrame)
+        {
+            while (_pacerQueue.Count > 0) _pacerQueue.TryTake(out _);
+        }
+        else
+        {
+            while (_pacerQueue.Count >= 12) _pacerQueue.TryTake(out _);
+        }
+        try
+        {
+            _tileQueue.Add((payload, timestampUs, isLast), _pacerCts.Token);
+        }
+        catch (InvalidOperationException) { }
+    }
+
     /// <summary>Paced sender: packetize + protect + token-bucket send.
     /// Serialized under the send gate — the SRTP engine is not thread-safe;
     /// NACK resends take the same gate.</summary>
@@ -243,10 +270,19 @@ internal sealed class DirectRtpSender : IDisposable
 
         while (!_pacerCts.IsCancellationRequested)
         {
-            (byte[] au, long tsUs) item;
+            (byte[] Au, long TsUs, bool? IsLast) item;
             try
             {
-                item = _pacerQueue.Take(_pacerCts.Token);
+                if (_tileMode)
+                {
+                    var (pl, ts, last) = _tileQueue.Take(_pacerCts.Token);
+                    item = (pl, ts, last);
+                }
+                else
+                {
+                    var (au, ts) = _pacerQueue.Take(_pacerCts.Token);
+                    item = (au, ts, null);
+                }
             }
             catch (OperationCanceledException) { break; }
             catch (InvalidOperationException) { break; }
@@ -256,32 +292,62 @@ internal sealed class DirectRtpSender : IDisposable
                 if (_disposed) break;
                 try
                 {
-                    uint durationRtp = RtpTiming.DurationFor(item.tsUs, ref _lastFrameTsUs, ref _lastDurationRtp);
-                    _timestamp += durationRtp;
-                    var packets = PacketizeAu(item.au, _timestamp);
-                    foreach (var rtp in packets)
+                    if (_tileMode)
                     {
-                        // Wait for credit before committing the packet.
-                        while (!_pacerCts.IsCancellationRequested)
+                        // Tile frames share one RTP timestamp (the frame id);
+                        // advance the 90 kHz clock once per frame.
+                        if (item.TsUs != _lastTileTsUs)
                         {
-                            Refill();
-                            if (creditBytes >= rtp.Length) break;
-                            Thread.Sleep(2);
+                            uint durationRtp = RtpTiming.DurationFor(item.TsUs, ref _lastFrameTsUs, ref _lastDurationRtp);
+                            _timestamp += durationRtp;
+                            _lastTileTsUs = item.TsUs;
                         }
-                        if (_pacerCts.IsCancellationRequested) break;
-                        creditBytes -= rtp.Length;
+                        var rtp = new byte[12 + item.Au.Length];
+                        rtp[0] = 0x80;
+                        rtp[1] = (byte)(97 | (item.IsLast == true ? 0x80 : 0));
+                        FillRtpHeader(rtp, _timestamp);
+                        Buffer.BlockCopy(item.Au, 0, rtp, 12, item.Au.Length);
 
-                        ushort seq = (ushort)((rtp[2] << 8) | rtp[3]);
+                        Refill();
+                        creditBytes -= rtp.Length;
                         byte[]? protectedPacket = _transformer.Transform(rtp);
-                        if (protectedPacket == null)
+                        if (protectedPacket != null)
                         {
-                            Log.Info("[RTX] srtp transform returned null — packet dropped");
-                            continue;
+                            _ringCursor = (_ringCursor + 1) % RingCapacity;
+                            _ring[_ringCursor] = ((ushort)((rtp[2] << 8) | rtp[3]), protectedPacket);
+                            _udp.Send(protectedPacket, protectedPacket.Length, _destination);
+                            PacketsSent++;
                         }
-                        _ringCursor = (_ringCursor + 1) % RingCapacity;
-                        _ring[_ringCursor] = (seq, protectedPacket);
-                        _udp.Send(protectedPacket, protectedPacket.Length, _destination);
-                        PacketsSent++;
+                    }
+                    else
+                    {
+                        uint durationRtp = RtpTiming.DurationFor(item.TsUs, ref _lastFrameTsUs, ref _lastDurationRtp);
+                        _timestamp += durationRtp;
+                        var packets = PacketizeAu(item.Au, _timestamp);
+                        foreach (var rtp in packets)
+                        {
+                            // Wait for credit before committing the packet.
+                            while (!_pacerCts.IsCancellationRequested)
+                            {
+                                Refill();
+                                if (creditBytes >= rtp.Length) break;
+                                Thread.Sleep(2);
+                            }
+                            if (_pacerCts.IsCancellationRequested) break;
+                            creditBytes -= rtp.Length;
+
+                            ushort seq = (ushort)((rtp[2] << 8) | rtp[3]);
+                            byte[]? protectedPacket = _transformer.Transform(rtp);
+                            if (protectedPacket == null)
+                            {
+                                Log.Info("[RTX] srtp transform returned null — packet dropped");
+                                continue;
+                            }
+                            _ringCursor = (_ringCursor + 1) % RingCapacity;
+                            _ring[_ringCursor] = (seq, protectedPacket);
+                            _udp.Send(protectedPacket, protectedPacket.Length, _destination);
+                            PacketsSent++;
+                        }
                     }
                 }
                 catch (Exception ex)

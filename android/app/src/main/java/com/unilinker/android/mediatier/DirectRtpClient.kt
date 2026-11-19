@@ -31,6 +31,16 @@ import javax.net.ssl.X509TrustManager
  */
 /** Receiver-driven capture tier: carried in the rtp request, honored by the
  *  sender (values 0 mean "sender default"). */
+/** One assembled tile frame (M6 tile transport). */
+data class TileFrameEvent(
+    val frameId: Long,
+    val gridCols: Int,
+    val gridRows: Int,
+    val frameW: Int,
+    val frameH: Int,
+    val tiles: List<Pair<Int, ByteArray>>,
+)
+
 data class CaptureTier(
     val width: Int,
     val height: Int,
@@ -70,6 +80,15 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
 
     @Volatile private var receiver: DirectRtpReceiver? = null
 
+    /** Tile transport (PT 97): assembled tile frames (frameId + grid geometry
+     *  + (tileIdx → jpeg) list) flow here instead of the H264 AU flow. */
+    private val _tileFrames = kotlinx.coroutines.flow.MutableSharedFlow<TileFrameEvent>(
+        extraBufferCapacity = 8,
+        onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
+    val tileFrames: kotlinx.coroutines.flow.SharedFlow<TileFrameEvent> = _tileFrames
+    @Volatile var transportIsTile = false
+    @Volatile var transportMode = "sipsorcery"
+
     // Chaos injection passthrough (docs/spec/chaos-acceptance.md C1-C5),
     // set from the deep-link extras and applied to the receiver at connect.
     @Volatile var chaosLossPct: Int = 0
@@ -88,6 +107,9 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
 
     // Assembly diagnostics (HUD/adb debugging of the RTX reorder pipeline).
     val receiverAssembledAUs: Int get() = receiver?.assembledAUs ?: 0
+    val tileAssembled: Int get() = receiver?.tileAssembled ?: 0
+    val tileDropped: Int get() = receiver?.tileDropped ?: 0
+    val tileOrphans: Int get() = receiver?.tileOrphans ?: 0
     val receiverDroppedCorruptAUs: Int get() = receiver?.droppedCorruptAUs ?: 0
     val receiverNalsBuffered: Int get() = receiver?.nalsBuffered ?: 0
 
@@ -220,6 +242,10 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
                 }
                 val kv = Base64.getDecoder().decode(inline)
                 val receiverPort = answer.optInt("rtpPort", 5004)
+                transportMode = getTransport() ?: "sipsorcery"
+                transportIsTile = transportMode == "tile"
+                val gridCols = (tier.width + 319) / 320
+                val gridRows = (tier.height + 199) / 200
                 val receiver = DirectRtpReceiver(
                     listenPort = localPort,
                     masterKey = kv.copyOfRange(0, 16),
@@ -227,6 +253,9 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
                     onAu = { au -> _frames.tryEmit(au) },
                     onKeyFrameNeeded = { sendPli() },
                     nackTarget = java.net.InetSocketAddress(host, receiverPort),
+                    onTileFrame = { tiles ->
+                        _tileFrames.tryEmit(TileFrameEvent(0L, gridCols, gridRows, tier.width, tier.height, tiles))
+                    },
                 )
                 receiver.chaosLossPct = chaosLossPct
                 receiver.chaosDupPct = chaosDupPct

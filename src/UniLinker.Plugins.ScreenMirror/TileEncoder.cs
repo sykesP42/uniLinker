@@ -1,0 +1,442 @@
+using System.Runtime.InteropServices;
+using FFmpeg.AutoGen;
+using static FFmpeg.AutoGen.ffmpeg;
+using UniLinker.Core; // Log (Sdk-internal, UniLinker.Core namespace)
+using UniLinker.Plugin.Sdk;
+
+namespace UniLinker.Plugins.ScreenMirror;
+
+/// <summary>
+/// Tile-transport encoder (M6): the remote-desktop-family pipeline. Splits
+/// each captured BGRA frame into a fixed tile grid, hash-diffs tiles against
+/// the previous frame, and JPEG-encodes ONLY the changed tiles with FFmpeg's
+/// mjpeg encoder (per-tile independence = loss never cascades; a missing
+/// tile costs one grid cell, healed by the next frame that touches it).
+///
+/// Wire payload per emitted EncodedPacket (one RTP packet, PT 97):
+///   [tileIdx u16][tileCount u16][chunkIdx u8][chunkCount u8][flags u8][jpeg...]
+/// flags bit0 = last packet of the frame (the RTP marker source); the tile
+/// sender reads it. A tile larger than the chunk budget is split across
+/// chunks; all packets of one frame share TimestampUs (= frame id).
+///
+/// Every packet is a keyframe by construction (MJPEG is intra-only);
+/// EncodedPacket.IsKeyFrame means "full refresh frame" (all tiles sent) and
+/// doubles as the pacer's queue-clear signal.
+/// </summary>
+public unsafe class TileEncoder : IEncoder
+{
+    /// <summary>Tile grid cell width (multiple of 16 for YUVJ420P MCU).</summary>
+    public const int TileW = 320;
+    /// <summary>Tile grid cell height.</summary>
+    public const int TileH = 200;
+    /// <summary>RTP payload budget minus the 6-byte tile header and the 1-byte
+    /// flags trailer: keeps the wire packet ≤ MTU with the 12B RTP header +
+    /// 10B SRTP tag. Mirrors DirectRtpSender.MaxPayload (1400) — keep in sync.</summary>
+    public const int ChunkBudget = 1400 - 7;
+    public const byte FlagLastOfFrame = 0x01;
+
+    private const int JpegQuality = 82; // mjpeg qscale via global_quality
+
+    private readonly object _slotGate = new();
+    private CaptureFrame? _pendingFrame;
+    private long _pendingTsUs;
+    private bool _pendingIsRefresh;
+    private SemaphoreSlim _workSignal = new(0, 32);
+    private volatile bool _running;
+    private Thread? _worker;
+    private volatile bool _forceFullRefresh;
+
+    private int _gridCols;
+    private int _gridRows;
+    private uint[] _tileHashes = Array.Empty<uint>();
+    private int _frameCounter;
+    private long _lastFullRefreshFrame;
+
+    private SwsContext* _sws;
+    private AVFrame* _yuvFrame;
+    private readonly Dictionary<(int, int), IntPtr> _encoders = new();
+    private readonly Dictionary<(int, int), IntPtr> _tileFrames = new();
+    private readonly List<byte[]> _emit = new();
+
+    private long _swsTicks;
+    private long _diffTicks;
+    private long _encTicks;
+    private long _frameBytes;
+    private int _emittedFrames;
+    private int _tilesSent;
+    private int _loopCount;
+
+    public event Action<EncodedPacket>? PacketEncoded;
+
+    public bool Initialize(int width, int height, int fps, int bitrateKbps)
+    {
+        _gridCols = (width + TileW - 1) / TileW;
+        _gridRows = (height + TileH - 1) / TileH;
+        _tileHashes = new uint[_gridCols * _gridRows];
+
+        // Probe mjpeg availability up-front (same pattern as NvEncEncoder).
+        lock (_encoders)
+        {
+            if (!GetEncoder(TileW, TileH)) return false;
+        }
+
+        _running = true;
+        _forceFullRefresh = true; // first frame sends every tile
+        _worker = new Thread(EncodeLoop) { IsBackground = true, Name = "TileEncoder" };
+        _worker.Start();
+        Log.Info($"[Tile] initialized {width}x{height} grid {_gridCols}x{_gridRows} ({_gridCols * _gridRows} tiles) jpeg q={JpegQuality}");
+        return true;
+    }
+
+    public EncoderInfo GetInfo() => new("tile-mjpeg", 0, IsHardware: false);
+
+    public void Encode(CaptureFrame frame)
+    {
+        if (!_running) return;
+        lock (_slotGate)
+        {
+            _pendingFrame = frame;
+            _pendingTsUs = frame.TimestampUs;
+        }
+        try { _workSignal.Release(); } catch (SemaphoreFullException) { }
+    }
+
+    public void ForceKeyFrame() => _forceFullRefresh = true;
+
+    private void EncodeLoop()
+    {
+        while (_running)
+        {
+            _workSignal.Wait();
+            if (!_running) break;
+            try
+            {
+                CaptureFrame? frame;
+                lock (_slotGate)
+                {
+                    frame = _pendingFrame;
+                    _pendingFrame = null;
+                }
+                if (frame?.RawData == null || frame.Width <= 0) continue;
+
+                EncodeOne(frame, _pendingTsUs);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"[Tile] encode error: {ex.Message}");
+            }
+        }
+    }
+
+    private void EncodeOne(CaptureFrame frame, long tsUs)
+    {
+        var swsStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        lock (_encoders)
+        {
+            if (_sws == null || _yuvFrame == null || _yuvFrame->width != frame.Width)
+            {
+                RebuildScale(frame.Width, frame.Height);
+            }
+
+            // BGRA -> YUVJ420P (full frame, one pass).
+            var src = PinSource(frame);
+            try
+            {
+                var srcData = new byte*[4];
+                var srcStride = new int[4];
+                srcData[0] = (byte*)src.AddrOfPinnedObject();
+                srcStride[0] = frame.Pitch;
+                sws_scale(_sws, srcData, srcStride, 0, frame.Height,
+                    _yuvFrame->data, _yuvFrame->linesize);
+            }
+            finally
+            {
+                if (src.IsAllocated) src.Free();
+            }
+            _swsTicks += (System.Diagnostics.Stopwatch.GetTimestamp() - swsStart) * 1000 / System.Diagnostics.Stopwatch.Frequency;
+        }
+
+        // ── Tile diff ──
+        var diffStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        bool fullRefresh = _forceFullRefresh ||
+                           _frameCounter - _lastFullRefreshFrame >= Math.Max(60, 2 * 30);
+        var changed = new List<int>();
+        if (fullRefresh)
+        {
+            for (int i = 0; i < _gridCols * _gridRows; i++) changed.Add(i);
+            _forceFullRefresh = false;
+            _lastFullRefreshFrame = _frameCounter;
+        }
+        else
+        {
+            for (int ty = 0; ty < _gridRows; ty++)
+            {
+                for (int tx = 0; tx < _gridCols; tx++)
+                {
+                    int idx = ty * _gridCols + tx;
+                    uint h = HashTile(frame, tx, ty);
+                    if (h != _tileHashes[idx]) changed.Add(idx);
+                    _tileHashes[idx] = h;
+                }
+            }
+            if (changed.Count == 0)
+            {
+                _frameCounter++;
+                return; // static frame: nothing on the wire at all
+            }
+        }
+        _diffTicks += (System.Diagnostics.Stopwatch.GetTimestamp() - diffStart) * 1000 / System.Diagnostics.Stopwatch.Frequency;
+
+        // ── Encode changed tiles ──
+        var encStart = System.Diagnostics.Stopwatch.GetTimestamp();
+        var framePackets = new List<byte[]>();
+        lock (_encoders)
+        {
+            foreach (int idx in changed)
+            {
+                int tx = idx % _gridCols;
+                int ty = idx / _gridCols;
+                int tw = TileWidth(frame.Width, tx);
+                int th = TileHeight(frame.Height, ty);
+                var jpeg = EncodeTile(frame.Width, frame.Height, tx, ty, tw, th);
+                if (jpeg == null || jpeg.Length == 0) continue;
+                ChunkTile(framePackets, idx, _gridCols * _gridRows, jpeg);
+            }
+        }
+        _encTicks += (System.Diagnostics.Stopwatch.GetTimestamp() - encStart) * 1000 / System.Diagnostics.Stopwatch.Frequency;
+
+        // ── Emit: mark the frame's last packet ──
+        if (framePackets.Count > 0)
+        {
+            var last = framePackets[^1];
+            last[^1] |= FlagLastOfFrame; // flags byte is the payload's last byte
+            bool refresh = fullRefresh;
+            foreach (var pkt in framePackets)
+            {
+                PacketEncoded?.Invoke(new EncodedPacket(pkt, tsUs, refresh));
+            }
+        }
+
+        _frameCounter++;
+        _emittedFrames++;
+        _tilesSent += changed.Count;
+        _frameBytes += framePackets.Sum(p => p.Length);
+        _loopCount++;
+        if (_emittedFrames % 60 == 1)
+        {
+            var avgSws = _loopCount > 0 ? _swsTicks / (double)_loopCount : 0;
+            var avgDiff = _loopCount > 0 ? _diffTicks / (double)_loopCount : 0;
+            var avgEnc = _loopCount > 0 ? _encTicks / (double)_loopCount : 0;
+            var mbps = _loopCount > 0 ? _frameBytes * 8.0 / 1000 / 1000 * 30 : 0;
+            Log.Info($"[Tile] emitted {_emittedFrames} frames (tiles {_tilesSent}/{_gridCols * _gridRows}, last {framePackets.Count} pkts) avgAu={_frameBytes / 60.0 / 1000:F1}KB ({mbps:F1}Mbps) swsAvg={avgSws:F1}ms diffAvg={avgDiff:F1}ms encAvg={avgEnc:F1}ms loops={_loopCount}");
+            _swsTicks = 0; _diffTicks = 0; _encTicks = 0; _frameBytes = 0; _loopCount = 0; _tilesSent = 0;
+        }
+    }
+
+    /// <summary>Pin frame.RawData honoring pitch (compact pitch-padded rows).</summary>
+    private GCHandle PinSource(CaptureFrame frame)
+    {
+        if (frame.Pitch == frame.Width * 4)
+        {
+            return GCHandle.Alloc(frame.RawData, GCHandleType.Pinned);
+        }
+        int size = frame.Width * 4 * frame.Height;
+        var buf = new byte[size];
+        for (int y = 0; y < frame.Height; y++)
+            Buffer.BlockCopy(frame.RawData, y * frame.Pitch, buf, y * frame.Width * 4, frame.Width * 4);
+        return GCHandle.Alloc(buf, GCHandleType.Pinned);
+    }
+
+    /// <summary>FNV-1a 32-bit over the tile's BGRA rows (pitch-aware).</summary>
+    private uint HashTile(CaptureFrame frame, int tx, int ty)
+    {
+        int x0 = tx * TileW;
+        int y0 = ty * TileH;
+        int tw = TileWidth(frame.Width, tx);
+        int th = TileHeight(frame.Height, ty);
+        uint h = 2166136261u;
+        var d = frame.RawData!;
+        for (int y = 0; y < th; y++)
+        {
+            int row = (y0 + y) * frame.Pitch + x0 * 4;
+            for (int x = 0; x < tw * 4; x++)
+            {
+                h ^= d[row + x];
+                h *= 16777619u;
+            }
+        }
+        return h;
+    }
+
+    private int TileWidth(int frameWidth, int tx) =>
+        Math.Min(TileW, frameWidth - tx * TileW);
+
+    private int TileHeight(int frameHeight, int ty) =>
+        Math.Min(TileH, frameHeight - ty * TileH);
+
+    private void RebuildScale(int w, int h)
+    {
+        if (_sws != null) sws_freeContext(_sws);
+        if (_yuvFrame != null)
+        {
+            var f = _yuvFrame;
+            av_frame_free(&f);
+            _yuvFrame = null;
+        }
+        _sws = sws_getContext(w, h, AVPixelFormat.AV_PIX_FMT_BGRA,
+            w, h, AVPixelFormat.AV_PIX_FMT_YUVJ420P,
+            (int)SwsFlags.SWS_BILINEAR, null, null, null);
+        _yuvFrame = av_frame_alloc();
+        _yuvFrame->width = w;
+        _yuvFrame->height = h;
+        _yuvFrame->format = (int)AVPixelFormat.AV_PIX_FMT_YUVJ420P;
+        av_frame_get_buffer(_yuvFrame, 0);
+        _encoders.Clear();  // tile sizes are frame-resolution-dependent
+        _tileFrames.Clear();
+    }
+
+    /// <summary>Get (or create) the mjpeg encoder context for a tile size.</summary>
+    private bool GetEncoder(int w, int h)
+    {
+        var key = (w, h);
+        if (_encoders.ContainsKey(key)) return true;
+
+        var codec = avcodec_find_encoder(AVCodecID.AV_CODEC_ID_MJPEG);
+        if (codec == null)
+        {
+            Log.Error("[Tile] mjpeg encoder not found in FFmpeg build");
+            return false;
+        }
+        var ctx = avcodec_alloc_context3(codec);
+        ctx->width = w;
+        ctx->height = h;
+        ctx->time_base = new AVRational { num = 1, den = 30 };
+        ctx->pix_fmt = AVPixelFormat.AV_PIX_FMT_YUVJ420P;
+        // qscale quality path: global_quality = quality * FF_QP2LAMBDA.
+        ctx->global_quality = JpegQuality * FF_QP2LAMBDA;
+        ctx->flags |= AV_CODEC_FLAG_QSCALE;
+        if (avcodec_open2(ctx, codec, null) < 0)
+        {
+            Log.Error("[Tile] mjpeg avcodec_open2 failed");
+            avcodec_free_context(&ctx);
+            return false;
+        }
+        _encoders[key] = (IntPtr)ctx;
+
+        var frame = av_frame_alloc();
+        frame->width = w;
+        frame->height = h;
+        frame->format = (int)AVPixelFormat.AV_PIX_FMT_YUVJ420P;
+        av_frame_get_buffer(frame, 0);
+        _tileFrames[key] = (IntPtr)frame;
+        return true;
+    }
+
+    /// <summary>Slice the tile's YUV planes into a tile frame and mjpeg-encode it.</summary>
+    private byte[]? EncodeTile(int frameW, int frameH, int tx, int ty, int tw, int th)
+    {
+        if (!GetEncoder(tw, th)) return null;
+        var ctx = (AVCodecContext*)_encoders[(tw, th)];
+        var tileFrame = (AVFrame*)_tileFrames[(tw, th)];
+
+        int x0 = tx * TileW;
+        int y0 = ty * TileH;
+        // Y plane: direct row copy.
+        for (int y = 0; y < th; y++)
+        {
+            Buffer.MemoryCopy(
+                (void*)(_yuvFrame->data[0] + (y0 + y) * _yuvFrame->linesize[0] + x0),
+                (void*)(tileFrame->data[0] + y * tileFrame->linesize[0]),
+                tw, tw);
+        }
+        // U/V planes: 2× subsampled.
+        int cx = x0 / 2, cy = y0 / 2, cw = tw / 2, ch = th / 2;
+        for (int p = 1; p <= 2; p++)
+        {
+            for (int y = 0; y < ch; y++)
+            {
+                Buffer.MemoryCopy(
+                    (void*)(_yuvFrame->data[(uint)p] + (cy + y) * _yuvFrame->linesize[(uint)p] + cx),
+                    (void*)(tileFrame->data[(uint)p] + y * tileFrame->linesize[(uint)p]),
+                    (nuint)cw, (nuint)cw);
+            }
+        }
+
+        if (avcodec_send_frame(ctx, tileFrame) < 0) return null;
+        var pkt = av_packet_alloc();
+        try
+        {
+            var outBytes = new List<byte[]>();
+            while (avcodec_receive_packet(ctx, pkt) == 0)
+            {
+                var chunk = new byte[pkt->size];
+                Marshal.Copy((nint)pkt->data, chunk, 0, pkt->size);
+                outBytes.Add(chunk);
+                av_packet_unref(pkt);
+            }
+            if (outBytes.Count == 0) return null;
+            var total = new byte[outBytes.Sum(b => b.Length)];
+            int pos = 0;
+            foreach (var b in outBytes) { Buffer.BlockCopy(b, 0, total, pos, b.Length); pos += b.Length; }
+            return total;
+        }
+        finally
+        {
+            av_packet_free(&pkt);
+        }
+    }
+
+    /// <summary>Chunk a tile's JPEG into wire payloads with the tile header:
+    /// [tileIdx u16][tileCount u16][chunkIdx u8][chunkCount u8][jpeg...][flags u8].
+    /// The flags byte is the LAST byte of the payload (patched per frame).</summary>
+    private void ChunkTile(List<byte[]> packets, int tileIdx, int tileCount, byte[] jpeg)
+    {
+        int dataBudget = ChunkBudget;
+        int chunks = (jpeg.Length + dataBudget - 1) / dataBudget;
+        for (int c = 0; c < chunks; c++)
+        {
+            int len = Math.Min(dataBudget, jpeg.Length - c * dataBudget);
+            var pkt = new byte[6 + len + 1];
+            pkt[0] = (byte)(tileIdx >> 8);
+            pkt[1] = (byte)tileIdx;
+            pkt[2] = (byte)(tileCount >> 8);
+            pkt[3] = (byte)tileCount;
+            pkt[4] = (byte)c;
+            pkt[5] = (byte)chunks;
+            Buffer.BlockCopy(jpeg, c * dataBudget, pkt, 6, len);
+            pkt[^1] = 0; // flags (last-of-frame patched by the caller)
+            packets.Add(pkt);
+        }
+    }
+
+    public void Dispose()
+    {
+        _running = false;
+        _workSignal.Release();
+        _worker?.Join(2000);
+        _worker = null;
+        lock (_encoders)
+        {
+            foreach (var kv in _encoders)
+            {
+                var ctx = (AVCodecContext*)kv.Value;
+                avcodec_free_context(&ctx);
+            }
+            _encoders.Clear();
+            foreach (var kv in _tileFrames)
+            {
+                var f = (AVFrame*)kv.Value;
+                av_frame_free(&f);
+            }
+            _tileFrames.Clear();
+            if (_sws != null) { sws_freeContext(_sws); _sws = null; }
+            if (_yuvFrame != null)
+            {
+                var f = _yuvFrame;
+                av_frame_free(&f);
+                _yuvFrame = null;
+            }
+        }
+        PacketEncoded = null;
+    }
+}

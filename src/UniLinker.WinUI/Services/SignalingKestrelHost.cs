@@ -132,6 +132,62 @@ public sealed class SignalingKestrelHost : IDisposable
             }
         });
 
+        // M5 transport selection from the receiver's floating panel:
+        // POST {mode} applies immediately (new sessions) and persists to
+        // settings.json (TransportIndex) so a PC restart keeps the choice.
+        app.MapPost("/ulp/transport", async (HttpContext ctx) =>
+        {
+            try
+            {
+                using var reader = new StreamReader(ctx.Request.Body);
+                var body = await reader.ReadToEndAsync();
+                var json = System.Text.Json.JsonDocument.Parse(body);
+                var mode = json.RootElement.GetProperty("mode").GetString() ?? "";
+                if (mode != "sipsorcery" && mode != "rtx" && mode != "tile")
+                {
+                    return Results.Json(new { applied = "", error = "unknown mode" }, jsonOpts);
+                }
+                DirectRtpTransport.Mode = mode;
+
+                // Persist: settings.json read-modify-write (TransportIndex:
+                // 0 = rtx, 1 = sipsorcery).
+                var settingsPath = Path.Combine(
+                    Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+                    "uniLinker", "settings.json");
+                int transportIndex = mode switch { "rtx" => 0, "sipsorcery" => 1, _ => 2 };
+                try
+                {
+                    var raw = File.Exists(settingsPath)
+                        ? File.ReadAllText(settingsPath) : "{}";
+                    var doc = System.Text.Json.JsonDocument.Parse(raw);
+                    var dict = new Dictionary<string, object>();
+                    foreach (var prop in doc.RootElement.EnumerateObject())
+                    {
+                        dict[prop.Name] = prop.Value.Clone();
+                    }
+                    dict["TransportIndex"] = transportIndex;
+                    var opts = new System.Text.Json.JsonSerializerOptions { WriteIndented = true };
+                    File.WriteAllText(settingsPath,
+                        System.Text.Json.JsonSerializer.Serialize(dict, opts));
+                }
+                catch (Exception pex)
+                {
+                    Log.Info($"[transport] persist failed (mode still applied): {pex.Message}");
+                }
+
+                Log.Info($"[transport] mode set to {mode} by receiver");
+                return Results.Json(new { applied = mode }, jsonOpts);
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"[transport] set failed: {ex}");
+                return Results.Text("transport set failed: " + ex.Message, "text/plain", statusCode: 500);
+            }
+        });
+
+        app.MapGet("/ulp/transport", () =>
+            Results.Json(new { mode = DirectRtpTransport.Mode }, jsonOpts));
+
         // M4 PLI: media-plane key-frame request from a loss-detecting receiver.
         // Body is informational; the requester's IP is logged for diagnostics.
         app.MapPost("/ulp/pli", async (HttpContext ctx) =>
