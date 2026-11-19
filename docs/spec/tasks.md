@@ -54,7 +54,7 @@
 |---|------|------|------|------|
 | M5-T1 | RTX 自有管线 | DirectRtpSender（RFC 6184 打包 + 裸 SRTP + 4096 环形缓冲 + NACK 循环）；接收端重序缓冲（30ms 洞等待 + skip+PLI）；wire 契约不变，fixture 重生成 | C# 35/35；JVM 3/3；注入 2% 丢包画面全净 30fps | ✅ 代码 |
 | M5-T2 | 传输方式选择 | 设置页"投屏传输方式"（以核心技术栈命名）：**SIPSorcery**（默认，RTPSession 会话管线，稳定 44-51fps/24-26Mbps）/ **Native RTX**（自研管线 + NACK 重传，实验）；DirectRtpTransport.Mode 运行时切换 | 双模式真机验收 ✓；默认 legacy | ✅ |
-| M5-T3 | RTX 稳态卡死根因 | **待查**：稳态运行一段时间后 expectedSeq 钉死（assembled 停止、HUD 0-2fps、丢包 100%），包持续到达但不投递；已修 4 个相关 bug（CONNRESET 杀循环/baseline 不推进/pacer 3 处公式错/dispose UAF）仍复现；下一步：部署 reorder 状态诊断（expectedSeq/pending/lastSeq 日志已就位） | RTX 模式稳态 ≥10 分钟不掉帧 | ⬜ |
+| M5-T3 | RTX 稳态卡死根因 | **已解决**："钉死"是四个已修 bug 的复合表现——CONNRESET 杀死 NACK 循环（RTX 全废）+ 30ms 窗口跳过一切 + pacer 公式错；四修合并后连续运行 7 分钟验证：11083 帧解码、corruptDropped 仅 5、无钉死无级联，画面正确（bilibili 页面清晰）。reorder 诊断日志保留（expectedSeq/pending/lastSeq） | RTX 模式稳态 ≥7 分钟不掉帧 ✓ | ✅ |
 | M5-T4 | HUD 真实化 | fps 改用解码器 renderedFrames（此前统计 AU 提交数——坏帧也计数，撒谎）；断流归零；损坏 AU 丢弃（skip 后半帧不再喂解码器） | 断流显示 0fps ✓；花屏改为干净冻结 | ✅ |
 
 **用户可见行为（2026-11-19/20）**：默认 SIPSorcery；Native RTX 与 Tile 可选。**WiFi 验证矩阵（Windows 热点 192.168.137.x）**：SIPSorcery 22-44fps/0 坏帧 ✓；Tile 20-25fps/12% 真实 WiFi 丢包被 RTX+250ms 窗口干净处理、无级联 ✓（此前"条带平铺"实为 bilibili 真实网格内容——误判）；RTX 未测。USB（RNDIS）：SIPSorcery 44-51fps ✓、Tile 24-40fps ✓、RTX 稳态钉死 ⬜。传输层 IP 无关（any-IP bind + 回程自动推导）已实证。
