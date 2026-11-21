@@ -25,10 +25,14 @@ namespace UniLinker.Plugins.ScreenMirror;
 public unsafe class TileEncoder : IEncoder
 {
 
-    /// <summary>Tile grid cell width (multiple of 16 for YUVJ420P MCU).</summary>
-    public const int TileW = 320;
+    /// <summary>Tile grid cell width (multiple of 16 for YUVJ420P MCU).
+    /// 640x400 (was 320x200): the per-tile gate/blit/present overhead —
+    /// not the pixel decode — capped the tablet at ~200 tiles/s (12fps of
+    /// a 16-tile frame); quartering the tile count at the same pixel
+    /// throughput lifts the render floor ~4x (2026-11-21).</summary>
+    public const int TileW = 640;
     /// <summary>Tile grid cell height.</summary>
-    public const int TileH = 200;
+    public const int TileH = 400;
     /// <summary>RTP payload budget minus the 6-byte tile header and the 1-byte
     /// flags trailer: keeps the wire packet ≤ MTU with the 12B RTP header +
     /// 10B SRTP tag. Mirrors DirectRtpSender.MaxPayload (1400) — keep in sync.</summary>

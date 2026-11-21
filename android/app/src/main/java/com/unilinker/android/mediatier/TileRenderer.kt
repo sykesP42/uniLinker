@@ -27,13 +27,14 @@ class TileRenderer(private val surfaceTexture: android.graphics.SurfaceTexture, 
     private var bufferSizedFor = 0 to 0
     private val decodeOptions = BitmapFactory.Options()
 
-    // Decode throughput: 60fps × ~12 tiles/frame = 720 tiles/s; at ~5ms per
+    // Decode throughput: 60fps × ~12 tiles/frame = 720 tiles/s; at ~2-5ms per
     // JPEG decode a single thread tops out at ~200 tiles/s — the measured
     // 60fps wall (2026-11-21). Tiles are independent grid cells, so decode +
-    // blit parallelize freely; only present() must be serial. 3 workers keep
-    // one core for the UI thread on this 4-core MSM8974.
+    // blit parallelize freely; only present() must be serial. 4 workers on
+    // the 4-core MSM8974: the UI thread is mostly idle during video, and the
+    // 1920x1200 tier needs every core (36 tiles/frame).
     private val decodePool = java.util.concurrent.ThreadPoolExecutor(
-        3, 3, 30L, java.util.concurrent.TimeUnit.SECONDS,
+        4, 4, 30L, java.util.concurrent.TimeUnit.SECONDS,
         java.util.concurrent.ArrayBlockingQueue(24),
     ) { r -> Thread(r, "tile-decode").apply { priority = Thread.MAX_PRIORITY } }.apply {
         // Queue full = decode can't keep up: drop the OLDEST queued tile

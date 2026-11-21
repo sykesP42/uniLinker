@@ -500,6 +500,10 @@ fun DirectRtpScreen(
                         (tileRenderer?.presentedFrames ?: 0)
                     else
                         (decoder?.decodedFrames ?: 0)
+                    // A reconnect swaps the pipeline: the new counter starts
+                    // at 0 while lastFrames holds the old total — clamp so
+                    // the fps readout doesn't show 0/negative for seconds.
+                    if (renderedNow < lastFrames) lastFrames = renderedNow
                     if (c == null || c.state.value != com.unilinker.android.mediatier.DirectRtpClient.State.STREAMING) {
                         hudFps = 0.0; hudMbps = 0.0
                         lastFrames = renderedNow
@@ -732,7 +736,9 @@ fun DirectRtpScreen(
                 onDecode = { pref ->
                     decodePref = pref
                     prefs.edit().putString("decode_pref", pref).apply()
-                    // 自动推荐同时套用匹配档位：USB -> 极致(32M/60)，其他 -> 均衡(16M/30)。
+                    // 自动推荐同时套用匹配档位与解码变体（实测矩阵）：
+                    // USB -> Tile 高画质 q92 + 1280x800@60（60fps 且每帧最高画质，
+                    //   9.4MB/s 需求 < 25MB/s 预算）；WiFi -> Tile q82 + 均衡(16M/30)。
                     val medium = client?.medium
                         ?: if (address.value.startsWith("192.168.42.")) "USB" else ""
                     if (pref == "auto" && medium == "USB") {
@@ -746,7 +752,18 @@ fun DirectRtpScreen(
                             .putInt("tier_res", 0).putInt("tier_br", 1).putInt("tier_fps", 0)
                             .apply()
                     }
-                    switchTransport(if (pref == "h264") "sipsorcery" else pref)
+                    // USB auto = Tile q82 + 1280x800@60: the measured sweet
+                    // spot (45-60fps; 1920x1200 is present-bound at 5-25fps —
+                    // the software backbuffer + full-frame hardware canvas
+                    // scale terribly). tile-hq stays a manual quality option.
+                    val resolved = when {
+                        pref == "h264" -> "sipsorcery"
+                        pref == "rtx" -> "rtx"
+                        pref == "auto" && medium == "USB" -> "tile" // q82 阶梯
+                        pref == "auto" -> "tile"                    // q82 阶梯
+                        else -> pref
+                    }
+                    switchTransport(resolved)
                 },
                 hudPollMs = hudPollMs,
                 onCyclePoll = {
