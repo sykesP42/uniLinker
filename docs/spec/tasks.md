@@ -71,6 +71,37 @@
 低延迟答案（已建成）。分期：R1 WiFi 锁 + R2 diff 向量化 + R4 自适应窗口
 （立即）→ R5 Tile 60fps + R3 探针 → R6 DDA / LZ4 / 音频（按需）。
 
+## M7 执行台账（2026-11-20/21）
+
+| # | 任务 | 产出 | 验收 | 状态 |
+|---|------|------|------|------|
+| R1 | WiFi 省电锁 | STREAMING 期间 WIFI_MODE_FULL_HIGH_PERF | 流中 RTT 128ms→~20ms | ✅ |
+| R2 | Tile diff 向量化 | fixed()+ulong 步进 | diffAvg 20ms→0.0-0.5ms | ✅ |
+| R3 | MediaCodec 低延迟探针 | Moonlight MediaCodecHelper 移植（vendor 键探测链） | SM-P605 全键不识别 → **Tile 是唯一低延迟路线** | ✅ 判负（预期内） |
+| R4 | 自适应重序窗口 | USB 30ms / WiFi 250ms | 已落地 | ✅ |
+| R5 | Tile 60fps 档 | 并行解码（3-worker 池）+ `--ei fps/--ei br` 深链 | **WiFi 热点实测 HUD 76fps / 0.0% 丢包 / 画面正确**（screencap 验证）；重内容 ~20-40fps（内容尺寸决定），轻内容 60-76fps | ✅ |
+
+**R5 修出的五个拦路虎（全部真机定位）**：
+1. **PC 进程崩溃（P0）**：WgcCapture.Stop 与 Timer 回调竞态——Timer.Dispose
+   不等待在途回调，会话销毁在 Map/Unmap 之间释放 staging 纹理 → 原生 AV
+   （coreclr c0000005 固定偏移，当日三杀）。修：_deviceGate + _stopping。
+   另 TileEncoder.Dispose 同型 Join(2000) → 无界 Join + RebuildScale 泄漏。
+2. **NACK 风暴**：节流键是 range 终点，新包不断延长 range → 永不限速
+   （~1000/s NACK × 32 seq 重发请求）。修：按洞起点节流 + 5ms 全局下限 +
+   PC 端每 seq 10ms 重发去重。
+3. **Tile pacer 无信用等待**：帧拆包循环只扣不减等待，信用无限变负——
+   线速无视档位预算（8.8M 预算实测 27M）。修：补齐信用等待（同 legacy
+   分支），且等待移出 _sendGate（原锁内 sleep 饿死 NACK 重发）。
+4. **64KB 瞬时突发**：WiFi 热点队列溢出表现为每帧尾丢 1-8 包（系统性，
+   非随机）→ 基线永远追不上头部（20k 滞后）。修：突发上限 16KB——
+   gaps 84→0，NACK 1069→31。
+5. **单线程解码墙**：720 tiles/s × 5ms = 3.6s/s，单线程上限 ~200 tiles/s。
+   修：3-worker 解码池（tile 独立格子可乱序 blit，仅 present 串行）。
+
+**残余认知**：60fps 档的实际帧率 = 线上预算（32M×1.1）÷ 内容帧大小——
+重运动内容 ~20-40fps，轻内容（桌面/终端）60-76fps；更高重内容帧率需要
+自适应码率或更低 JPEG 质量（后续候选）。
+
 ## 依赖顺序
 
 M1 完成 → M2-T1 → M2-T2 → M2-T3 → M2-T4 → M2-T5 → M3。
