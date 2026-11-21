@@ -48,6 +48,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -81,14 +82,25 @@ import kotlinx.coroutines.withContext
  * com.unilinker.android/.DirectRtpActivity --es connect "ip:9527"`.
  */
 class DirectRtpActivity : ComponentActivity() {
+    // Address lives at activity scope so onNewIntent can update it — the
+    // single-instance launch delivers re-`am start` here, not onCreate.
+    private val addressState = mutableStateOf("")
+    private val autoConnectTick = mutableIntStateOf(0)
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
 
+        val prefs = getPreferences(android.content.Context.MODE_PRIVATE)
+        val deepLink = intent?.getStringExtra("connect")
+        addressState.value = deepLink ?: prefs.getString("last_address", "") ?: ""
+        if (!deepLink.isNullOrBlank()) autoConnectTick.intValue = 1
+
         setContent {
             UniLinkerTheme {
                 DirectRtpScreen(
-                    intent?.getStringExtra("connect"),
+                    addressState,
+                    autoConnectTick.intValue,
                     intent.getIntExtra("chaos_loss", 0),
                     intent.getIntExtra("chaos_dup", 0),
                     intent.getIntExtra("chaos_lag", 0),
@@ -96,6 +108,16 @@ class DirectRtpActivity : ComponentActivity() {
                     intent.getIntExtra("br", 0),
                 )
             }
+        }
+    }
+
+    override fun onNewIntent(intent: android.content.Intent) {
+        super.onNewIntent(intent)
+        setIntent(intent)
+        val addr = intent.getStringExtra("connect")
+        if (!addr.isNullOrBlank()) {
+            addressState.value = addr
+            autoConnectTick.intValue++ // re-fire the deep-link auto connect
         }
     }
 
@@ -127,7 +149,8 @@ private val fpsOptions = listOf(30, 60)
 
 @Composable
 fun DirectRtpScreen(
-    initialAddress: String?,
+    address: androidx.compose.runtime.MutableState<String>,
+    autoConnectTick: Int,
     chaosLoss: Int = 0,
     chaosDup: Int = 0,
     chaosLag: Int = 0,
@@ -138,7 +161,6 @@ fun DirectRtpScreen(
     brOverride: Int = 0,
 ) {
     val context = LocalContext.current
-    var address by remember { mutableStateOf(initialAddress ?: "") }
     var client by remember { mutableStateOf<DirectRtpClient?>(null) }
     var decoder by remember { mutableStateOf<H264SurfaceDecoder?>(null) }
     var surfaceReady by remember { mutableStateOf(false) }
@@ -246,7 +268,8 @@ fun DirectRtpScreen(
             panelState = PanelState.Idle
             return
         }
-        val parsed = address.split(":")
+        val addr = address.value.trim()
+        val parsed = addr.split(":")
         if (parsed.size < 2) {
             panelState = PanelState.Error
             statusDetail = "地址格式应为 IP:端口（如 192.168.42.39:9527）"
@@ -256,6 +279,7 @@ fun DirectRtpScreen(
             .putInt("tier_res", resIdx)
             .putInt("tier_br", brIdx)
             .putInt("tier_fps", fpsIdx)
+            .putString("last_address", addr) // remember for input-free relaunch
             .apply()
         val tier = CaptureTier(resOptions[resIdx].first, resOptions[resIdx].second, brOptions[brIdx], fpsOptions[fpsIdx])
         // Deep link "ip:signalingPort[:pairingPort]" — the app talks TLS only
@@ -377,10 +401,10 @@ fun DirectRtpScreen(
         }
     }
 
-    // Deep-link auto-connect (mirrors MainActivity's connectFired behavior):
-    // `am start --es connect "ip:port"` starts streaming without touching the UI.
-    LaunchedEffect(initialAddress) {
-        if (!initialAddress.isNullOrBlank()) toggleConnect()
+    // Deep-link auto-connect: fires on the onCreate deep link and again on
+    // every onNewIntent re-`am start` (the single-instance resume quirk).
+    LaunchedEffect(autoConnectTick) {
+        if (autoConnectTick > 0) toggleConnect()
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
@@ -550,22 +574,59 @@ fun DirectRtpScreen(
         }
 
         if (client == null) {
-            val centerText = if (panelState == PanelState.Error)
-                "连接失败：${friendlyError(statusDetail)}" else "未连接"
-            Text(
-                text = centerText,
+            // Idle card: status + address input + connect — the no-adb path.
+            // The address persists (last_address), so relaunches prefill it.
+            Column(
                 modifier = Modifier
                     .align(Alignment.Center)
-                    .background(Color(0x66000000))
-                    .padding(horizontal = 10.dp, vertical = 4.dp),
-                style = MaterialTheme.typography.bodyMedium,
-                color = if (panelState == PanelState.Error) StatusError else Color.White,
-            )
-            Button(
-                onClick = { toggleConnect() },
-                modifier = Modifier.align(Alignment.Center).padding(top = 60.dp),
+                    .width(360.dp)
+                    .clip(RoundedCornerShape(12.dp))
+                    .background(com.unilinker.android.ui.theme.BackgroundSurface.copy(alpha = 0.92f))
+                    .border(1.dp, com.unilinker.android.ui.theme.BorderStrong, RoundedCornerShape(12.dp))
+                    .padding(20.dp),
+                horizontalAlignment = Alignment.CenterHorizontally,
+                verticalArrangement = Arrangement.spacedBy(12.dp),
             ) {
-                Text(if (panelState == PanelState.Connecting) "连接中…" else "连接投屏")
+                val centerColor = when (panelState) {
+                    PanelState.Error -> StatusError
+                    PanelState.Connecting -> StatusWarning
+                    else -> TextSecondary
+                }
+                Text(
+                    text = if (panelState == PanelState.Error)
+                        "连接失败：${friendlyError(statusDetail)}" else "未连接",
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = centerColor,
+                )
+                androidx.compose.material3.OutlinedTextField(
+                    value = address.value,
+                    onValueChange = { address.value = it },
+                    modifier = Modifier.fillMaxWidth(),
+                    singleLine = true,
+                    label = { Text("分享端地址（IP:端口）") },
+                    placeholder = { Text("192.168.42.39:9527") },
+                    shape = RoundedCornerShape(8.dp),
+                    colors = androidx.compose.material3.OutlinedTextFieldDefaults.colors(
+                        focusedBorderColor = com.unilinker.android.ui.theme.Copper,
+                        cursorColor = com.unilinker.android.ui.theme.Copper,
+                        focusedLabelColor = com.unilinker.android.ui.theme.Copper,
+                    ),
+                )
+                Button(
+                    onClick = { toggleConnect() },
+                    modifier = Modifier.fillMaxWidth().height(44.dp),
+                    enabled = panelState != PanelState.Connecting,
+                    shape = RoundedCornerShape(8.dp),
+                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                        containerColor = com.unilinker.android.ui.theme.Copper,
+                        contentColor = com.unilinker.android.ui.theme.OnCopper,
+                    ),
+                ) {
+                    Text(
+                        if (panelState == PanelState.Connecting) "连接中…" else "连接投屏",
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                }
             }
         }
 
