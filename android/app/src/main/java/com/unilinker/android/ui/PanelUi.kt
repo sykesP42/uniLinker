@@ -238,6 +238,9 @@ fun FloatingPanel(
     hudResOn: Boolean,
     hudChartOn: Boolean = true,
     hudMediumOn: Boolean = false,
+    latencyOverlayOn: Boolean = false,
+    onLatencyOverlay: (Boolean) -> Unit = {},
+    onClose: () -> Unit = {},
     diagProvider: (() -> DiagStats?)? = null,
     hwProvider: (() -> List<Pair<String, String>>)? = null,
     onRefresh: (() -> Unit)? = null,
@@ -274,7 +277,15 @@ fun FloatingPanel(
         else -> "未连接" to TextSecondary
     }
 
-    Box(modifier = Modifier.fillMaxSize().zIndex(2f)) {
+    Box(
+        modifier = Modifier
+            .fillMaxSize()
+            .zIndex(2f)
+            .pointerInput(Unit) {
+                // Tap OUTSIDE the panel closes it (standard popup behavior).
+                detectTapGestures { onClose() }
+            }
+    ) {
         Column(
             modifier = Modifier
                 .align(Alignment.TopEnd)
@@ -284,6 +295,7 @@ fun FloatingPanel(
                 .background(PanelBg)
                 .border(1.dp, PanelBorder, RoundedCornerShape(12.dp))
                 .verticalScroll(scrollState)
+                .clickable { }
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -460,6 +472,7 @@ fun FloatingPanel(
             if (diagProvider != null) {
                 DiagnosticsSection(diagProvider)
             }
+            HudToggleRow("延迟时钟（测量）", latencyOverlayOn, onLatencyOverlay)
             if (hwProvider != null) {
                 HardwareSection(hwProvider)
             }

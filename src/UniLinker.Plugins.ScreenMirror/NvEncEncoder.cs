@@ -112,7 +112,10 @@ public unsafe class NvEncEncoder : IEncoder
         // resolution and restores most of it. High profile + CABAC save
         // ~10-15% bitrate at equal quality; spatial AQ spends bits where
         // the eye looks.
-        av_opt_set(_codecCtx->priv_data, "preset", "p4", 0);
+        // p7 = the "slowest/best compression" rung (the realtime analog of
+        // the offline x264 preset-8 school): RTX headroom makes the extra
+        // GPU time free, buying quality per bitrate at zero latency cost.
+        av_opt_set(_codecCtx->priv_data, "preset", "p7", 0);
         av_opt_set(_codecCtx->priv_data, "tune", "ull", 0);
         av_opt_set(_codecCtx->priv_data, "profile", "high", 0);
         av_opt_set(_codecCtx->priv_data, "coder", "cabac", 0);

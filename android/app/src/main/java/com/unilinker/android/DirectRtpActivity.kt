@@ -219,6 +219,7 @@ fun DirectRtpScreen(
     // sender clock - their difference minus the calibrated offset = latency.
     var clockOffsetMs by remember { mutableLongStateOf(0L) }
     var clockNow by remember { mutableLongStateOf(0L) }
+    var latencyOverlayOn by remember { mutableStateOf(prefs.getBoolean("latency_overlay", false)) }
     var chaosDupState by remember { mutableIntStateOf(chaosDup) }
     var chaosLagState by remember { mutableIntStateOf(chaosLag) }
     var tileRenderer by remember { mutableStateOf<com.unilinker.android.mediatier.TileRenderer?>(null) }
@@ -423,6 +424,14 @@ fun DirectRtpScreen(
                     }
                 }
             }
+        }
+    }
+
+    // Latency-overlay ticker: runs only while the overlay switch is on.
+    LaunchedEffect(latencyOverlayOn, client != null) {
+        while (latencyOverlayOn && client != null) {
+            clockNow = System.currentTimeMillis()
+            delay(100)
         }
     }
 
@@ -705,13 +714,7 @@ fun DirectRtpScreen(
         // epoch clock, updated at 10Hz - screenshot it together with the
         // mirrored sender clock; difference minus the calibrated offset =
         // the true end-to-end latency.
-        if (client != null) {
-            LaunchedEffect(Unit) {
-                while (true) {
-                    clockNow = System.currentTimeMillis()
-                    delay(100)
-                }
-            }
+        if (client != null && latencyOverlayOn) {
             Text(
                 "T=${clockNow + clockOffsetMs}",
                 modifier = Modifier
@@ -812,6 +815,9 @@ fun DirectRtpScreen(
                     hudPollMs = when (hudPollMs) { 250 -> 500; 500 -> 1000; else -> 250 }
                     prefs.edit().putInt("hud_poll_ms", hudPollMs).apply()
                 },
+                latencyOverlayOn = latencyOverlayOn,
+                onLatencyOverlay = { latencyOverlayOn = it; prefs.edit().putBoolean("latency_overlay", it).apply() },
+                onClose = { ballExpanded = false },
                 diagProvider = {
                     val c = client
                     val st = c?.receiverStats
