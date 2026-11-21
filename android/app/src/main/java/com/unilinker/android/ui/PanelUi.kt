@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -114,9 +115,16 @@ data class DiagStats(
 
 /** Draggable floating ball; auto-dims after 3 s without touch. Tap = toggle. */
 @Composable
-fun FloatingBall(expanded: Boolean, streaming: Boolean, onToggle: () -> Unit) {
-    var offsetX by remember { mutableStateOf(0f) }
-    var offsetY by remember { mutableStateOf(0f) }
+fun FloatingBall(
+    expanded: Boolean,
+    streaming: Boolean,
+    initialOffsetX: Int,
+    initialOffsetY: Int,
+    onPosition: (Int, Int) -> Unit,
+    onToggle: () -> Unit,
+) {
+    var offsetX by remember { mutableStateOf(initialOffsetX.toFloat()) }
+    var offsetY by remember { mutableStateOf(initialOffsetY.toFloat()) }
     var lastTouch by remember { mutableLongStateOf(0L) }
     var dimmed by remember { mutableStateOf(false) }
 
@@ -144,7 +152,10 @@ fun FloatingBall(expanded: Boolean, streaming: Boolean, onToggle: () -> Unit) {
                 // detectDragGestures with a tiny-drag tap heuristic never fired
                 // its toggle — taps must use detectTapGestures.)
                 .pointerInput(Unit) {
-                    detectTapGestures(onTap = { onToggle() })
+                    detectTapGestures(onTap = {
+                        lastTouch = System.currentTimeMillis() // tap resets dim too
+                        onToggle()
+                    })
                 }
                 .pointerInput(Unit) {
                     detectDragGestures(
@@ -153,6 +164,7 @@ fun FloatingBall(expanded: Boolean, streaming: Boolean, onToggle: () -> Unit) {
                             offsetX += drag.x
                             offsetY += drag.y
                             lastTouch = System.currentTimeMillis()
+                            onPosition(offsetX.toInt(), offsetY.toInt())
                         },
                     )
                 },

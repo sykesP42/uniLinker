@@ -217,6 +217,15 @@ fun DirectRtpScreen(
     var textureViewRef by remember { mutableStateOf<android.view.TextureView?>(null) }
     var hudOffsetX by remember { mutableIntStateOf(prefs.getInt("hud_x", 0)) }
     var hudOffsetY by remember { mutableIntStateOf(prefs.getInt("hud_y", 0)) }
+    // Pending pairing ask: (sasCode, fingerprint) or null; the deferred is
+    // completed by the Compose dialog's buttons.
+    var pairingAsk by remember { mutableStateOf<Pair<String, String>?>(null) }
+    var pairingDeferred by remember { mutableStateOf<kotlinx.coroutines.CompletableDeferred<Boolean>?>(null) }
+    var ballOffsetX by remember { mutableIntStateOf(prefs.getInt("ball_x", 0)) }
+    var ballOffsetY by remember { mutableIntStateOf(prefs.getInt("ball_y", 0)) }
+    fun persistBall() {
+        prefs.edit().putInt("ball_x", ballOffsetX).putInt("ball_y", ballOffsetY).apply()
+    }
     // Transient status note (transport switch, chaos tweaks): amber for 3s.
     LaunchedEffect(transientMsg) {
         if (transientMsg != null) {
@@ -322,26 +331,10 @@ fun DirectRtpScreen(
                     return@launch
                 }
                 val (sasCode, fingerprint) = probe
-                val confirmed = withContext(kotlinx.coroutines.Dispatchers.Main) {
-                    kotlinx.coroutines.suspendCancellableCoroutine { cont ->
-                        val dlg = android.app.AlertDialog.Builder(context as android.app.Activity)
-                            .setTitle("配对确认")
-                            .setMessage(
-                                "请在分享端核对配对码是否为:\n\n    $sasCode\n\n设备指纹:\n$fingerprint\n\n两端一致后点击确认建立信任。"
-                            )
-                            .setPositiveButton("确认一致") { _, _ -> cont.resume(true, null) }
-                            .setNegativeButton("不一致") { _, _ -> cont.resume(false, null) }
-                            .setOnCancelListener { cont.resume(false, null) }
-                            .show()
-                        cont.invokeOnCancellation { dlg.dismiss() }
-                    }
-                }
-                if (!confirmed) {
-                    panelState = PanelState.Error
-                    statusDetail = "配对被拒绝——请在分享端确认后重试"
-                    client = null
-                    return@launch
-                }
+                pairingDeferred = kotlinx.coroutines.CompletableDeferred<Boolean>()
+                pairingAsk = Pair(sasCode, fingerprint)
+                val confirmed = pairingDeferred!!.await()
+                pairingAsk = null
                 newClient.pinFingerprint(fingerprint)
                 prefs.edit().putString("pinned_fp", fingerprint).apply()
             }
@@ -552,7 +545,9 @@ fun DirectRtpScreen(
         }
 
         // HUD dashboard — default TOP-END, draggable, per-metric switches.
-        HudDashboard(
+        // Hidden while the panel is open: both anchor TopEnd and the panel
+        // (zIndex 2) fully covered it anyway.
+        if (!ballExpanded) HudDashboard(
             rows = hudRows(),
             samples = samples,
             chartOn = hudChartOn,
@@ -621,10 +616,40 @@ fun DirectRtpScreen(
             }
         }
 
+        // Pairing confirmation (Compose, not the platform AlertDialog —
+        // visual consistency with the copper screen).
+        pairingAsk?.let { (sasCode, fingerprint) ->
+            androidx.compose.material3.AlertDialog(
+                onDismissRequest = { pairingDeferred?.complete(false) },
+                title = { Text("配对确认") },
+                text = {
+                    Text(
+                        "请在分享端核对配对码：\n\n$sasCode\n\n设备指纹：\n\n$fingerprint\n\n两端一致后确认建立信任。",
+                        color = TextSecondary,
+                    )
+                },
+                confirmButton = {
+                    Button(onClick = { pairingDeferred?.complete(true) }) {
+                        Text("确认一致")
+                    }
+                },
+                dismissButton = {
+                    Button(
+                        onClick = { pairingDeferred?.complete(false) },
+                        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
+                            containerColor = com.unilinker.android.ui.ChipBg, contentColor = TextSecondary),
+                    ) { Text("不一致") }
+                },
+            )
+        }
+
         // Floating ball: drag anywhere, auto-dims after 3 s, tap toggles panel.
         FloatingBall(
             expanded = ballExpanded,
             streaming = client != null,
+            initialOffsetX = ballOffsetX,
+            initialOffsetY = ballOffsetY,
+            onPosition = { x, y -> ballOffsetX = x; ballOffsetY = y; persistBall() },
             onToggle = { ballExpanded = !ballExpanded },
         )
 
