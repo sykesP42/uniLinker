@@ -325,7 +325,19 @@ public unsafe class TileEncoder : IEncoder
         _yuvFrame->height = h;
         _yuvFrame->format = (int)AVPixelFormat.AV_PIX_FMT_YUVJ420P;
         av_frame_get_buffer(_yuvFrame, 0);
-        _encoders.Clear();  // tile sizes are frame-resolution-dependent
+        // Tile sizes are frame-resolution-dependent: free the old contexts
+        // before clearing (Clear alone leaked every AVCodecContext/AVFrame).
+        foreach (var kv in _encoders)
+        {
+            var ctx = (AVCodecContext*)kv.Value;
+            avcodec_free_context(&ctx);
+        }
+        _encoders.Clear();
+        foreach (var kv in _tileFrames)
+        {
+            var f = (AVFrame*)kv.Value;
+            av_frame_free(&f);
+        }
         _tileFrames.Clear();
     }
 
@@ -447,7 +459,11 @@ public unsafe class TileEncoder : IEncoder
     {
         _running = false;
         _workSignal.Release();
-        _worker?.Join(2000);
+        // Unbounded join: freeing the FFmpeg contexts while the worker is
+        // mid-encode is a use-after-free (coreclr 0xc0000005 — same crash
+        // class NvEncEncoder hit on viewer disconnect; the reconnect path
+        // tears the session down mid-frame).
+        _worker?.Join();
         _worker = null;
         lock (_encoders)
         {
