@@ -113,6 +113,10 @@ data class DiagStats(
     val tileDropped: Int,
     val tileOrphans: Int,
     val authFailures: Int,
+    val cpuPct: Int = 0,
+    val gpuPct: Int = 0,
+    val memAvailMb: Double = 0.0,
+    val decodeMs: Double? = null,
 )
 
 /** Draggable floating ball; auto-dims after 3 s without touch. Tap = toggle. */
@@ -232,6 +236,7 @@ fun FloatingPanel(
     hudChartOn: Boolean = true,
     hudMediumOn: Boolean = false,
     diagProvider: (() -> DiagStats?)? = null,
+    hwProvider: (() -> List<Pair<String, String>>)? = null,
     onRefresh: (() -> Unit)? = null,
     samples: RollingSamples? = null,
     chaosLoss: Int = 0,
@@ -408,6 +413,9 @@ fun FloatingPanel(
             if (diagProvider != null) {
                 DiagnosticsSection(diagProvider)
             }
+            if (hwProvider != null) {
+                HardwareSection(hwProvider)
+            }
 
             ChaosSection(chaosLoss, chaosDup, chaosLagMs, onChaos)
         }
@@ -477,6 +485,12 @@ private fun DiagnosticsSection(provider: () -> DiagStats?) {
             if (d.tileOrphans > 0) StatusWarning else TextPrimary)
         DiagRow("认证失败", "${d.authFailures}",
             if (d.authFailures > 0) StatusWarning else TextPrimary)
+        DiagRow("CPU 占用", "${d.cpuPct}%",
+            if (d.cpuPct > 80) StatusWarning else TextPrimary)
+        DiagRow("GPU 占用", "${d.gpuPct}%",
+            if (d.gpuPct > 80) StatusWarning else TextPrimary)
+        DiagRow("内存可用", String.format("%.1f GB", d.memAvailMb), TextPrimary)
+        DiagRow("解码耗时", d.decodeMs?.let { String.format("%.1f ms/帧", it) } ?: "硬件管线", TextSecondary)
     }
 }
 
@@ -538,6 +552,45 @@ internal fun TransportChip(label: String, selected: Boolean, modifier: Modifier,
             contentColor = if (selected) TextPrimary else TextSecondary),
     ) {
         Text(label, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+    }
+}
+
+/** Collapsible hardware-info section: static SoC/GPU/decoder rows from
+ *  DeviceProbe.staticInfo() (gathered once, cached by the probe). */
+@Composable
+private fun HardwareSection(provider: () -> List<Pair<String, String>>) {
+    var expanded by remember { mutableStateOf(false) }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .background(ChipBg)
+            .clickable { expanded = !expanded }
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("硬件信息", style = MaterialTheme.typography.bodySmall, color = TextPrimary)
+        Text(
+            if (expanded) "收起 ▲" else "展开 ▼",
+            style = MaterialTheme.typography.labelSmall,
+            color = Copper,
+        )
+    }
+
+    if (!expanded) return
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .background(ChipBg)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        provider().forEach { (label, value) ->
+            DiagRow(label, value, TextPrimary)
+        }
     }
 }
 

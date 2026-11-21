@@ -528,6 +528,8 @@ fun DirectRtpScreen(
                     hudJitter = c.receiverJitter
                     val lw = c.receiverLossWindow ?: Pair(0, 0)
                     liveLossPct = if (lw.second > 0) lw.first * 100.0 / lw.second else 0.0
+                    com.unilinker.android.mediatier.DeviceProbe.decodeMsHint =
+                        if (c.transportIsTile) tileRenderer?.lastDecodeMs else null
                     val (lostN, totalN) = c.receiverLossWindow ?: Pair(0, 0)
                     samples.push(
                         hudFps.toFloat(),
@@ -712,16 +714,24 @@ fun DirectRtpScreen(
                     val c = client
                     val st = c?.receiverStats
                     if (c == null || st == null) null
-                    else com.unilinker.android.ui.DiagStats(
-                        medium = c.medium,
-                        received = st.first,
-                        lost = st.second,
-                        tileAssembled = c.tileAssembled,
-                        tileDropped = c.tileDropped,
-                        tileOrphans = c.tileOrphans,
-                        authFailures = c.receiverAuthFailures,
-                    )
+                    else {
+                        val u = com.unilinker.android.mediatier.DeviceProbe.usageSample()
+                        com.unilinker.android.ui.DiagStats(
+                            medium = c.medium,
+                            received = st.first,
+                            lost = st.second,
+                            tileAssembled = c.tileAssembled,
+                            tileDropped = c.tileDropped,
+                            tileOrphans = c.tileOrphans,
+                            authFailures = c.receiverAuthFailures,
+                            cpuPct = u.cpuPct,
+                            gpuPct = u.gpuPct,
+                            memAvailMb = u.memAvailMb,
+                            decodeMs = u.decodeMs,
+                        )
+                    }
                 },
+                hwProvider = { com.unilinker.android.mediatier.DeviceProbe.staticInfo() },
                 onRefresh = {
                     scope.launch { client?.requestKeyFrame() }
                 },
