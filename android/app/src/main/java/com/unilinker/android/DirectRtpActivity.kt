@@ -377,7 +377,13 @@ fun DirectRtpScreen(
                 tileRenderer?.close()
                 tileRenderer = null
             }
-            frameJob = scope.launch {
+            // OFF the Main thread: at 60fps x 16 tiles the SharedFlow resumes
+            // this collector ~960x/s - on Main that starved the UI traversal,
+            // and TextureView composites its new buffers DURING the UI draw
+            // pass: the picture froze at the last composited frame (the user
+            // saw 1-2 fps) while the swap counters spun on the workers.
+            // Default dispatcher keeps the tile path entirely off Main.
+            frameJob = scope.launch(kotlinx.coroutines.Dispatchers.Default) {
                 if (newClient.transportIsTile) {
                     newClient.tileFrames.collect { tf ->
                         if (surfaceReady) {
