@@ -55,6 +55,13 @@ import androidx.compose.ui.zIndex
 import com.unilinker.android.mediatier.CaptureTier
 import com.unilinker.android.mediatier.DirectRtpClient
 import com.unilinker.android.mediatier.H264SurfaceDecoder
+import com.unilinker.android.ui.FloatingBall
+import com.unilinker.android.ui.FloatingPanel
+import com.unilinker.android.ui.theme.StatusError
+import com.unilinker.android.ui.theme.StatusSuccess
+import com.unilinker.android.ui.theme.StatusWarning
+import com.unilinker.android.ui.theme.TextSecondary
+import com.unilinker.android.ui.theme.TextTertiary
 import com.unilinker.android.ui.theme.UniLinkerTheme
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -196,35 +203,34 @@ fun DirectRtpScreen(
             .apply()
     }
     // HUD metric rows: (label, value, color). Value colors encode health:
-    // green = good, amber = degraded, red = bad. Fixed-width numeric fields
-    // plus tabular numbers keep the panel from wobbling on every refresh.
+    // success = good, warning = degraded, error = bad. Fixed-width numeric
+    // fields plus tabular numbers keep the panel from wobbling on refresh.
     fun hudRows(): List<Triple<String, String, Color>> {
-        val st = client?.receiverStats
         val rows = mutableListOf<Triple<String, String, Color>>()
         if (hudFpsOn) {
             val v = hudFps
-            val c = when { v >= 25 -> Color(0xFF4CAF50); v >= 15 -> Color(0xFFFFC107); else -> Color(0xFFF44336) }
+            val c = when { v >= 25 -> StatusSuccess; v >= 15 -> StatusWarning; else -> StatusError }
             rows.add(Triple("帧率", "%2.0f fps".format(v), c))
         }
         if (hudMbpsOn) {
             val v = hudMbps
-            val c = when { v >= 6 -> Color(0xFF4CAF50); v >= 3 -> Color(0xFFFFC107); else -> Color(0xFFF44336) }
+            val c = when { v >= 6 -> StatusSuccess; v >= 3 -> StatusWarning; else -> StatusError }
             rows.add(Triple("码率", "%4.1f Mbps".format(v), c))
         }
         if (hudJitterOn) {
             val v = hudJitter
-            val c = when { v < 30 -> Color(0xFF4CAF50); v < 60 -> Color(0xFFFFC107); else -> Color(0xFFF44336) }
+            val c = when { v < 30 -> StatusSuccess; v < 60 -> StatusWarning; else -> StatusError }
             rows.add(Triple("抖动", "%3.0f ms".format(v), c))
         }
         if (hudLossOn) {
             val (lost, total) = client?.receiverLossWindow ?: Pair(0, 0)
             val pct = if (total > 0) lost * 100.0 / total else 0.0
-            val c = when { pct < 1 -> Color(0xFF4CAF50); pct < 5 -> Color(0xFFFFC107); else -> Color(0xFFF44336) }
+            val c = when { pct < 1 -> StatusSuccess; pct < 5 -> StatusWarning; else -> StatusError }
             rows.add(Triple("丢包", "%4.1f%%".format(pct), c))
         }
         if (hudResOn) {
             val r = decoder?.streamSize?.value
-            rows.add(Triple("分辨率", r?.let { "${it.first}×${it.second}" } ?: "—", Color(0xFFBDBDBD)))
+            rows.add(Triple("分辨率", r?.let { "${it.first}×${it.second}" } ?: "—", TextSecondary))
         }
         return rows
     }
@@ -504,7 +510,7 @@ fun DirectRtpScreen(
                 .padding(10.dp)
                 .offset { IntOffset(hudOffsetX, hudOffsetY) }
                 .width(190.dp)
-                .background(Color(0xAA101418), RoundedCornerShape(8.dp))
+                .background(com.unilinker.android.ui.theme.BackgroundDeep.copy(alpha = 0.67f), RoundedCornerShape(8.dp))
                 .padding(horizontal = 8.dp, vertical = 5.dp)
                 .pointerInput(Unit) {
                     detectDragGestures(
@@ -524,7 +530,7 @@ fun DirectRtpScreen(
                         label,
                         modifier = Modifier.weight(1f),
                         style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
-                        color = Color(0xFF9E9E9E),
+                        color = TextTertiary,
                     )
                     Text(
                         value,
@@ -566,6 +572,9 @@ fun DirectRtpScreen(
                 resIdx = resIdx,
                 brIdx = brIdx,
                 fpsIdx = fpsIdx,
+                resLabel = "${resOptions[resIdx].first}×${resOptions[resIdx].second}",
+                brLabel = "${brOptions[brIdx] / 1000} Mbps",
+                fpsLabel = "${fpsOptions[fpsIdx]} fps",
                 streaming = client != null,
                 transportMode = transportMode,
                 hudFpsOn = hudFpsOn,
@@ -624,326 +633,5 @@ fun DirectRtpScreen(
                 },
             )
         }
-    }
-}
-
-private fun hideBallKeyboard(context: android.content.Context) {
-    val imm = context.getSystemService(android.content.Context.INPUT_METHOD_SERVICE)
-        as? android.view.inputmethod.InputMethodManager
-    (context as? android.app.Activity)?.currentFocus?.let {
-        imm?.hideSoftInputFromWindow(it.windowToken, 0)
-    }
-}
-
-/** Draggable floating ball; auto-dims after 3 s without touch. Tap = toggle. */
-@Composable
-private fun FloatingBall(expanded: Boolean, streaming: Boolean, onToggle: () -> Unit) {
-    var offsetX by remember { mutableStateOf(0f) }
-    var offsetY by remember { mutableStateOf(0f) }
-    var lastTouch by remember { mutableLongStateOf(0L) }
-    var dimmed by remember { mutableStateOf(false) }
-
-    LaunchedEffect(Unit) {
-        while (true) {
-            delay(500)
-            dimmed = !expanded && System.currentTimeMillis() - lastTouch > 3000
-        }
-    }
-
-    Box(modifier = Modifier.fillMaxSize().zIndex(3f)) {
-        Box(
-            modifier = Modifier
-                .align(Alignment.BottomEnd)
-                .padding(16.dp)
-                .offset { IntOffset(offsetX.toInt(), offsetY.toInt()) }
-                .size(52.dp)
-                .clip(CircleShape)
-            .background(if (dimmed) Color(0x33C0C0C0) else Color(0x99C0C0C0))
-            // Tap and drag as SEPARATE pointer inputs: a tap toggles the
-            // panel, a drag moves the ball. (An earlier single
-            // detectDragGestures with a tiny-drag tap heuristic never fired
-            // its toggle — taps must use detectTapGestures.)
-            .pointerInput(Unit) {
-                detectTapGestures(onTap = { onToggle() })
-            }
-            .pointerInput(Unit) {
-                detectDragGestures(
-                    onDrag = { change, drag ->
-                        change.consume()
-                        offsetX += drag.x
-                        offsetY += drag.y
-                        lastTouch = System.currentTimeMillis()
-                    },
-                )
-            },
-            contentAlignment = Alignment.Center,
-        ) {
-            Text(
-                text = if (expanded) "✕" else "◎",
-                color = if (dimmed) Color(0x66FFFFFF) else Color.White,
-                style = MaterialTheme.typography.titleMedium,
-            )
-        }
-    }
-}
-
-/** Translucent settings + parameters panel shown when the ball is expanded.
- *
- *  Redesign (M5): sectioned layout, high-contrast chips (selected = accent
- *  border + tinted fill), quality presets, remote transport switching over
- *  the TLS pairing channel, and honest status line. Everything scrollable —
- *  the panel outgrew a single screen.
- */
-@Composable
-private fun FloatingPanel(
-    statusText: String,
-    resIdx: Int,
-    brIdx: Int,
-    fpsIdx: Int,
-    streaming: Boolean,
-    transportMode: String,
-    hudFpsOn: Boolean,
-    hudMbpsOn: Boolean,
-    hudJitterOn: Boolean,
-    hudLossOn: Boolean,
-    hudResOn: Boolean,
-    onHudFps: (Boolean) -> Unit,
-    onHudMbps: (Boolean) -> Unit,
-    onHudJitter: (Boolean) -> Unit,
-    onHudLoss: (Boolean) -> Unit,
-    onHudRes: (Boolean) -> Unit,
-    onCycleRes: () -> Unit,
-    onCycleBr: () -> Unit,
-    onCycleFps: () -> Unit,
-    onPreset: (Int, Int, Int) -> Unit,
-    onReconnect: () -> Unit,
-    onDisconnect: () -> Unit,
-    onTransport: (String) -> Unit,
-) {
-    // Palette: dark card, blue accent, high-contrast text.
-    val panelBg = Color(0xF5141618)
-    val sectionTitle = Color(0xFF7FC4FF)
-    val textPrimary = Color.White
-    val textSecondary = Color(0xFFB8BEC5)
-    val chipBg = Color(0xFF1E2228)
-    val chipText = Color(0xFFD5DAE0)
-    val chipSelectedBg = Color(0xFF173A5E)
-    val accentBorder = Color(0xFF64B5F6)
-    val statusGreen = Color(0xFF7BE3A0)
-    val statusAmber = Color(0xFFFFC66B)
-    val statusRed = Color(0xFFFF8A80)
-    val dangerBg = Color(0xFF3A1B1B)
-    val dangerText = Color(0xFFFF8A80)
-    val okBg = Color(0xFF1B3A2A)
-    val okText = Color(0xFF7BE3A0)
-
-    val statusColor = when {
-        statusText.startsWith("Streaming") || statusText.contains("传输") -> statusGreen
-        statusText.startsWith("Error") || statusText.contains("失败") -> statusRed
-        statusText.startsWith("Connecting") -> statusAmber
-        else -> textSecondary
-    }
-
-    Box(modifier = Modifier.fillMaxSize().zIndex(2f)) {
-        Column(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(12.dp)
-                .fillMaxWidth(0.58f)
-                .clip(RoundedCornerShape(14.dp))
-                .background(panelBg)
-                .border(1.dp, Color(0xFF2A2F36), RoundedCornerShape(14.dp))
-                .verticalScroll(rememberScrollState())
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp),
-        ) {
-            // Header
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Text(
-                    "uniLinker",
-                    style = MaterialTheme.typography.titleMedium,
-                    color = textPrimary,
-                    fontWeight = androidx.compose.ui.text.font.FontWeight.Bold,
-                )
-                Spacer(Modifier.width(8.dp))
-                Text("Direct", style = MaterialTheme.typography.labelMedium, color = sectionTitle)
-            }
-            Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-                Box(Modifier.size(8.dp).clip(CircleShape).background(statusColor))
-                Spacer(Modifier.width(6.dp))
-                Text(statusText, style = MaterialTheme.typography.bodySmall, color = statusColor)
-            }
-
-            // Quality presets
-            SectionLabel("画质预设", sectionTitle)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                PresetChip("流畅", resIdx == 0 && brIdx == 0 && fpsIdx == 0, chipBg, chipText,
-                    chipSelectedBg, accentBorder, Modifier.weight(1f)) { onPreset(0, 0, 0) }
-                PresetChip("均衡", resIdx == 0 && brIdx == 1 && fpsIdx == 0, chipBg, chipText,
-                    chipSelectedBg, accentBorder, Modifier.weight(1f)) { onPreset(0, 1, 0) }
-                PresetChip("高清", resIdx == 1 && brIdx == 2 && fpsIdx == 0, chipBg, chipText,
-                    chipSelectedBg, accentBorder, Modifier.weight(1f)) { onPreset(1, 2, 0) }
-            }
-
-            // Advanced tiers
-            SectionLabel("高级档位", sectionTitle)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                TierChip("${resOptions[resIdx].first}x${resOptions[resIdx].second}", chipBg, chipText,
-                    Modifier.weight(1f), onCycleRes)
-                TierChip("${brOptions[brIdx] / 1000}M", chipBg, chipText,
-                    Modifier.weight(1f), onCycleBr)
-                TierChip("${fpsOptions[fpsIdx]}fps", chipBg, chipText,
-                    Modifier.weight(1f), onCycleFps)
-            }
-
-            // Transport (remote switch, auto-reconnect applies it)
-            SectionLabel("传输方式", sectionTitle)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                TransportChip(
-                    "SIPSorcery", transportMode == "sipsorcery",
-                    chipSelectedBg, accentBorder, chipBg, chipText, Modifier.weight(1f),
-                ) { onTransport("sipsorcery") }
-                TransportChip(
-                    "Native RTX", transportMode == "rtx",
-                    chipSelectedBg, accentBorder, chipBg, chipText, Modifier.weight(1f),
-                ) { onTransport("rtx") }
-            }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                TransportChip(
-                    "Tile（USB 直连）", transportMode == "tile",
-                    chipSelectedBg, accentBorder, chipBg, chipText, Modifier.fillMaxWidth(),
-                ) { onTransport("tile") }
-            }
-            Text(
-                "切换后自动重连生效 · SIPSorcery 稳定 / RTX 抗丢包 / Tile 低延迟高画质",
-                style = MaterialTheme.typography.labelSmall, color = textSecondary,
-            )
-
-            // HUD visibility
-            SectionLabel("HUD 显示项", sectionTitle)
-            HudToggleRow("帧率", hudFpsOn, onHudFps, textPrimary)
-            HudToggleRow("码率", hudMbpsOn, onHudMbps, textPrimary)
-            HudToggleRow("抖动", hudJitterOn, onHudJitter, textPrimary)
-            HudToggleRow("丢包", hudLossOn, onHudLoss, textPrimary)
-            HudToggleRow("分辨率", hudResOn, onHudRes, textPrimary)
-
-            // Connection
-            SectionLabel("连接", sectionTitle)
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                Button(
-                    onClick = onReconnect,
-                    modifier = Modifier.weight(1f).height(40.dp),
-                    shape = RoundedCornerShape(10.dp),
-                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                        containerColor = okBg, contentColor = okText),
-                ) { Text("重连", fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold) }
-                Button(
-                    onClick = onDisconnect,
-                    modifier = Modifier.weight(1f).height(40.dp),
-                    enabled = streaming,
-                    shape = RoundedCornerShape(10.dp),
-                    colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-                        containerColor = dangerBg, contentColor = dangerText,
-                        disabledContainerColor = Color(0xFF1A1D21),
-                        disabledContentColor = Color(0xFF5A6068)),
-                ) { Text("断开", fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold) }
-            }
-        }
-    }
-}
-
-/** Section header: small accent-blue label with a leading tick. */
-@Composable
-private fun SectionLabel(text: String, color: Color) {
-    Row(verticalAlignment = androidx.compose.ui.Alignment.CenterVertically) {
-        Box(Modifier.size(3.dp, 12.dp).background(color))
-        Spacer(Modifier.width(6.dp))
-        Text(text, style = MaterialTheme.typography.labelMedium, color = color,
-            fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold)
-    }
-}
-
-/** Quality-preset chip: filled when selected, outlined when not. */
-@Composable
-private fun PresetChip(
-    label: String,
-    selected: Boolean,
-    bg: Color,
-    fg: Color,
-    selectedBg: Color,
-    accentBorder: Color,
-    modifier: Modifier,
-    onClick: () -> Unit,
-) {
-    Button(
-        onClick = onClick,
-        modifier = modifier.height(36.dp),
-        shape = RoundedCornerShape(10.dp),
-        border = if (selected) androidx.compose.foundation.BorderStroke(1.5.dp, accentBorder) else null,
-        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-            containerColor = if (selected) selectedBg else bg,
-            contentColor = if (selected) Color.White else fg),
-    ) {
-        Text(label, fontWeight = if (selected) androidx.compose.ui.text.font.FontWeight.Bold
-        else androidx.compose.ui.text.font.FontWeight.Normal)
-    }
-}
-
-/** Advanced tier cycle chip. */
-@Composable
-private fun TierChip(label: String, bg: Color, fg: Color, modifier: Modifier, onClick: () -> Unit) {
-    Button(
-        onClick = onClick,
-        modifier = modifier.height(36.dp),
-        shape = RoundedCornerShape(10.dp),
-        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-            containerColor = bg, contentColor = fg),
-    ) { Text(label) }
-}
-
-/** Transport chip: strong selected state (accent border + tint). */
-@Composable
-private fun TransportChip(
-    label: String,
-    selected: Boolean,
-    selectedBg: Color,
-    accentBorder: Color,
-    bg: Color,
-    fg: Color,
-    modifier: Modifier,
-    onClick: () -> Unit,
-) {
-    Button(
-        onClick = onClick,
-        modifier = modifier.height(38.dp),
-        shape = RoundedCornerShape(10.dp),
-        border = if (selected) androidx.compose.foundation.BorderStroke(1.5.dp, accentBorder) else null,
-        colors = androidx.compose.material3.ButtonDefaults.buttonColors(
-            containerColor = if (selected) selectedBg else bg,
-            contentColor = if (selected) Color.White else fg),
-    ) {
-        Text(label, fontWeight = if (selected) androidx.compose.ui.text.font.FontWeight.Bold
-        else androidx.compose.ui.text.font.FontWeight.Normal)
-    }
-}
-
-/** One HUD-metric visibility row: label + Switch, dark-styled. */
-@Composable
-private fun HudToggleRow(label: String, state: Boolean, onToggle: (Boolean) -> Unit, textColor: Color) {
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(Color(0xFF1A1D22))
-            .padding(horizontal = 10.dp, vertical = 4.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = androidx.compose.ui.Alignment.CenterVertically,
-    ) {
-        Text(label, style = MaterialTheme.typography.bodySmall, color = textColor)
-        androidx.compose.material3.Switch(
-            checked = state,
-            onCheckedChange = { onToggle(it) },
-            modifier = Modifier.size(34.dp, 20.dp),
-        )
     }
 }
