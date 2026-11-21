@@ -78,11 +78,12 @@ internal sealed class DirectRtpSender : IDisposable
     public int TileBacklog => _tileQueue.Count;
     /// <summary>Instant-burst allowance: the first ~42 packets of a frame go
     /// out at once, the rest of a large IDR trickles at 1.5× tier.</summary>
-    // 16KB (11 packets): the instant burst rides on top of the paced drain,
-    // and 64KB spikes overflowed the WiFi hotspot queue as burst-TAIL drops
-    // — a systematic 1-8 packet hole every frame (USB buffers absorb 64KB
-    // fine; the hotspot queue does not).
-    private const long MaxInstantBurstBytes = 16 * 1024;
+    // Instant burst allowance, by medium: on USB the whole frame goes out
+    // in ONE burst (zero serialization latency; the RNDIS queue absorbs
+    // 200KB fine). On WiFi 64KB spikes overflowed the hotspot queue as
+    // burst-TAIL drops (a systematic 1-8 packet hole per frame) - 16KB
+    // caps the spike there.
+    private long _maxInstantBurstBytes = 16 * 1024;
 
     /// <summary>The SDES crypto attribute the receiver unprotects with.</summary>
     public string CryptoLine { get; }
@@ -108,11 +109,12 @@ internal sealed class DirectRtpSender : IDisposable
         // overflowed the hotspot airtime and caused real WiFi packet loss
         // (12-34%). 32000kbps → 4000 B/ms tier → ×1.1 = 4400 B/ms.
         // USB RNDIS (192.168.42.x): NO airtime constraint (~35MB/s measured)
-        // — drain at 25MB/s so a heavy 230KB frame serializes in ~9ms
-        // instead of budget-bound ~52ms. That serialization was the largest
-        // latency term of the wired link.
+        // — drain at 30MB/s so a heavy frame serializes in single-digit ms.
+        _maxInstantBurstBytes = destination.Address.ToString().StartsWith("192.168.42.")
+            ? 256 * 1024
+            : 16 * 1024;
         _pacerBytesPerMs = destination.Address.ToString().StartsWith("192.168.42.")
-            ? 25_000L
+            ? 30_000L
             : (long)bitrateKbps * 11 / 80; // 32000kbps -> 4400 B/ms = 4.4MB/s
 
         byte[] masterKey = System.Security.Cryptography.RandomNumberGenerator.GetBytes(16);
@@ -299,7 +301,7 @@ internal sealed class DirectRtpSender : IDisposable
         {
             var before = _creditBytes;
             _creditBytes = Math.Min(_creditBytes + elapsedMs * _pacerBytesPerMs,
-                MaxInstantBurstBytes);
+                _maxInstantBurstBytes);
             _dbgGrants++;
             _dbgGrantedBytes += _creditBytes - before;
             _lastRefill = now;
@@ -327,7 +329,7 @@ internal sealed class DirectRtpSender : IDisposable
 
     private void PacerLoop()
     {
-        _creditBytes = MaxInstantBurstBytes;
+        _creditBytes = _maxInstantBurstBytes;
         _lastRefill = System.Diagnostics.Stopwatch.GetTimestamp();
 
         while (!_pacerCts.IsCancellationRequested)

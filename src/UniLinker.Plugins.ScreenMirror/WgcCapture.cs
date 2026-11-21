@@ -161,9 +161,12 @@ public class WgcCapture : ICapture
             _isCapturing = true;
             _stopping = false; // session restart after a Stop
             _session.StartCapture();
+            // 4ms poll: the drain-to-latest pattern needs a fresh frame per
+            // encode - the poll interval adds up to its own length of latency
+            // (avg half). 8ms -> 4ms measured free (TryGetNextFrame is cheap).
             _pollTimer = new System.Threading.Timer(
                 _ => ReadLatestFrame(), null, TimeSpan.Zero,
-                TimeSpan.FromMilliseconds(8));
+                TimeSpan.FromMilliseconds(4));
             Log.Info($"WGC: session started (polling @ {_fps}fps), thread={Environment.CurrentManagedThreadId}");
 
             Log.Info("WGC capture started (staging readback)");
