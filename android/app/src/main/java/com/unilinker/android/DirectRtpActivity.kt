@@ -689,6 +689,22 @@ fun DirectRtpScreen(
         )
 
         if (ballExpanded) {
+            fun switchTransport(mode: String) {
+                transportMode = mode
+                val c = client
+                if (c == null) {
+                    // Idle: the preference is saved and ships with the next
+                    // connect offer (no TLS channel to POST through yet).
+                    transientMsg = "已保存——连接时生效"
+                    return
+                }
+                scope.launch {
+                    val ok = c.setTransport(mode)
+                    transientMsg = if (ok) "$mode（重连生效）" else "设置失败——请连接后重试"
+                    if (ok) panelState = PanelState.Connecting
+                }
+            }
+
             FloatingPanel(
                 state = panelState,
                 statusDetail = statusDetail,
@@ -712,7 +728,31 @@ fun DirectRtpScreen(
                 brLabel = "${brOptions[brIdx] / 1000} Mbps",
                 fpsLabel = "${fpsOptions[fpsIdx]} fps",
                 streaming = client != null,
-                transportMode = transportMode,
+                decodePref = decodePref,
+                onDecode = { pref ->
+                    decodePref = pref
+                    prefs.edit().putString("decode_pref", pref).apply()
+                    // 自动推荐同时套用匹配档位：USB -> 极致(32M/60)，其他 -> 均衡(16M/30)。
+                    val medium = client?.medium
+                        ?: if (address.value.startsWith("192.168.42.")) "USB" else ""
+                    if (pref == "auto" && medium == "USB") {
+                        resIdx = 0; brIdx = 2; fpsIdx = 1
+                        prefs.edit()
+                            .putInt("tier_res", 0).putInt("tier_br", 2).putInt("tier_fps", 1)
+                            .apply()
+                    } else if (pref == "auto" && client != null) {
+                        resIdx = 0; brIdx = 1; fpsIdx = 0
+                        prefs.edit()
+                            .putInt("tier_res", 0).putInt("tier_br", 1).putInt("tier_fps", 0)
+                            .apply()
+                    }
+                    switchTransport(if (pref == "h264") "sipsorcery" else pref)
+                },
+                hudPollMs = hudPollMs,
+                onCyclePoll = {
+                    hudPollMs = when (hudPollMs) { 250 -> 500; 500 -> 1000; else -> 250 }
+                    prefs.edit().putInt("hud_poll_ms", hudPollMs).apply()
+                },
                 diagProvider = {
                     val c = client
                     val st = c?.receiverStats
@@ -792,20 +832,6 @@ fun DirectRtpScreen(
                         .putInt("tier_res", r).putInt("tier_br", b).putInt("tier_fps", f)
                         .apply()
                     applyTierChange("画质已切换——自动重连生效")
-                },
-                onTransport = { mode ->
-                    transportMode = mode
-                    scope.launch {
-                        val ok = client?.setTransport(mode) ?: false
-                        transientMsg = if (ok) "传输方式 → $mode（重连生效）" else "传输方式设置失败"
-                        if (ok) panelState = PanelState.Connecting
-                        if (ok) {
-                            kotlinx.coroutines.delay(400)
-                            client?.stop()
-                            client = null
-                            toggleConnect()
-                        }
-                    }
                 },
             )
         }

@@ -191,7 +191,14 @@ public class SignalingService : IDisposable
             DirectRtpTransport.Mode = msg.TransportPref;
         }
         var mode = DirectRtpTransport.Mode;
-        if (mode == "auto") mode = ResolveAutoMode(remoteIp.ToString());
+        if (mode == "auto")
+        {
+            mode = ResolveAutoMode(remoteIp.ToString());
+            // Write the concrete mode back: the plugin's encoder choice
+            // (Tile JPEG vs NVENC H264) reads DirectRtpTransport.Mode and
+            // must agree with the channel that was just resolved.
+            DirectRtpTransport.Mode = mode;
+        }
         Log.Info($"[transport] effective mode '{mode}' for {remoteIp} (pref '{DirectRtpTransport.Mode}')");
         IDirectRtpChannel channel = mode switch
         {

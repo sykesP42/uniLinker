@@ -227,7 +227,6 @@ fun FloatingPanel(
     brLabel: String,
     fpsLabel: String,
     streaming: Boolean,
-    transportMode: String,
     decodePref: String = "auto",
     onDecode: (String) -> Unit = {},
     hudPollMs: Int = 500,
@@ -260,8 +259,9 @@ fun FloatingPanel(
     onPreset: (Int, Int, Int) -> Unit,
     onReconnect: () -> Unit,
     onDisconnect: () -> Unit,
-    onTransport: (String) -> Unit,
 ) {
+    var manualExpanded by remember { mutableStateOf(false) }
+
     // Status line: a transient note (transport switching, chaos injection)
     // overrides the lifecycle state for a few seconds; otherwise the state
     // maps to steady copy + color. Streaming appends the link medium.
@@ -352,20 +352,33 @@ fun FloatingPanel(
                 TierChip(fpsLabel, Modifier.weight(1f), onCycleFps)
             }
 
-            // Decode method (the recommendation resolves the transport by
-            // the link medium and applies the matching tier).
+            // Decode method: 自动 vs 手动 (two chips); tapping 手动 expands
+            // the concrete decoder options below. 自动 applies the
+            // recommendation (transport + matching tier) for the link medium.
             SectionLabel("解码方式")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                TransportChip("自动（推荐）", decodePref == "auto", Modifier.weight(1f)) { onDecode("auto") }
-                TransportChip("Tile 软解", decodePref == "tile", Modifier.weight(1f)) { onDecode("tile") }
+                TransportChip("自动（推荐）", decodePref == "auto", Modifier.weight(1f)) {
+                    manualExpanded = false
+                    onDecode("auto")
+                }
+                TransportChip("手动", decodePref != "auto" || manualExpanded, Modifier.weight(1f)) {
+                    manualExpanded = true // just expands; a sub-option does the switching
+                }
             }
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                TransportChip("H264 硬解（画质优先）", decodePref == "h264", Modifier.fillMaxWidth()) { onDecode("h264") }
+            if (decodePref != "auto" || manualExpanded) {
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
+                    TransportChip("Tile 软解（低延迟）", decodePref == "tile", Modifier.weight(1f)) {
+                        onDecode("tile")
+                    }
+                    TransportChip("H264 硬解（画质）", decodePref == "h264", Modifier.weight(1f)) {
+                        onDecode("h264")
+                    }
+                }
             }
             Text(
-                when (decodePref) {
-                    "auto" -> "自动：USB→Tile 低延迟 · WiFi→SIPSorcery 稳定"
-                    "tile" -> "Tile：JPEG 分块软解，最低延迟，丢包不级联"
+                when {
+                    decodePref == "auto" -> "自动：USB→Tile 低延迟 · WiFi→SIPSorcery 稳定（自动重连生效）"
+                    decodePref == "tile" -> "Tile：JPEG 分块软解，最低延迟，丢包不级联"
                     else -> "H264：硬件解码管线，稳定高画质（延迟较高）"
                 },
                 style = MaterialTheme.typography.labelSmall, color = TextSecondary,
