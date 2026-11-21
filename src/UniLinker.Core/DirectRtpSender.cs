@@ -288,6 +288,8 @@ internal sealed class DirectRtpSender : IDisposable
     // rate, capped at the instant-burst allowance.
     private long _creditBytes;
     private long _lastRefill;
+    private long _dbgGrants;
+    private long _dbgGrantedBytes;
 
     private void Refill()
     {
@@ -295,8 +297,11 @@ internal sealed class DirectRtpSender : IDisposable
         var elapsedMs = (now - _lastRefill) * 1000 / System.Diagnostics.Stopwatch.Frequency;
         if (elapsedMs > 0)
         {
+            var before = _creditBytes;
             _creditBytes = Math.Min(_creditBytes + elapsedMs * _pacerBytesPerMs,
                 MaxInstantBurstBytes);
+            _dbgGrants++;
+            _dbgGrantedBytes += _creditBytes - before;
             _lastRefill = now;
         }
     }
@@ -314,7 +319,7 @@ internal sealed class DirectRtpSender : IDisposable
         {
             Refill();
             if (_creditBytes >= packetLen) break;
-            var deficitMs = (packetLen - _creditBytes) * 1000.0 / _pacerBytesPerMs;
+            var deficitMs = (packetLen - _creditBytes) / (double)_pacerBytesPerMs;
             if (deficitMs > 5) Thread.Sleep(1);
             else Thread.SpinWait(4000);
         }
@@ -367,6 +372,8 @@ internal sealed class DirectRtpSender : IDisposable
                     var blobData = item.Au;
                     var frameSendStart = System.Diagnostics.Stopwatch.GetTimestamp();
                     var framePkts = 0;
+                    _dbgGrants = 0;
+                    _dbgGrantedBytes = 0;
                     long creditWaitUs = 0;
                     long sendUs = 0;
                     long transformUs = 0;
@@ -414,7 +421,7 @@ internal sealed class DirectRtpSender : IDisposable
                         * 1000 / System.Diagnostics.Stopwatch.Frequency;
                     if (frameSendMs > 50)
                     {
-                        Log.Info($"[pacer] slow frame: {frameSendMs}ms for {framePkts} pkts ({blobData.Length}B) creditWait={creditWaitUs / 1000}ms send={sendUs / 1000}ms transform={transformUs / 1000}ms budget {_pacerBytesPerMs}B/ms backlog now {TileBacklog}");
+                        Log.Info($"[pacer] slow frame: {frameSendMs}ms for {framePkts} pkts ({blobData.Length}B) creditWait={creditWaitUs / 1000}ms send={sendUs / 1000}ms transform={transformUs / 1000}ms grants={_dbgGrants} granted={_dbgGrantedBytes}B budget {_pacerBytesPerMs}B/ms backlog now {TileBacklog}");
                     }
                 }
                 else

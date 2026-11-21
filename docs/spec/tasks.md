@@ -111,6 +111,9 @@
 5. **RTX↔Tile 实时切换崩溃修复**（EGL_BAD_ALLOC tombstone）：切换时拆除对侧管线生产者（SurfaceTexture 缓冲队列单生产者约束）。
 验证：WiFi 稳态 fps 30-58（修复前 0-15）、阶梯平滑、无崩溃。残差：重内容 wifi 20-40fps（设备解码墙：960 tiles/s × 5ms > 可用核）；SRTP Transform 0.2ms/包串行成本（后续硬件 AES 候选）。
 
+
+**USB 实测收尾（2026-11-21）：creditWait 顽抗的最后真凶 = 赤字公式 ×1000**——`(shortfall×1000)/B-per-ms` 把 0.012ms 算成 11.6ms → 每个授权周期误入 Sleep(1) 分支（后台实睡 15.6ms）→ 授权间隔 12.5ms（grants 计数实证：字节量正确、间隔错误）。修复后：**全屏动画 60fps q82 零 slow-frame**（修复前同场景 66-171ms/帧）、阶梯只在真拥塞介入、USB 稳态 53.8fps。并加 **EcoQoS 退出**（SetProcessInformation PROCESS_POWER_THROTTLING_EXECUTION_SPEED off）——镜像服务进程不该被电源节流。残差：重内容解码墙不变（960 tiles/s × 4-5ms ÷ 3 worker ≈ 12-25fps，设备物理上限）。
+
 ## 依赖顺序
 
 M1 完成 → M2-T1 → M2-T2 → M2-T3 → M2-T4 → M2-T5 → M3。

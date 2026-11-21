@@ -46,6 +46,51 @@ public partial class App : Application
         // See: https://learn.microsoft.com/en-us/windows/apps/windows-app-sdk/deploy-unpackaged-apps
         CrashLogger.Initialize();
         InitializeComponent();
+        DisablePowerThrottling();
+    }
+
+    // Windows 11 power-throttles an UNFOCUSED window's process (EcoQoS):
+    // threads land on efficiency cores at low clocks, Thread.Sleep and even
+    // SpinWait stretch ~20x, and timeBeginPeriod stops applying — the whole
+    // mirroring pipeline (pacer timing, WGC poll timer, encode threads)
+    // silently degraded whenever the user looked at the tablet instead of
+    // this window. A screen-mirroring SERVER must never be power-throttled.
+    private static void DisablePowerThrottling()
+    {
+        try
+        {
+            var state = new PROCESS_POWER_THROTTLING_STATE
+            {
+                Version = 1,
+                ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED,
+                StateMask = 0, // 0 = throttling disabled for this control
+            };
+            SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling,
+                ref state, System.Runtime.InteropServices.Marshal.SizeOf<PROCESS_POWER_THROTTLING_STATE>());
+        }
+        catch
+        {
+            // Pre-Win10-20H1 systems without the API: nothing to opt out of.
+        }
+    }
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern bool SetProcessInformation(
+        nint hProcess, int infoClass,
+        ref PROCESS_POWER_THROTTLING_STATE info, int size);
+
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")]
+    private static extern nint GetCurrentProcess();
+
+    private const int ProcessPowerThrottling = 1; // PROCESS_INFORMATION_CLASS
+    private const uint PROCESS_POWER_THROTTLING_EXECUTION_SPEED = 0x1;
+
+    [System.Runtime.InteropServices.StructLayout(System.Runtime.InteropServices.LayoutKind.Sequential)]
+    private struct PROCESS_POWER_THROTTLING_STATE
+    {
+        public uint Version;
+        public uint ControlMask;
+        public uint StateMask;
     }
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)

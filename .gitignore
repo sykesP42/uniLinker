@@ -512,3 +512,7 @@ android/local.properties
 
 # FFmpeg shared DLLs (hardware encode via h264_nvenc — downloaded from gyan.dev)
 third_party/ffmpeg/*.dll
+.workbuddy/
+.zcode/
+tile_check/
+tile_recv_t*.jpg
