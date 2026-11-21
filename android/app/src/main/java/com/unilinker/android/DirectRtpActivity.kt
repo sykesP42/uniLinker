@@ -146,7 +146,7 @@ private val resOptions = listOf(1280 to 800, 1920 to 1200, 2560 to 1600)
 // Default index 2 (16Mbps): NVENC's CBR overshoots its target ~2x, so an
 // 8Mbps tier produces the 16Mbps the encoder actually emits — quality
 // first, the tether link carries it easily.
-private val brOptions = listOf(8000, 16000, 32000)
+private val brOptions = listOf(8000, 16000, 32000, 64000)
 private val fpsOptions = listOf(30, 60)
 
 @Composable
@@ -742,15 +742,15 @@ fun DirectRtpScreen(
                 onDecode = { pref ->
                     decodePref = pref
                     prefs.edit().putString("decode_pref", pref).apply()
-                    // 自动推荐同时套用匹配档位与解码变体（实测矩阵）：
-                    // USB -> Tile 高画质 q92 + 1280x800@60（60fps 且每帧最高画质，
-                    //   9.4MB/s 需求 < 25MB/s 预算）；WiFi -> Tile q82 + 均衡(16M/30)。
+                    // 自动推荐同时套用匹配档位（实测矩阵 2026-11-22，H264 硬解）：
+                    // USB -> 1280x800@60 + 64M（55fps 零坏帧 + NVENC 最大质量余量，
+                    //   8.8MB/s 预算 < 25MB/s USB）；WiFi -> 16M + 30fps（热点预算内）。
                     val medium = client?.medium
                         ?: if (address.value.startsWith("192.168.42.")) "USB" else ""
                     if (pref == "auto" && medium == "USB") {
-                        resIdx = 0; brIdx = 2; fpsIdx = 1
+                        resIdx = 0; brIdx = 3; fpsIdx = 1
                         prefs.edit()
-                            .putInt("tier_res", 0).putInt("tier_br", 2).putInt("tier_fps", 1)
+                            .putInt("tier_res", 0).putInt("tier_br", 3).putInt("tier_fps", 1)
                             .apply()
                     } else if (pref == "auto" && client != null) {
                         resIdx = 0; brIdx = 1; fpsIdx = 0
