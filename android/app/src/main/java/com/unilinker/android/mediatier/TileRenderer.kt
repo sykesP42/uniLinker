@@ -42,6 +42,7 @@ class TileRenderer(private val surfaceTexture: android.graphics.SurfaceTexture, 
         rejectedExecutionHandler = java.util.concurrent.ThreadPoolExecutor.DiscardOldestPolicy()
     }
     private val backbufferGate = Any()
+    @Volatile private var closed = false
 
     // Gate A instrumentation
     var renderedTiles: Int = 0
@@ -80,6 +81,7 @@ class TileRenderer(private val surfaceTexture: android.graphics.SurfaceTexture, 
      *  and tiles are independent grid cells, so this parallelizes freely.
      *  Backbuffer/present state is serialized by [backbufferGate]. */
     private fun drawTile(tileIdx: Int, tileCount: Int, isLastOfFrame: Boolean, gridCols: Int, frameW: Int, frameH: Int, jpeg: ByteArray) {
+        if (closed) return
         val start = System.nanoTime()
         val gridRows = (frameH + 199) / 200 // tile height 200
         val tileW = frameW / gridCols
@@ -174,8 +176,12 @@ class TileRenderer(private val surfaceTexture: android.graphics.SurfaceTexture, 
     override fun close() {
         decodePool.shutdownNow()
         synchronized(backbufferGate) {
+            closed = true
             backbuffer?.recycle()
             backbuffer = null
         }
+        // Release the canvas producer slot on the shared SurfaceTexture (the
+        // TextureView owns the texture itself; only this wrapper goes away).
+        try { surface.release() } catch (_: Exception) { }
     }
 }

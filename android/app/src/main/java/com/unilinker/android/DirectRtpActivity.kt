@@ -315,6 +315,19 @@ fun DirectRtpScreen(
                 android.net.wifi.WifiManager.WIFI_MODE_FULL_HIGH_PERF, "unilinker-direct")
                 .apply { setReferenceCounted(false); acquire() }
             frameJob?.cancel()
+            // Cross-mode teardown: the SurfaceTexture buffer queue (~3 slots)
+            // supports ONE producer. A live RTX→tile switch left the MediaCodec
+            // decoder holding a producer slot while the tile canvas path took
+            // another — the consumer starved and hwui aborted the process
+            // (EGL_BAD_ALLOC in setSurface, tombstone 2026-11-21). Tear down
+            // the other mode's producer before starting the new pipeline.
+            if (newClient.transportIsTile) {
+                decoder?.close()
+                decoder = null
+            } else {
+                tileRenderer?.close()
+                tileRenderer = null
+            }
             frameJob = scope.launch {
                 if (newClient.transportIsTile) {
                     newClient.tileFrames.collect { tf ->
