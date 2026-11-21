@@ -184,11 +184,22 @@ public class SignalingService : IDisposable
 
         // The receiver's decode preference ships with the offer and wins
         // (it is authoritative for this session, like the tier).
-        if (!string.IsNullOrEmpty(msg.TransportPref) &&
-            (msg.TransportPref == "auto" || msg.TransportPref == "tile" ||
-             msg.TransportPref == "sipsorcery" || msg.TransportPref == "rtx"))
+        if (!string.IsNullOrEmpty(msg.TransportPref))
         {
-            DirectRtpTransport.Mode = msg.TransportPref;
+            switch (msg.TransportPref)
+            {
+                case "tile-hq":
+                    DirectRtpTransport.Mode = "tile";
+                    DirectRtpTransport.TileQualityBase = 92;
+                    break;
+                case "tile":
+                case "sipsorcery":
+                case "rtx":
+                case "auto":
+                    DirectRtpTransport.Mode = msg.TransportPref;
+                    DirectRtpTransport.TileQualityBase = 82;
+                    break;
+            }
         }
         var mode = DirectRtpTransport.Mode;
         if (mode == "auto")

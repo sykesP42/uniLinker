@@ -14,4 +14,9 @@ public static class DirectRtpTransport
     /// latency under loss, but the reorder pipeline still has a
     /// steady-state pin bug under investigation. Anything else = sipsorcery.</summary>
     public static string Mode { get; set; } = "sipsorcery";
+
+    /// <summary>JPEG quality ladder BASE for the Tile encoder: 82 = 极速
+    /// (default), 92 = 高画质 (the "Tile 高画质" decode preference — the
+    /// ladder shifts to 92/74/56 and the wire carries ~1.5x the bytes).</summary>
+    public static int TileQualityBase { get; set; } = 82;
 }

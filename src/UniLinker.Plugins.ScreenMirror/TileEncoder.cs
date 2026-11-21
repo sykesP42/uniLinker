@@ -39,7 +39,7 @@ public unsafe class TileEncoder : IEncoder
     // QUALITY under link pressure, not frames — blur is recoverable in a
     // second, stutter is not). Downgrades instantly on backlog, upgrades
     // only after a sustained idle window so the level never flaps.
-    private static readonly int[] QualityLevels = [82, 64, 48];
+    private int[] QualityLevels = [82, 64, 48];
     private const int UpgradeIdleFrames = 45; // ~0.75s at 60fps
     private int _qualityLevel;                // index into QualityLevels
     private int _idleFrames;
@@ -84,6 +84,10 @@ public unsafe class TileEncoder : IEncoder
 
     public bool Initialize(int width, int height, int fps, int bitrateKbps)
     {
+        // Quality ladder base from the decode preference (82 = 极速, 92 =
+        // 高画质 via TileQualityBase); rungs keep the -18/-16 spacing.
+        var baseQ = DirectRtpTransport.TileQualityBase;
+        QualityLevels = [baseQ, Math.Max(32, baseQ - 18), Math.Max(24, baseQ - 34)];
         _fps = fps;
         _gridCols = (width + TileW - 1) / TileW;
         _gridRows = (height + TileH - 1) / TileH;

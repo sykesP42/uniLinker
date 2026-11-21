@@ -366,20 +366,28 @@ fun FloatingPanel(
                 }
             }
             if (decodePref != "auto" || manualExpanded) {
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                    TransportChip("Tile 软解（低延迟）", decodePref == "tile", Modifier.weight(1f)) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    TransportChip("Tile · 极速（JPEG q82 · 首选）", decodePref == "tile", Modifier.fillMaxWidth()) {
                         onDecode("tile")
                     }
-                    TransportChip("H264 硬解（画质）", decodePref == "h264", Modifier.weight(1f)) {
-                        onDecode("h264")
+                    TransportChip("Tile · 高画质（q92 · 码率 ~1.5×）", decodePref == "tile-hq", Modifier.fillMaxWidth()) {
+                        onDecode("tile-hq")
+                    }
+                    TransportChip("H264 硬解 · SIPSorcery（延迟 ~130ms）", decodePref == "sipsorcery", Modifier.fillMaxWidth()) {
+                        onDecode("sipsorcery")
+                    }
+                    TransportChip("H264 硬解 · Native RTX（实验）", decodePref == "rtx", Modifier.fillMaxWidth()) {
+                        onDecode("rtx")
                     }
                 }
             }
             Text(
                 when {
                     decodePref == "auto" -> "自动：USB→Tile 低延迟 · WiFi→SIPSorcery 稳定（自动重连生效）"
-                    decodePref == "tile" -> "Tile：JPEG 分块软解，最低延迟，丢包不级联"
-                    else -> "H264：硬件解码管线，稳定高画质（延迟较高）"
+                    decodePref == "tile" -> "Tile：JPEG 分块软解 2ms/格——本机最快解码路径，丢包不级联"
+                    decodePref == "tile-hq" -> "Tile 高画质：JPEG q92，码率 ~1.5×，画质优先"
+                    decodePref == "sipsorcery" -> "H264 硬解：本机 Venus 管线地板 ~100ms——比 Tile 慢，胜在码率效率"
+                    else -> "H264 RTX：同上 + NACK 抗丢包（实验管线）"
                 },
                 style = MaterialTheme.typography.labelSmall, color = TextSecondary,
             )

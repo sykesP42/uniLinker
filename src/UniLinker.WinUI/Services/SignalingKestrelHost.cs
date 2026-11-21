@@ -143,18 +143,20 @@ public sealed class SignalingKestrelHost : IDisposable
                 var body = await reader.ReadToEndAsync();
                 var json = System.Text.Json.JsonDocument.Parse(body);
                 var mode = json.RootElement.GetProperty("mode").GetString() ?? "";
-                if (mode != "auto" && mode != "sipsorcery" && mode != "rtx" && mode != "tile")
+                if (mode != "auto" && mode != "sipsorcery" && mode != "rtx" && mode != "tile" && mode != "tile-hq")
                 {
                     return Results.Json(new { applied = "", error = "unknown mode" }, jsonOpts);
                 }
-                DirectRtpTransport.Mode = mode;
+                // tile-hq is a Tile variant (quality 92 ladder), not a mode.
+                DirectRtpTransport.Mode = mode == "tile-hq" ? "tile" : mode;
+                DirectRtpTransport.TileQualityBase = mode == "tile-hq" ? 92 : 82;
 
                 // Persist: settings.json read-modify-write (TransportIndex:
                 // 0 = rtx, 1 = sipsorcery).
                 var settingsPath = Path.Combine(
                     Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
                     "uniLinker", "settings.json");
-                int transportIndex = mode switch { "auto" => 0, "sipsorcery" => 1, "rtx" => 2, _ => 3 };
+                int transportIndex = mode switch { "auto" => 0, "sipsorcery" => 1, "rtx" => 2, "tile" => 3, _ => 3 };
                 try
                 {
                     var raw = File.Exists(settingsPath)
