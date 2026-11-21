@@ -307,6 +307,10 @@ fun FloatingPanel(
 
             // Advanced tiers
             SectionLabel("高级档位")
+            Text(
+                "修改后自动重连生效",
+                style = MaterialTheme.typography.labelSmall, color = TextSecondary,
+            )
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
                 TierChip(resLabel, Modifier.weight(1f), onCycleRes)
                 TierChip(brLabel, Modifier.weight(1f), onCycleBr)

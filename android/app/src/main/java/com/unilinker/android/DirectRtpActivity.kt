@@ -643,6 +643,24 @@ fun DirectRtpScreen(
             )
         }
 
+        // Tier changes (quality presets / advanced cycles) apply on the NEXT
+        // session — the sender builds capture+encoder from the tier at
+        // session start. Auto-reconnect with a debounce so rapid cycling
+        // fires exactly one reconnect (transport switching uses the same
+        // pattern; without this the panel read as "nothing changes").
+        var tierJob by remember { mutableStateOf<Job?>(null) }
+        fun applyTierChange(note: String) {
+            tierJob?.cancel()
+            if (client == null) return // idle: tier applies at next connect
+            tierJob = scope.launch {
+                kotlinx.coroutines.delay(600)
+                transientMsg = note
+                client?.stop()
+                client = null
+                toggleConnect()
+            }
+        }
+
         // Floating ball: drag anywhere, auto-dims after 3 s, tap toggles panel.
         FloatingBall(
             expanded = ballExpanded,
@@ -706,14 +724,17 @@ fun DirectRtpScreen(
                 onCycleRes = {
                     resIdx = (resIdx + 1) % resOptions.size
                     prefs.edit().putInt("tier_res", resIdx).apply()
+                    applyTierChange("档位已更新——自动重连生效")
                 },
                 onCycleBr = {
                     brIdx = (brIdx + 1) % brOptions.size
                     prefs.edit().putInt("tier_br", brIdx).apply()
+                    applyTierChange("码率已更新——自动重连生效")
                 },
                 onCycleFps = {
                     fpsIdx = (fpsIdx + 1) % fpsOptions.size
                     prefs.edit().putInt("tier_fps", fpsIdx).apply()
+                    applyTierChange("帧率已更新——自动重连生效")
                 },
                 onReconnect = {
                     client?.stop()
@@ -733,6 +754,7 @@ fun DirectRtpScreen(
                     prefs.edit()
                         .putInt("tier_res", r).putInt("tier_br", b).putInt("tier_fps", f)
                         .apply()
+                    applyTierChange("画质已切换——自动重连生效")
                 },
                 onTransport = { mode ->
                     transportMode = mode
