@@ -84,6 +84,7 @@ class DirectRtpActivity : ComponentActivity() {
                     intent.getIntExtra("chaos_dup", 0),
                     intent.getIntExtra("chaos_lag", 0),
                     intent.getIntExtra("fps", 0),
+                    intent.getIntExtra("br", 0),
                 )
             }
         }
@@ -121,10 +122,11 @@ fun DirectRtpScreen(
     chaosLoss: Int = 0,
     chaosDup: Int = 0,
     chaosLag: Int = 0,
-    // NOTE: must stay the LAST parameter — the call site passes the chaos
-    // extras positionally (a swap here silently fed `--ei fps 60` into the
-    // chaos-lag injection and froze the pipeline, 2026-11-20).
+    // NOTE: the call site passes the chaos extras positionally (a swap here
+    // silently fed `--ei fps 60` into the chaos-lag injection and froze the
+    // pipeline, 2026-11-20) — keep the positional order in sync with onCreate.
     fpsOverride: Int = 0,
+    brOverride: Int = 0,
 ) {
     val context = LocalContext.current
     var address by remember { mutableStateOf(initialAddress ?: "") }
@@ -138,7 +140,15 @@ fun DirectRtpScreen(
 
     val prefs = remember { (context as android.app.Activity).getPreferences(android.content.Context.MODE_PRIVATE) }
     var resIdx by remember { mutableIntStateOf(prefs.getInt("tier_res", 0)) }
-    var brIdx by remember { mutableIntStateOf(prefs.getInt("tier_br", 1)) }
+    // Deep-link `--ei br 32000` overrides the persisted tier bitrate the same
+    // way fpsOverride does (60fps tile pairs with the 32M budget; 8M carries
+    // only ~5fps of heavy content on the paced wire).
+    var brIdx by remember {
+        mutableIntStateOf(
+            if (brOverride in brOptions) brOptions.indexOf(brOverride)
+            else prefs.getInt("tier_br", 1)
+        )
+    }
     // Deep-link `--ei fps 60` overrides the persisted tier fps for one launch
     // (tier verification without tapping the panel; 0 = use the persisted one).
     var fpsIdx by remember {

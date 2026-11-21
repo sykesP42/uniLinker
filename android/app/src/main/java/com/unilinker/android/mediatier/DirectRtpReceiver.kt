@@ -64,7 +64,7 @@ class DirectRtpReceiver(
     private var expectedSeq = -1
     private var holeSinceMs = 0L
     private var lastNackMs = 0L
-    private var lastNackedEnd = -1
+    private var lastNackedFrom = -1
     /** Set when a hole was skipped MID-FRAME: everything in nalBuffer since
      *  the last marker belongs to a corrupt frame — drop it at the boundary
      *  instead of feeding the decoder garbage (PLI already requested). */
@@ -197,7 +197,7 @@ class DirectRtpReceiver(
                 pending[seq] = bytes
                 if (holeSinceMs == 0L) {
                     holeSinceMs = now
-                    lastNackedEnd = -1
+                    lastNackedFrom = -1
                 }
                 sendNack(expectedSeq, seq - 1, now)
                 drainPending(now)
@@ -229,6 +229,35 @@ class DirectRtpReceiver(
             holeSinceMs = 0L
             return
         }
+        // RESYNC: pending ballooned — the baseline is hopelessly behind the
+        // live head (sustained loss × serial give-ups). Walking firstKey at
+        // 250ms per hole delivered ~1fps while the ring forgot everything;
+        // jumping to the NEWEST parked packet bounds the freeze to ~1s and
+        // the stale region heals via the PLI full refresh (tiles are
+        // self-healing grid cells).
+        if (pending.size > 600) {
+            val newestKey = pending.lastKey()
+            val newestBytes = pending.remove(newestKey)
+            val skipped = (newestKey - expectedSeq + 65536) % 65536
+            if (skipped > 0) {
+                lostPackets += skipped
+                frameCorrupted = true
+                synchronized(lossGate) {
+                    repeat(skipped.coerceAtMost(400)) { lossWindow.add(Pair(now, true)) }
+                }
+                android.util.Log.w("DirectRtp", "resync $expectedSeq->$newestKey (skipped $skipped, pending=${pending.size})")
+                if (onKeyFrameNeeded != null && now - lastPliMs >= 500L) {
+                    lastPliMs = now
+                    try { onKeyFrameNeeded.invoke() } catch (_: Exception) { }
+                }
+            }
+            pending.clear()
+            expectedSeq = newestKey
+            holeSinceMs = 0L
+            if (newestBytes != null) pending[newestKey] = newestBytes
+            drainPending(now)
+            return
+        }
         val nextPending = pending.firstKey()
         val skipped = (nextPending - expectedSeq + 65536) % 65536
         if (skipped > 0) {
@@ -249,14 +278,21 @@ class DirectRtpReceiver(
     }
 
     /** Send a NACK for [fromSeq]..[toSeq] to the sender's RTP port, rate-
-     *  limited to one datagram per [nackRetryMs] for the same range. */
+     *  limited to one datagram per [nackRetryMs] for the same hole plus a
+     *  global floor of one datagram per 5ms. */
     private fun sendNack(fromSeq: Int, toSeq: Int, now: Long) {
         val target = nackTarget ?: return
         if (fromSeq == toSeq + 1) return // empty range
-        val sameRange = (toSeq - lastNackedEnd + 65536) % 65536 < 4
-        if (sameRange && now - lastNackMs < nackRetryMs) return
+        // Throttle per HOLE (fromSeq), not per range end: every newly parked
+        // packet extends toSeq, which defeated the old range-end comparison
+        // and sent a NACK per arrival (~1000/s) — the sender re-sent the same
+        // 32 seqs each time and the resend flood saturated the link (the
+        // 60fps startup storm, 2026-11-21). Per-hole + a global floor bound
+        // the request rate regardless of how many packets park.
+        if (fromSeq == lastNackedFrom && now - lastNackMs < nackRetryMs) return
+        if (now - lastNackMs < 5) return // global floor: ≤200 NACK datagrams/s
         lastNackMs = now
-        lastNackedEnd = toSeq
+        lastNackedFrom = fromSeq
         val seqs = mutableListOf<Int>()
         var s = fromSeq
         while ((s - toSeq - 1 + 65536) % 65536 != 0 && seqs.size < 32) {
