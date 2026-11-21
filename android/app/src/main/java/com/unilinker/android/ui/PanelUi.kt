@@ -2,6 +2,8 @@ package com.unilinker.android.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.Arrangement
@@ -264,6 +266,7 @@ fun FloatingPanel(
                 .clip(RoundedCornerShape(12.dp))
                 .background(PanelBg)
                 .border(1.dp, PanelBorder, RoundedCornerShape(12.dp))
+                .verticalScroll(rememberScrollState())
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
