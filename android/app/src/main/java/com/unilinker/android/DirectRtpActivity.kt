@@ -203,6 +203,9 @@ fun DirectRtpScreen(
     var hudLossOn by remember { mutableStateOf(prefs.getBoolean("hud_loss", true)) }
     var hudResOn by remember { mutableStateOf(prefs.getBoolean("hud_res", true)) }
     var transportMode by remember { mutableStateOf("sipsorcery") }
+    var chaosLossState by remember { mutableIntStateOf(chaosLoss) }
+    var chaosDupState by remember { mutableIntStateOf(chaosDup) }
+    var chaosLagState by remember { mutableIntStateOf(chaosLag) }
     var tileRenderer by remember { mutableStateOf<com.unilinker.android.mediatier.TileRenderer?>(null) }
     var wifiLock by remember { mutableStateOf<android.net.wifi.WifiManager.WifiLock?>(null) }
     var pendingSurface by remember { mutableStateOf<android.graphics.SurfaceTexture?>(null) }
@@ -666,6 +669,13 @@ fun DirectRtpScreen(
                 },
                 onRefresh = {
                     scope.launch { client?.requestKeyFrame() }
+                },
+                chaosLoss = chaosLossState,
+                chaosDup = chaosDupState,
+                chaosLagMs = chaosLagState,
+                onChaos = { l, d, lag ->
+                    chaosLossState = l; chaosDupState = d; chaosLagState = lag
+                    client?.setChaos(l, d, lag)
                 },
                 hudFpsOn = hudFpsOn,
                 hudMbpsOn = hudMbpsOn,

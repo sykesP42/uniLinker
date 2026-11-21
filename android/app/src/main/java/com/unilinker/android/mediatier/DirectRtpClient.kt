@@ -356,6 +356,18 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
 
     /** Media-plane PLI: ask the sender for an IDR over the TLS pairing
      *  channel. Fire-and-forget — the next loss event re-requests anyway. */
+    /** Live-set the chaos injection (receiver fields are @Volatile — takes
+     *  effect on the next packet, no reconnect). Also updates the client
+     *  fields so a reconnect re-applies the same percentages. */
+    fun setChaos(lossPct: Int, dupPct: Int, lagMs: Int) {
+        chaosLossPct = lossPct
+        chaosDupPct = dupPct
+        chaosLagMs = lagMs
+        receiver?.chaosLossPct = lossPct
+        receiver?.chaosDupPct = dupPct
+        receiver?.chaosLagMs = lagMs
+    }
+
     /** Manual IDR request (the 刷新画面 button): POSTs a PLI to the sender;
      *  the sender's KeyFrameBroker rate-limits to 250ms. Async enqueue —
      *  safe from the UI thread. */

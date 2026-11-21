@@ -209,6 +209,10 @@ fun FloatingPanel(
     hudResOn: Boolean,
     diagProvider: (() -> DiagStats?)? = null,
     onRefresh: (() -> Unit)? = null,
+    chaosLoss: Int = 0,
+    chaosDup: Int = 0,
+    chaosLagMs: Int = 0,
+    onChaos: (Int, Int, Int) -> Unit = { _, _, _ -> },
     onHudFps: (Boolean) -> Unit,
     onHudMbps: (Boolean) -> Unit,
     onHudJitter: (Boolean) -> Unit,
@@ -341,6 +345,8 @@ fun FloatingPanel(
             if (diagProvider != null) {
                 DiagnosticsSection(diagProvider)
             }
+
+            ChaosSection(chaosLoss, chaosDup, chaosLagMs, onChaos)
         }
     }
 }
@@ -469,6 +475,90 @@ internal fun TransportChip(label: String, selected: Boolean, modifier: Modifier,
             contentColor = if (selected) TextPrimary else TextSecondary),
     ) {
         Text(label, fontWeight = if (selected) FontWeight.Bold else FontWeight.Normal)
+    }
+}
+
+/** Collapsible network-simulation section (chaos injection): live-settable
+ *  loss/dup/lag sliders — a demo + acceptance tool, off by default. The
+ *  header summary turns amber while anything is injected. */
+@Composable
+private fun ChaosSection(loss: Int, dup: Int, lagMs: Int, onChaos: (Int, Int, Int) -> Unit) {
+    var expanded by remember { mutableStateOf(false) }
+    val active = loss > 0 || dup > 0 || lagMs > 0
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .background(ChipBg)
+            .clickable { expanded = !expanded }
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (active) {
+                Box(Modifier.size(6.dp).clip(CircleShape).background(StatusWarning))
+                Spacer(Modifier.width(6.dp))
+            }
+            Text("网络模拟", style = MaterialTheme.typography.bodySmall, color = TextPrimary)
+        }
+        Text(
+            if (expanded) "收起 ▲"
+            else if (active) "丢包$loss% · 重复$dup% · 延迟${lagMs}ms"
+            else "展开 ▼",
+            style = MaterialTheme.typography.labelSmall,
+            color = if (active) StatusWarning else Copper,
+        )
+    }
+
+    if (!expanded) return
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .background(ChipBg)
+            .padding(horizontal = 12.dp, vertical = 4.dp),
+    ) {
+        ChaosSlider("丢包", "%", loss, 0f, 30f, 29) { onChaos(it.toInt(), dup, lagMs) }
+        ChaosSlider("重复", "%", dup, 0f, 20f, 19) { onChaos(loss, it.toInt(), lagMs) }
+        ChaosSlider("延迟", "ms", lagMs, 0f, 500f, 9) { onChaos(loss, dup, (it / 50).toInt() * 50) }
+        Text(
+            "即时生效 · 用于演示与验收（高丢包会触发自愈）",
+            style = MaterialTheme.typography.labelSmall,
+            color = TextTertiary,
+        )
+        Spacer(Modifier.height(6.dp))
+    }
+}
+
+@Composable
+private fun ChaosSlider(label: String, unit: String, value: Int, min: Float, max: Float, steps: Int, onCommit: (Float) -> Unit) {
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text(
+            label,
+            style = MaterialTheme.typography.bodySmall,
+            color = TextPrimary,
+            modifier = Modifier.width(40.dp),
+        )
+        androidx.compose.material3.Slider(
+            value = value.toFloat(),
+            onValueChange = onCommit,
+            valueRange = min..max,
+            steps = steps,
+            modifier = Modifier.weight(1f).height(28.dp),
+            colors = androidx.compose.material3.SliderDefaults.colors(
+                thumbColor = Copper,
+                activeTrackColor = Copper,
+                inactiveTrackColor = BorderStrong,
+            ),
+        )
+        Text(
+            "$value$unit",
+            style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
+            color = TextSecondary,
+            modifier = Modifier.width(52.dp),
+        )
     }
 }
 
