@@ -24,6 +24,11 @@ public class WgcCapture : ICapture
     private int _fps;
     private bool _isCapturing;
     private Texture2DDescription _stagingDesc;
+    /// <summary>Serializes the timer callback against Stop(): the callback
+    /// touches every D3D object Stop frees, and Timer.Dispose does not wait
+    /// for in-flight callbacks (the Unmap-on-disposed-texture AV).</summary>
+    private readonly object _deviceGate = new();
+    private volatile bool _stopping;
 
     public event Action<CaptureFrame>? FrameCaptured;
     private int _framesDelivered;
@@ -154,6 +159,7 @@ public class WgcCapture : ICapture
             // event mechanism. Same official pattern as the polling
             // CaptureSample variant.
             _isCapturing = true;
+            _stopping = false; // session restart after a Stop
             _session.StartCapture();
             _pollTimer = new System.Threading.Timer(
                 _ => ReadLatestFrame(), null, TimeSpan.Zero,
@@ -172,8 +178,24 @@ public class WgcCapture : ICapture
 
     private void ReadLatestFrame()
     {
-        if (!_isCapturing || _framePool == null) return;
+        if (!_isCapturing || _stopping || _framePool == null) return;
 
+        // Stop() disposes the D3D objects this callback touches (staging
+        // textures, context, device). Timer.Dispose does NOT wait for an
+        // in-flight callback, so a session teardown racing a frame readback
+        // Unmapped a disposed staging texture — an AV inside the native call
+        // (uncatchable, killed the process; coreclr 0xc0000005 at a fixed
+        // offset, thrice on 2026-11-21). The gate makes Stop wait for the
+        // in-flight frame and _stopping turns away queued ones.
+        lock (_deviceGate)
+        {
+            if (_stopping) return;
+            ReadLatestFrameLocked();
+        }
+    }
+
+    private void ReadLatestFrameLocked()
+    {
         // DRAIN-TO-LATEST: poll fast (8 ms) and consume everything the pool
         // holds, processing only the newest frame. This caps the capture-side
         // latency at one poll interval instead of one throttle interval, and
@@ -519,9 +541,15 @@ public class WgcCapture : ICapture
     public void Stop()
     {
         _isCapturing = false;
+        _stopping = true;
 
         _pollTimer?.Dispose();
         _pollTimer = null;
+
+        // Wait out an in-flight ReadLatestFrame before freeing what it uses
+        // (see _deviceGate note at the call site). A queued callback that
+        // runs after this lock returns is turned away by the _stopping check.
+        lock (_deviceGate) { }
 
         _videoProcessor?.Dispose();
         _videoProcessor = null;
