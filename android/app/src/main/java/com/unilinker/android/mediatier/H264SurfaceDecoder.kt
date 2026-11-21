@@ -31,6 +31,9 @@ class H264SurfaceDecoder(surface: Surface) : AutoCloseable {
     @Volatile var decodedFrames: Int = 0
         private set
 
+    /** R3 probe: keys set pre-configure, checked against the output format. */
+    private val probeKeys: List<String>
+
     init {
         val format = MediaFormat.createVideoFormat(MediaFormat.MIMETYPE_VIDEO_AVC, 1280, 720)
             .apply {
@@ -38,9 +41,11 @@ class H264SurfaceDecoder(surface: Surface) : AutoCloseable {
                 // just the initial hints. MediaCodec rescales to the stream.
                 setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 512 * 1024)
             }
+        probeKeys = MediaCodecProbe.applyLowLatencyKeys(format)
         codec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
         codec.configure(format, surface, null, 0)
         codec.start()
+        MediaCodecProbe.reportRecognized(codec, probeKeys)
         drainJob = scope.launch { drainLoop() }
     }
 
@@ -65,6 +70,7 @@ class H264SurfaceDecoder(surface: Surface) : AutoCloseable {
                 }
                 out == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
                     val f = codec.outputFormat
+                    MediaCodecProbe.reportRecognized(codec, probeKeys) // echo may arrive with the first real format
                     val w = f.getInteger(MediaFormat.KEY_WIDTH)
                     val h = f.getInteger(MediaFormat.KEY_HEIGHT)
                     // Crop rect carries the REAL video size on some decoders.

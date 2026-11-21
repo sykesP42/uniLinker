@@ -284,10 +284,22 @@ class DirectRtpReceiver(
         val lag = chaosLagMs
         if (lag > 0) {
             // C3: deliver late on a worker (parallel workers = reorder; the
-            // payload gate keeps the shared state intact).
-            scope.launch {
-                kotlinx.coroutines.delay(lag.toLong())
-                payloadWork(bytes, System.currentTimeMillis())
+            // payload gate keeps the shared state intact). The in-flight cap
+            // is load-bearing: at 500pps x lag-ms every packet spawning a
+            // coroutine backed the gate up unboundedly and ANR'd the app
+            // (--ei fps 60 landing in chaosLag, 2026-11-20). Overflow
+            // degrades to immediate delivery instead of queueing.
+            if (lagInFlight.tryAcquire()) {
+                scope.launch {
+                    try {
+                        kotlinx.coroutines.delay(lag.toLong())
+                        payloadWork(bytes, System.currentTimeMillis())
+                    } finally {
+                        lagInFlight.release()
+                    }
+                }
+            } else {
+                payloadWork(bytes, nowArrival)
             }
             return
         }
@@ -297,6 +309,9 @@ class DirectRtpReceiver(
             payloadWork(bytes, nowArrival + 1)
         }
     }
+
+    /** Bounds chaos-lag in-flight deliveries (see [deliver]). */
+    private val lagInFlight = java.util.concurrent.Semaphore(64)
 
     /** Unprotect + depacketize + HUD accounting, shared by the inline and
      *  chaos-lagged delivery paths. SERIALIZED: nalBuffer and the

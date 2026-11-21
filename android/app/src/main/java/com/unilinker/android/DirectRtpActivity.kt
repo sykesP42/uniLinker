@@ -83,6 +83,7 @@ class DirectRtpActivity : ComponentActivity() {
                     intent.getIntExtra("chaos_loss", 0),
                     intent.getIntExtra("chaos_dup", 0),
                     intent.getIntExtra("chaos_lag", 0),
+                    intent.getIntExtra("fps", 0),
                 )
             }
         }
@@ -120,6 +121,10 @@ fun DirectRtpScreen(
     chaosLoss: Int = 0,
     chaosDup: Int = 0,
     chaosLag: Int = 0,
+    // NOTE: must stay the LAST parameter — the call site passes the chaos
+    // extras positionally (a swap here silently fed `--ei fps 60` into the
+    // chaos-lag injection and froze the pipeline, 2026-11-20).
+    fpsOverride: Int = 0,
 ) {
     val context = LocalContext.current
     var address by remember { mutableStateOf(initialAddress ?: "") }
@@ -134,7 +139,14 @@ fun DirectRtpScreen(
     val prefs = remember { (context as android.app.Activity).getPreferences(android.content.Context.MODE_PRIVATE) }
     var resIdx by remember { mutableIntStateOf(prefs.getInt("tier_res", 0)) }
     var brIdx by remember { mutableIntStateOf(prefs.getInt("tier_br", 1)) }
-    var fpsIdx by remember { mutableIntStateOf(prefs.getInt("tier_fps", 0)) }
+    // Deep-link `--ei fps 60` overrides the persisted tier fps for one launch
+    // (tier verification without tapping the panel; 0 = use the persisted one).
+    var fpsIdx by remember {
+        mutableIntStateOf(
+            if (fpsOverride in fpsOptions) fpsOptions.indexOf(fpsOverride)
+            else prefs.getInt("tier_fps", 0)
+        )
+    }
     var hudText by remember { mutableStateOf("") }
     var ballExpanded by remember { mutableStateOf(false) }
 
@@ -396,6 +408,13 @@ fun DirectRtpScreen(
                 var lastFrames = 0
                 var lastBytes = 0L
                 var lastTime = System.nanoTime()
+                // Media-stall auto-recovery: a WiFi blip (hotspot roam, user
+                // toggling, power-save) stops media AND keepalives at once —
+                // the sender's watchdog correctly releases the session, but
+                // this app used to sit frozen in STREAMING forever. 5s of
+                // zero bytes on the wire → reconnect (≥15s between attempts).
+                var stallPolls = 0
+                var lastAutoReconnectMs = 0L
                 while (true) {
                     kotlinx.coroutines.delay(500)
                     val now = System.nanoTime()
@@ -413,6 +432,18 @@ fun DirectRtpScreen(
                         lastFrames = renderedNow
                         lastBytes = 0
                         lastTime = now
+                        // A stall-triggered reconnect FAILED (sender down at the
+                        // attempt): the client is in ERROR and the STREAMING
+                        // stall counter below never runs again — retry here on
+                        // the same 15s schedule until the sender returns.
+                        if (c?.state?.value == com.unilinker.android.mediatier.DirectRtpClient.State.ERROR &&
+                            now - lastAutoReconnectMs > 15_000_000_000) {
+                            lastAutoReconnectMs = now
+                            android.util.Log.w("DirectRtp", "reconnect failed earlier — retrying (${c.error?.value})")
+                            client?.stop()
+                            client = null
+                            toggleConnect()
+                        }
                         continue
                     }
                     val st = c.receiverStats ?: continue
@@ -427,6 +458,18 @@ fun DirectRtpScreen(
                     hudJitter = c.receiverJitter
                     android.util.Log.d("DirectRtp",
                         "hud: fps=${"%.1f".format(hudFps)} dFrames=$dFrames decoded=${decoder?.decodedFrames} decNull=${decoder == null} sReady=$surfaceReady subCount=$decodedCount state=${c.state.value} pkts=${st.first} assembled=${c.receiverAssembledAUs} corruptDropped=${c.receiverDroppedCorruptAUs} pendingNals=${c.receiverNalsBuffered}")
+
+                    if (dBytes > 0) {
+                        stallPolls = 0
+                    } else if (++stallPolls >= 10 && now - lastAutoReconnectMs > 15_000_000_000) {
+                        stallPolls = 0
+                        lastAutoReconnectMs = now
+                        android.util.Log.w("DirectRtp", "media stalled (0 bytes) for 5s — auto reconnect")
+                        lastFrames = 0; lastBytes = 0
+                        client?.stop()
+                        client = null
+                        toggleConnect()
+                    }
                 }
             }
         }
