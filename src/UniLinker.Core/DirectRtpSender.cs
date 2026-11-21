@@ -70,6 +70,12 @@ internal sealed class DirectRtpSender : IDisposable
     private readonly long _pacerBytesPerMs;
     private readonly bool _tileMode;
     private long _lastTileTsUs = -1;
+
+    /// <summary>Frames queued ahead of the pacer (0-4) — the encoder's
+    /// quality-ladder pressure signal: backlog means the link can't carry
+    /// the current content rate, so shed quality before this queue overflows
+    /// into frame drops.</summary>
+    public int TileBacklog => _tileQueue.Count;
     /// <summary>Instant-burst allowance: the first ~42 packets of a frame go
     /// out at once, the rest of a large IDR trickles at 1.5× tier.</summary>
     // 16KB (11 packets): the instant burst rides on top of the paced drain,
@@ -96,12 +102,18 @@ internal sealed class DirectRtpSender : IDisposable
         _destination = destination;
         BindPort = bindPort;
         _tileMode = tileMode;
-        // ~1.1× the tier bitrate, in bytes/ms: the tier IS the link budget
-        // (vbr+cq caps at maxrate), and the WiFi hotspot link carries only
-        // ~its rated capacity — the earlier 2.5× burst rate overflowed the
-        // hotspot airtime and caused real WiFi packet loss (12-34%).
-        // 32000kbps → 4000 B/ms tier → ×1.1 = 4400 B/ms.
-        _pacerBytesPerMs = (long)bitrateKbps * 11 / 80; // 32000kbps -> 4400 B/ms = 4.4MB/s
+        // WiFi/LAN: ~1.1× the tier bitrate, in bytes/ms — the tier IS the
+        // link budget (vbr+cq caps at maxrate), and the WiFi hotspot link
+        // carries only ~its rated capacity. The earlier 2.5× burst rate
+        // overflowed the hotspot airtime and caused real WiFi packet loss
+        // (12-34%). 32000kbps → 4000 B/ms tier → ×1.1 = 4400 B/ms.
+        // USB RNDIS (192.168.42.x): NO airtime constraint (~35MB/s measured)
+        // — drain at 25MB/s so a heavy 230KB frame serializes in ~9ms
+        // instead of budget-bound ~52ms. That serialization was the largest
+        // latency term of the wired link.
+        _pacerBytesPerMs = destination.Address.ToString().StartsWith("192.168.42.")
+            ? 25_000L
+            : (long)bitrateKbps * 11 / 80; // 32000kbps -> 4400 B/ms = 4.4MB/s
 
         byte[] masterKey = System.Security.Cryptography.RandomNumberGenerator.GetBytes(16);
         byte[] masterSalt = System.Security.Cryptography.RandomNumberGenerator.GetBytes(14);
@@ -127,6 +139,11 @@ internal sealed class DirectRtpSender : IDisposable
         _udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReuseAddress, true);
         _udp.Client.Bind(new IPEndPoint(IPAddress.Any, bindPort));
         _udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.ReceiveBuffer, 1 << 20);
+        // 4MB send buffer: with the default 64KB, a momentary link backpressure
+        // (WiFi power-save gaps, hotspot queue drains) blocks Send() inside the
+        // pacer and the tile queue piles up — the ladder read those stalls as
+        // congestion and shed quality on nothing. Absorb the bursts instead.
+        try { _udp.Client.SetSocketOption(SocketOptionLevel.Socket, SocketOptionName.SendBuffer, 4 << 20); } catch { }
         // Windows-only: a send to a closed remote port triggers ICMP, which
         // makes the NEXT receive throw WSAECONNRESET and kills the NACK loop
         // silently (empirically killed it on the first viewer churn). Disable.
@@ -137,7 +154,14 @@ internal sealed class DirectRtpSender : IDisposable
         }
         catch { } // non-Windows
 
-        _pacerThread = new Thread(PacerLoop) { IsBackground = true, Name = "RtpPacer" };
+        // AboveNormal: the pacer's timing IS the wire contract. Windows 11
+        // background-process scheduling (EcoQoS / timer-resolution throttling
+        // when the window is unfocused) descheduled this Normal thread in
+        // ~10ms stretches — measured as a 4x slower token-bucket drain with
+        // credit available (the failing-drain test, PacerRateTests). The
+        // thread spends its life sleeping and spinning; AboveNormal costs
+        // nothing else.
+        _pacerThread = new Thread(PacerLoop) { IsBackground = true, Name = "RtpPacer", Priority = ThreadPriority.AboveNormal };
         _pacerThread.Start();
     }
 
@@ -260,27 +284,46 @@ internal sealed class DirectRtpSender : IDisposable
     /// <summary>Paced sender: packetize + protect + token-bucket send.
     /// Serialized under the send gate — the SRTP engine is not thread-safe;
     /// NACK resends take the same gate.</summary>
+    // Token bucket (pacer thread only): credit accumulates at the drain
+    // rate, capped at the instant-burst allowance.
+    private long _creditBytes;
+    private long _lastRefill;
+
+    private void Refill()
+    {
+        var now = System.Diagnostics.Stopwatch.GetTimestamp();
+        var elapsedMs = (now - _lastRefill) * 1000 / System.Diagnostics.Stopwatch.Frequency;
+        if (elapsedMs > 0)
+        {
+            _creditBytes = Math.Min(_creditBytes + elapsedMs * _pacerBytesPerMs,
+                MaxInstantBurstBytes);
+            _lastRefill = now;
+        }
+    }
+
+    /// <summary>Wait until the token bucket covers one packet. OS sleeps are
+    /// unusable here: Windows 11 ignores a background process'
+    /// timeBeginPeriod(1), so Sleep(2) actually sleeps ~15.6ms and the pacer
+    /// collapsed to ~650pps whenever the app window lost focus (the
+    /// "unfocused window throttles the whole wire" bug, 2026-11-21). The
+    /// steady-state deficit is sub-millisecond — spin it; fall back to
+    /// Sleep(1) only for the rare large deficits of tiny bitrate tiers.</summary>
+    private void WaitForCredit(int packetLen)
+    {
+        while (!_pacerCts.IsCancellationRequested)
+        {
+            Refill();
+            if (_creditBytes >= packetLen) break;
+            var deficitMs = (packetLen - _creditBytes) * 1000.0 / _pacerBytesPerMs;
+            if (deficitMs > 5) Thread.Sleep(1);
+            else Thread.SpinWait(4000);
+        }
+    }
+
     private void PacerLoop()
     {
-        // Continuous-refill token bucket: credit accumulates at 1.1× tier
-        // bitrate (the tier IS the link budget), capped at 64KB instant burst. The earlier "spread from
-        // burst start + carry debt" formulation re-applied the full carried
-        // bytes against a FRESH burst start each AU — a 300ms penalty per
-        // frame that throttled the stream to 2fps.
-        long creditBytes = MaxInstantBurstBytes;
-        var lastRefill = System.Diagnostics.Stopwatch.GetTimestamp();
-
-        void Refill()
-        {
-            var now = System.Diagnostics.Stopwatch.GetTimestamp();
-            var elapsedMs = (now - lastRefill) * 1000 / System.Diagnostics.Stopwatch.Frequency;
-            if (elapsedMs > 0)
-            {
-                creditBytes = Math.Min(creditBytes + elapsedMs * _pacerBytesPerMs,
-                    MaxInstantBurstBytes);
-                lastRefill = now;
-            }
-        }
+        _creditBytes = MaxInstantBurstBytes;
+        _lastRefill = System.Diagnostics.Stopwatch.GetTimestamp();
 
         while (!_pacerCts.IsCancellationRequested)
         {
@@ -322,6 +365,11 @@ internal sealed class DirectRtpSender : IDisposable
                     // each; the tile assembler keys on the timestamp.
                     var pos = 0;
                     var blobData = item.Au;
+                    var frameSendStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                    var framePkts = 0;
+                    long creditWaitUs = 0;
+                    long sendUs = 0;
+                    long transformUs = 0;
                     while (pos + 2 <= blobData.Length)
                     {
                         int len = (blobData[pos] << 8) | blobData[pos + 1];
@@ -337,28 +385,36 @@ internal sealed class DirectRtpSender : IDisposable
                         // rate ignored the tier budget entirely; ~27Mbps
                         // measured on an 8.8Mbps budget, which overflowed
                         // the WiFi airtime and poisoned every recovery).
-                        while (!_pacerCts.IsCancellationRequested)
-                        {
-                            Refill();
-                            if (creditBytes >= rtp.Length) break;
-                            Thread.Sleep(2);
-                        }
+                        var w = System.Diagnostics.Stopwatch.GetTimestamp();
+                        WaitForCredit(rtp.Length);
+                        creditWaitUs += (System.Diagnostics.Stopwatch.GetTimestamp() - w) * 1000000 / System.Diagnostics.Stopwatch.Frequency;
                         if (_pacerCts.IsCancellationRequested) break;
-                        creditBytes -= rtp.Length;
+                        _creditBytes -= rtp.Length;
 
                         lock (_sendGate)
                         {
                             if (_disposed) break;
+                            var tf = System.Diagnostics.Stopwatch.GetTimestamp();
                             byte[]? protectedPacket = _transformer.Transform(rtp);
+                            transformUs += (System.Diagnostics.Stopwatch.GetTimestamp() - tf) * 1000000 / System.Diagnostics.Stopwatch.Frequency;
                             if (protectedPacket != null)
                             {
                                 _ringCursor = (_ringCursor + 1) % RingCapacity;
                                 _ring[_ringCursor] = ((ushort)((rtp[2] << 8) | rtp[3]), protectedPacket, 0);
+                                var s = System.Diagnostics.Stopwatch.GetTimestamp();
                                 _udp.Send(protectedPacket, protectedPacket.Length, _destination);
+                                sendUs += (System.Diagnostics.Stopwatch.GetTimestamp() - s) * 1000000 / System.Diagnostics.Stopwatch.Frequency;
                                 PacketsSent++;
                             }
                         }
+                        framePkts++;
                         pos += 2 + len;
+                    }
+                    var frameSendMs = (System.Diagnostics.Stopwatch.GetTimestamp() - frameSendStart)
+                        * 1000 / System.Diagnostics.Stopwatch.Frequency;
+                    if (frameSendMs > 50)
+                    {
+                        Log.Info($"[pacer] slow frame: {frameSendMs}ms for {framePkts} pkts ({blobData.Length}B) creditWait={creditWaitUs / 1000}ms send={sendUs / 1000}ms transform={transformUs / 1000}ms budget {_pacerBytesPerMs}B/ms backlog now {TileBacklog}");
                     }
                 }
                 else
@@ -369,14 +425,9 @@ internal sealed class DirectRtpSender : IDisposable
                     foreach (var rtp in packets)
                     {
                         // Wait for credit before committing the packet.
-                        while (!_pacerCts.IsCancellationRequested)
-                        {
-                            Refill();
-                            if (creditBytes >= rtp.Length) break;
-                            Thread.Sleep(2);
-                        }
+                        WaitForCredit(rtp.Length);
                         if (_pacerCts.IsCancellationRequested) break;
-                        creditBytes -= rtp.Length;
+                        _creditBytes -= rtp.Length;
 
                         ushort seq = (ushort)((rtp[2] << 8) | rtp[3]);
                         lock (_sendGate)

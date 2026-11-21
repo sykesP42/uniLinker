@@ -96,6 +96,10 @@ internal class DirectRtpChannel : IDirectRtpChannel
     /// </summary>
     public string CryptoLine { get; private set; } = "";
 
+    /// <summary>Frames queued ahead of the pacer (0-4, tile mode) — the
+    /// encoder's quality-ladder pressure signal (0 when no sender).</summary>
+    public int TileBacklog => _sender?.TileBacklog ?? 0;
+
     public DirectRtpChannel(
         PeerInfo peer,
         string capability,

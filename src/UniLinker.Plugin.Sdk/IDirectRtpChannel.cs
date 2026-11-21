@@ -31,4 +31,10 @@ public interface IDirectRtpChannel : IChannel
 
     /// <summary>The stream SSRC.</summary>
     uint Ssrc { get; }
+
+    /// <summary>Frames queued ahead of the pacer (0-4, tile mode) — the
+    /// encoder's quality-ladder pressure signal: a backlog means the link
+    /// can't carry the current content rate, so shed quality before this
+    /// overflows into frame drops. 0 when not streaming.</summary>
+    int TileBacklog { get; }
 }

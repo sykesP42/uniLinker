@@ -51,6 +51,9 @@ internal class DirectRtpChannelLegacy : IDirectRtpChannel
     /// offer carries none — the receiver keys per-SSRC on first packet).</summary>
     public uint Ssrc { get; private set; }
 
+    /// <summary>The legacy session pipeline has no tile queue — no pressure signal.</summary>
+    public int TileBacklog => 0;
+
     /// <summary>
     /// The SDES crypto attribute from OUR generated offer — the key SIPSorcery
     /// actually protects outbound packets with (interop-diagnosed: it is NOT

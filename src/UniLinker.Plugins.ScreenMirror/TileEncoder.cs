@@ -35,7 +35,15 @@ public unsafe class TileEncoder : IEncoder
     public const int ChunkBudget = 1400 - 7;
     public const byte FlagLastOfFrame = 0x01;
 
-    private const int JpegQuality = 82; // mjpeg qscale via global_quality
+    // Quality ladder (commercial-remote-software degradation model: shed
+    // QUALITY under link pressure, not frames — blur is recoverable in a
+    // second, stutter is not). Downgrades instantly on backlog, upgrades
+    // only after a sustained idle window so the level never flaps.
+    private static readonly int[] QualityLevels = [82, 64, 48];
+    private const int UpgradeIdleFrames = 45; // ~0.75s at 60fps
+    private int _qualityLevel;                // index into QualityLevels
+    private int _idleFrames;
+    private int _skipCounter;                 // bottom-rung 30fps shaping
 
     private readonly object _slotGate = new();
     private CaptureFrame? _pendingFrame;
@@ -55,8 +63,8 @@ public unsafe class TileEncoder : IEncoder
 
     private SwsContext* _sws;
     private AVFrame* _yuvFrame;
-    private readonly Dictionary<(int, int), IntPtr> _encoders = new();
-    private readonly Dictionary<(int, int), IntPtr> _tileFrames = new();
+    private readonly Dictionary<(int, int, int), IntPtr> _encoders = new();
+    private readonly Dictionary<(int, int, int), IntPtr> _tileFrames = new();
     private readonly List<byte[]> _emit = new();
 
     private long _swsTicks;
@@ -69,6 +77,11 @@ public unsafe class TileEncoder : IEncoder
 
     public event Action<EncodedPacket>? PacketEncoded;
 
+    /// <summary>Pacer-queue pressure provider (frames queued ahead of the
+    /// pacer, 0-4). Wired by the plugin to the channel's TileBacklog; null =
+    /// no signal (quality stays at the top rung).</summary>
+    public Func<int>? TileBacklogProvider { get; set; }
+
     public bool Initialize(int width, int height, int fps, int bitrateKbps)
     {
         _fps = fps;
@@ -78,14 +91,14 @@ public unsafe class TileEncoder : IEncoder
         // Probe mjpeg availability up-front (same pattern as NvEncEncoder).
         lock (_encoders)
         {
-            if (!GetEncoder(TileW, TileH)) return false;
+            if (!GetEncoder(TileW, TileH, 0)) return false;
         }
 
         _running = true;
         _forceFullRefresh = true; // first frame sends every tile
         _worker = new Thread(EncodeLoop) { IsBackground = true, Name = "TileEncoder" };
         _worker.Start();
-        Log.Info($"[Tile] initialized {width}x{height} grid {_gridCols}x{_gridRows} ({_gridCols * _gridRows} tiles) jpeg q={JpegQuality}");
+        Log.Info($"[Tile] initialized {width}x{height} grid {_gridCols}x{_gridRows} ({_gridCols * _gridRows} tiles) jpeg q ladder [{string.Join('/', QualityLevels)}]");
         return true;
     }
 
@@ -131,6 +144,20 @@ public unsafe class TileEncoder : IEncoder
 
     private void EncodeOne(CaptureFrame frame, long tsUs)
     {
+        // Bottom-rung rate shaping: at q48 the quality lever alone can't fit
+        // heavy content into the WiFi budget, so every other frame is skipped
+        // (30fps). The skipped frame does NOT update _prevRaw — its changes
+        // merge into the next diff (superset of tiles, never missing ones).
+        // Full-refresh frames (PLI recovery) are never skipped.
+        if (_qualityLevel == QualityLevels.Length - 1 && !_forceFullRefresh)
+        {
+            if (++_skipCounter % 2 == 0) return;
+        }
+        else
+        {
+            _skipCounter = 0;
+        }
+
         var swsStart = System.Diagnostics.Stopwatch.GetTimestamp();
         lock (_encoders)
         {
@@ -198,6 +225,7 @@ public unsafe class TileEncoder : IEncoder
         _prevRaw = frame.RawData;
 
         // ── Encode changed tiles ──
+        UpdateQualityLadder();
         var encStart = System.Diagnostics.Stopwatch.GetTimestamp();
         var framePackets = new List<byte[]>();
         lock (_encoders)
@@ -209,7 +237,7 @@ public unsafe class TileEncoder : IEncoder
                 int ty = idx / _gridCols;
                 int tw = TileWidth(frame.Width, tx);
                 int th = TileHeight(frame.Height, ty);
-                var jpeg = EncodeTile(frame.Width, frame.Height, tx, ty, tw, th);
+                var jpeg = EncodeTile(frame.Width, frame.Height, tx, ty, tw, th, _qualityLevel);
                 if (jpeg == null || jpeg.Length == 0) continue;
                 // DEBUG: dump the first full-refresh tile once for content
                 // verification (black tiles here = PC-side slicing bug).
@@ -257,7 +285,7 @@ public unsafe class TileEncoder : IEncoder
             var avgDiff = _loopCount > 0 ? _diffTicks / (double)_loopCount : 0;
             var avgEnc = _loopCount > 0 ? _encTicks / (double)_loopCount : 0;
             var mbps = _loopCount > 0 ? _frameBytes * 8.0 / 1000 / 1000 * 30 : 0;
-            Log.Info($"[Tile] emitted {_emittedFrames} frames (tiles {_tilesSent}/{_gridCols * _gridRows}, last {framePackets.Count} pkts) avgAu={_frameBytes / 60.0 / 1000:F1}KB ({mbps:F1}Mbps) swsAvg={avgSws:F1}ms diffAvg={avgDiff:F1}ms encAvg={avgEnc:F1}ms loops={_loopCount}");
+            Log.Info($"[Tile] emitted {_emittedFrames} frames q={QualityLevels[_qualityLevel]} (tiles {_tilesSent}/{_gridCols * _gridRows}, last {framePackets.Count} pkts) avgAu={_frameBytes / 60.0 / 1000:F1}KB ({mbps:F1}Mbps) swsAvg={avgSws:F1}ms diffAvg={avgDiff:F1}ms encAvg={avgEnc:F1}ms loops={_loopCount}");
             _swsTicks = 0; _diffTicks = 0; _encTicks = 0; _frameBytes = 0; _loopCount = 0; _tilesSent = 0;
         }
     }
@@ -341,10 +369,50 @@ public unsafe class TileEncoder : IEncoder
         _tileFrames.Clear();
     }
 
-    /// <summary>Get (or create) the mjpeg encoder context for a tile size.</summary>
-    private bool GetEncoder(int w, int h)
+    /// <summary>Quality ladder: pacer-queue pressure sheds JPEG quality
+    /// instead of frames (down instantly, up only after a sustained idle —
+    /// blur heals in a second, stutter is user-visible). At the floor it
+    /// also halves the frame rate: q48 heavy content still exceeds the
+    /// WiFi budget (140KB x 60fps = 8.5MB/s > 4.4MB/s), and skipping every
+    /// other frame is the only lever left that fits. Backlog 0-1 is normal
+    /// encode/pacer pipelining, not congestion — the downgrade thresholds
+    /// start at 2 (the queue drops frames outright at 4).</summary>
+    private void UpdateQualityLadder()
     {
-        var key = (w, h);
+        var backlog = TileBacklogProvider?.Invoke() ?? 0;
+        if (backlog >= QualityLevels.Length)
+        {
+            _idleFrames = 0;
+            SetQualityLevel(QualityLevels.Length - 1, backlog);
+            return;
+        }
+        if (backlog >= 2)
+        {
+            _idleFrames = 0;
+            SetQualityLevel(Math.Max(_qualityLevel, backlog - 1), backlog);
+            return;
+        }
+        if (_qualityLevel == 0) return;
+        if (++_idleFrames >= UpgradeIdleFrames)
+        {
+            _idleFrames = 0;
+            SetQualityLevel(_qualityLevel - 1, 0);
+        }
+    }
+
+    private void SetQualityLevel(int level, int backlog)
+    {
+        if (level == _qualityLevel) return;
+        _qualityLevel = level;
+        Log.Info($"[Tile] quality ladder -> q={QualityLevels[level]} (backlog={backlog})");
+    }
+
+    /// <summary>Get (or create) the mjpeg encoder context for a tile size at a
+    /// quality level (global_quality is baked at open time; MJPEG has no
+    /// reliable per-frame quality path, so each rung owns its contexts).</summary>
+    private bool GetEncoder(int w, int h, int level)
+    {
+        var key = (w, h, level);
         if (_encoders.ContainsKey(key)) return true;
 
         var codec = avcodec_find_encoder(AVCodecID.AV_CODEC_ID_MJPEG);
@@ -359,7 +427,7 @@ public unsafe class TileEncoder : IEncoder
         ctx->time_base = new AVRational { num = 1, den = 30 };
         ctx->pix_fmt = AVPixelFormat.AV_PIX_FMT_YUVJ420P;
         // qscale quality path: global_quality = quality * FF_QP2LAMBDA.
-        ctx->global_quality = JpegQuality * FF_QP2LAMBDA;
+        ctx->global_quality = QualityLevels[level] * FF_QP2LAMBDA;
         ctx->flags |= AV_CODEC_FLAG_QSCALE;
         if (avcodec_open2(ctx, codec, null) < 0)
         {
@@ -379,11 +447,11 @@ public unsafe class TileEncoder : IEncoder
     }
 
     /// <summary>Slice the tile's YUV planes into a tile frame and mjpeg-encode it.</summary>
-    private byte[]? EncodeTile(int frameW, int frameH, int tx, int ty, int tw, int th)
+    private byte[]? EncodeTile(int frameW, int frameH, int tx, int ty, int tw, int th, int qualityLevel)
     {
-        if (!GetEncoder(tw, th)) return null;
-        var ctx = (AVCodecContext*)_encoders[(tw, th)];
-        var tileFrame = (AVFrame*)_tileFrames[(tw, th)];
+        if (!GetEncoder(tw, th, qualityLevel)) return null;
+        var ctx = (AVCodecContext*)_encoders[(tw, th, qualityLevel)];
+        var tileFrame = (AVFrame*)_tileFrames[(tw, th, qualityLevel)];
 
         int x0 = tx * TileW;
         int y0 = ty * TileH;

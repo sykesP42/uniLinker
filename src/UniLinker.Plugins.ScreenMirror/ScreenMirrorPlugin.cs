@@ -136,6 +136,24 @@ public class ScreenMirrorPlugin : IPlugin
             return;
         }
 
+        // Quality ladder pressure: the tile encoder sheds JPEG quality when
+        // any viewer's pacer queue backs up (the commercial degradation
+        // model — blur instead of stutter). Max across viewers: the most
+        // congested link governs.
+        if (_encoder is TileEncoder tileEnc)
+        {
+            tileEnc.TileBacklogProvider = () =>
+            {
+                lock (_sessionGate)
+                {
+                    var max = 0;
+                    foreach (var v in _viewers)
+                        if (v is IDirectRtpChannel d && d.TileBacklog > max) max = d.TileBacklog;
+                    return max;
+                }
+            };
+        }
+
         _capture.FrameCaptured += frame => _encoder?.Encode(frame);
         _encoder.PacketEncoded += packet =>
         {
