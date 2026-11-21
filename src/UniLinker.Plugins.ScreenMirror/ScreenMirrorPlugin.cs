@@ -91,14 +91,20 @@ public class ScreenMirrorPlugin : IPlugin
                 // Receiver-driven tier: a direct-RTP channel carries the
                 // capture parameters the receiver requested (resolution/
                 // bitrate/fps). Zero values fall back to the sender config.
+                int tierW = 0, tierH = 0;
                 if (channel is IDirectRtpChannel direct &&
                     (direct.RequestedWidth > 0 || direct.RequestedBitrateKbps > 0 || direct.RequestedFps > 0))
                 {
                     fps = direct.RequestedFps > 0 ? direct.RequestedFps : fps;
                     bitrate = direct.RequestedBitrateKbps > 0 ? direct.RequestedBitrateKbps : bitrate;
+                    // Resolution is receiver-driven too: it was read for the
+                    // log only for months — the capture always ran at the PC
+                    // config's size and the tier's width/height did nothing.
+                    tierW = direct.RequestedWidth;
+                    tierH = direct.RequestedHeight;
                     _ctx.Logger.Info($"Receiver tier: {direct.RequestedWidth}x{direct.RequestedHeight}@{fps} {bitrate}kbps");
                 }
-                StartSession(fps, bitrate);
+                StartSession(fps, bitrate, tierW, tierH);
             }
             _ctx.Logger.Info($"Viewer added (total {_viewers.Count}) for {peer.Name}");
         }
@@ -109,17 +115,18 @@ public class ScreenMirrorPlugin : IPlugin
         return channel;
     }
 
-    private void StartSession(int fps, int bitrateKbps)
+    private void StartSession(int fps, int bitrateKbps, int tierW = 0, int tierH = 0)
     {
         _capture = new WgcCapture();
-        // Capture at the configured resolution. The frame pool is created at
-        // this size and WGC scales the monitor content into it — capturing at
-        // the native 2560x1600 while the bitrate targets a 720p-class tier
-        // wrecks both encode latency and quality (measured: this was the
-        // dominant bottleneck of the wired link).
+        // Capture resolution precedence: the receiver's tier (drives capture
+        // AND encoder grid) > the PC config > native. The frame pool is
+        // created at this size and WGC scales the monitor content into it —
+        // capturing at the native 2560x1600 while the bitrate targets a
+        // 720p-class tier wrecks both encode latency and quality (measured:
+        // this was the dominant bottleneck of the wired link).
         var config = _ctx?.Config.Get<ScreenMirrorConfig>("screen-mirror");
-        var captureW = config?.CaptureWidth > 0 ? config.CaptureWidth : 0;
-        var captureH = config?.CaptureHeight > 0 ? config.CaptureHeight : 0;
+        var captureW = tierW > 0 ? tierW : (config?.CaptureWidth > 0 ? config.CaptureWidth : 0);
+        var captureH = tierH > 0 ? tierH : (config?.CaptureHeight > 0 ? config.CaptureHeight : 0);
         if (!_capture.Start(captureW, captureH, fps))
         {
             _ctx?.Logger.Error("WGC capture failed to start", null);

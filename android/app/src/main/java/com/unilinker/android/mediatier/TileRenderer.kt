@@ -49,16 +49,18 @@ class TileRenderer(
     // Decode throughput: 60fps x ~16 tiles/frame = ~960 tiles/s; at ~2.5ms
     // per JPEG decode a single thread tops out at ~400 tiles/s. Tiles are
     // independent grid cells, so decode + blit parallelize freely; the
-    // presents fence on their own (see presenting). BACKGROUND priority: the
-    // RTP receive thread (DISPLAY) must always outrank decode work - at
-    // MAX_PRIORITY the 4 workers starved it and the socket buffer overflowed
-    // in bursts (2026-11-22).
+    // presents fence on their own (see presenting). Thread priorities: the
+    // RTP receive thread runs at DISPLAY (-8); decode workers at DEFAULT (0)
+    // - MAX_PRIORITY starved the receiver (socket bursts), BACKGROUND landed
+    // the workers in the ~5% CPU bg cgroup (heavy content = single digits).
     private val decodePool = java.util.concurrent.ThreadPoolExecutor(
         4, 4, 30L, java.util.concurrent.TimeUnit.SECONDS,
         java.util.concurrent.ArrayBlockingQueue(48),
     ) { r -> Thread(r, "tile-decode").apply {
-        android.os.Process.setThreadPriority(
-            android.os.Process.THREAD_PRIORITY_BACKGROUND)
+        // DEFAULT (foreground cgroup): BACKGROUND lands in the bg cgroup
+        // with ~5-10% CPU on this SoC - heavy content collapsed the decode
+        // to single digits (2026-11-22). The RTP receive thread still wins
+        // (DISPLAY) under contention; decode gets the fair-share rest.
     } }.apply {
         // Queue full = decode can't keep up: drop the OLDEST queued tile
         // (its grid cell self-heals with the next frame that touches it -
