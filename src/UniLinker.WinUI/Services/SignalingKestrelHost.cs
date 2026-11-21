@@ -114,6 +114,13 @@ public sealed class SignalingKestrelHost : IDisposable
 
         var jsonOpts = new JsonSerializerOptions { PropertyNamingPolicy = JsonNamingPolicy.CamelCase };
 
+        // Latency measurement: the tablet computes the clock offset against
+        // this epoch-ms stamp (RTT/2 corrected) for the E2E latency overlay.
+        app.MapGet("/ulp/time", () =>
+        {
+            return Results.Json(new { t = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() }, jsonOpts);
+        });
+
         // M4 pairing discovery (informational only — the SAS code is compared
         // on-screen by the human; trusting this endpoint alone would defeat
         // the purpose of the pairing).

@@ -373,6 +373,27 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
         receiver?.chaosLagMs = lagMs
     }
 
+    /** Clock offset vs the sender (PC epoch ms - tablet epoch ms), measured
+     *  over the TLS pairing channel with RTT/2 correction - the E2E latency
+     *  overlay uses it to read the mirrored sender clock meaningfully.
+     *  Returns the offset, or null on failure. */
+    suspend fun measureClockOffsetMs(): Long? = withContext(Dispatchers.IO) {
+        try {
+            val request = Request.Builder()
+                .url("https://$host:$tlsPort/ulp/time")
+                .build()
+            val t0 = System.currentTimeMillis()
+            http.newCall(request).execute().use { response ->
+                val t1 = System.currentTimeMillis()
+                val pcMs = JSONObject(response.body!!.string()).getLong("t")
+                pcMs - ((t0 + t1) / 2)
+            }
+        } catch (e: Exception) {
+            android.util.Log.w("DirectRtp", "clock offset failed: ${e.message}")
+            null
+        }
+    }
+
     /** Manual IDR request (the 刷新画面 button): POSTs a PLI to the sender;
      *  the sender's KeyFrameBroker rate-limits to 250ms. Async enqueue —
      *  safe from the UI thread. */

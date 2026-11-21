@@ -215,6 +215,10 @@ fun DirectRtpScreen(
     var decodePref by remember { mutableStateOf(prefs.getString("decode_pref", "auto") ?: "auto") }
     var hudPollMs by remember { mutableIntStateOf(prefs.getInt("hud_poll_ms", 500)) }
     var chaosLossState by remember { mutableIntStateOf(chaosLoss) }
+    // E2E latency overlay: the tablet's own epoch clock next to the mirrored
+    // sender clock - their difference minus the calibrated offset = latency.
+    var clockOffsetMs by remember { mutableLongStateOf(0L) }
+    var clockNow by remember { mutableLongStateOf(0L) }
     var chaosDupState by remember { mutableIntStateOf(chaosDup) }
     var chaosLagState by remember { mutableIntStateOf(chaosLag) }
     var tileRenderer by remember { mutableStateOf<com.unilinker.android.mediatier.TileRenderer?>(null) }
@@ -383,6 +387,10 @@ fun DirectRtpScreen(
             // pass: the picture froze at the last composited frame (the user
             // saw 1-2 fps) while the swap counters spun on the workers.
             // Default dispatcher keeps the tile path entirely off Main.
+            scope.launch {
+                clockOffsetMs = client?.measureClockOffsetMs() ?: 0L
+                android.util.Log.d("DirectRtp", "clock offset = ${clockOffsetMs}ms")
+            }
             frameJob = scope.launch(kotlinx.coroutines.Dispatchers.Default) {
                 if (newClient.transportIsTile) {
                     newClient.tileFrames.collect { tf ->
@@ -691,6 +699,29 @@ fun DirectRtpScreen(
                 client = null
                 toggleConnect()
             }
+        }
+
+        // E2E latency overlay (TopStart, away from the HUD): the tablet's
+        // epoch clock, updated at 10Hz - screenshot it together with the
+        // mirrored sender clock; difference minus the calibrated offset =
+        // the true end-to-end latency.
+        if (client != null) {
+            LaunchedEffect(Unit) {
+                while (true) {
+                    clockNow = System.currentTimeMillis()
+                    delay(100)
+                }
+            }
+            Text(
+                "T=${clockNow + clockOffsetMs}",
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .padding(8.dp)
+                    .background(Color(0x99000000))
+                    .padding(horizontal = 6.dp, vertical = 2.dp),
+                style = MaterialTheme.typography.labelMedium.copy(fontFeatureSettings = "tnum"),
+                color = Color.White,
+            )
         }
 
         // Floating ball: drag anywhere, auto-dims after 3 s, tap toggles panel.
