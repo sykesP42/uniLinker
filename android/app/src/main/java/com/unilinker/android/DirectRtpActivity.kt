@@ -405,7 +405,7 @@ fun DirectRtpScreen(
                                 r
                             }
                             renderer.renderTile(
-                                tf.tileIdx, tf.tileCount, tf.isLastOfFrame, tf.gridCols, tf.frameW, tf.frameH, tf.jpeg)
+                                tf.tileIdx, tf.tileCount, tf.gridCols, tf.frameW, tf.frameH, tf.jpeg)
                             decodedCount++
                         }
                     }

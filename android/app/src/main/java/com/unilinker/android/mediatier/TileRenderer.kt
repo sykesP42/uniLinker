@@ -6,28 +6,28 @@ import android.view.Surface
 
 /**
  * Tile renderer (M6 tile transport) - PER-TILE incremental drawing with a
- * DOUBLE-BUFFERED software backbuffer.
+ * DOUBLE-BUFFERED software backbuffer and a CADENCE-DRIVEN present thread.
  *
- * Architecture (the third iteration - the first two had a hard wall):
- * - 4 decode workers (BACKGROUND priority) decode + blit each tile into the
- *   WRITE buffer (~2ms/tile, never blocking).
- * - When a frame-final tile lands (or >=12ms passed), the buffers SWAP
- *   (pointer exchange under a micro-lock) and the worker that swapped
- *   presents the READ buffer to the SurfaceTexture.
- * - The present's lockHardwareCanvas fences up to ~16ms against the
- *   compositor - that fence now happens OUTSIDE the blit path: the other
- *   workers keep blitting into the (new) WRITE buffer while the GPU upload
- *   runs. The old single-backbuffer design held the same lock across the
- *   fence, throttling the whole pipeline to ~200 tiles/s (the user saw
- *   partial desynced blocks + single-digit updates).
+ * Architecture (the fourth iteration):
+ * - 4 decode workers (DEFAULT priority) decode + blit each tile into the
+ *   WRITE buffer (~2ms/tile, never blocking, never presenting).
+ * - A dedicated present thread (DISPLAY priority) fires at a steady ~60Hz:
+ *   when new tiles landed it SWAPS the buffers (pointer exchange under a
+ *   micro-lock) and uploads the READ buffer to the SurfaceTexture. The swap
+ *   decouples the visible update cadence from the arrival burstiness - the
+ *   frame-final-driven presents of the previous design fired whenever the
+ *   network delivered, which read as jitter on video content (user verdict
+ *   2026-11-22: "多区块不同步的卡").
+ * - Incremental correctness: at swap time the buffers exchange roles - the
+ *   presented buffer keeps every tile blitted so far, and the workers
+ *   continue on the other one; no tile is ever lost between presents.
  *
- * Incremental correctness: at swap time the buffers exchange roles - the
- * presented buffer keeps every tile blitted so far, and the workers
- * continue on the other one; no tile is ever lost between presents.
- *
- * The present self-serializes via [presenting] (a swap is deferred while
- * the previous GPU upload fences). Tile decode runs on the 4-worker pool
- * at BACKGROUND priority (the RTP receive thread outranks it).
+ * Thread priorities (2026-11-22, measured on the 4-core MSM8974):
+ * - RTP receive thread: DISPLAY (-8) - the critical path.
+ * - Present thread: MAX (foreground) - the visible output.
+ * - Decode workers: DEFAULT (0) - MAX starved the receiver (socket bursts);
+ *   BACKGROUND landed them in the ~5% CPU bg cgroup (heavy content =
+ *   single-digit fps). DEFAULT gives them the fair-share rest.
  */
 class TileRenderer(
     private val surfaceTexture: android.graphics.SurfaceTexture,
@@ -41,26 +41,23 @@ class TileRenderer(
     private var bufferSizedFor = 0 to 0
     private val swapLock = Any()
 
-    @Volatile private var presenting = false
+    @Volatile private var dirty = false
     private var lastPresentNs = 0L
+    private var presentThread: Thread? = null
 
     private val decodeOptions = BitmapFactory.Options()
 
     // Decode throughput: 60fps x ~16 tiles/frame = ~960 tiles/s; at ~2.5ms
     // per JPEG decode a single thread tops out at ~400 tiles/s. Tiles are
-    // independent grid cells, so decode + blit parallelize freely; the
-    // presents fence on their own (see presenting). Thread priorities: the
-    // RTP receive thread runs at DISPLAY (-8); decode workers at DEFAULT (0)
-    // - MAX_PRIORITY starved the receiver (socket bursts), BACKGROUND landed
-    // the workers in the ~5% CPU bg cgroup (heavy content = single digits).
+    // independent grid cells, so decode + blit parallelize freely.
     private val decodePool = java.util.concurrent.ThreadPoolExecutor(
         4, 4, 30L, java.util.concurrent.TimeUnit.SECONDS,
-        java.util.concurrent.ArrayBlockingQueue(48),
+        java.util.concurrent.ArrayBlockingQueue(96),
     ) { r -> Thread(r, "tile-decode").apply {
-        // DEFAULT (foreground cgroup): BACKGROUND lands in the bg cgroup
-        // with ~5-10% CPU on this SoC - heavy content collapsed the decode
-        // to single digits (2026-11-22). The RTP receive thread still wins
-        // (DISPLAY) under contention; decode gets the fair-share rest.
+        // DEFAULT (foreground cgroup): BACKGROUND lands in the ~5% CPU bg
+        // cgroup on this SoC - heavy content collapsed the decode to single
+        // digits (2026-11-22). The RTP receive thread (DISPLAY) still wins
+        // under contention; decode gets the fair-share rest.
     } }.apply {
         // Queue full = decode can't keep up: drop the OLDEST queued tile
         // (its grid cell self-heals with the next frame that touches it -
@@ -72,7 +69,7 @@ class TileRenderer(
     var renderedTiles: Int = 0
         private set
 
-    /** Visible-update counter: incremented per swap (each swap presents the
+    /** Visible-update counter: incremented per swap (each swap uploads the
      *  full accumulated content - the honest "what the eye sees" metric). */
     var presentedFrames: Int = 0
         private set
@@ -85,12 +82,15 @@ class TileRenderer(
 
     private var logSeq = 0
 
-    /** Enqueue ONE tile: decode + blit runs on the pool, presents happen
-     *  inline on the completing worker (fenced, self-serialized). */
+    init {
+        startPresentThread()
+    }
+
+    /** Enqueue ONE tile: decode + blit runs on the pool. Presents are the
+     *  present thread's job (cadence-driven). */
     fun renderTile(
         tileIdx: Int,
         tileCount: Int,
-        isLastOfFrame: Boolean,
         gridCols: Int,
         frameW: Int,
         frameH: Int,
@@ -98,21 +98,19 @@ class TileRenderer(
     ) {
         try {
             decodePool.execute {
-                drawTile(tileIdx, tileCount, isLastOfFrame, gridCols, frameW, frameH, jpeg)
+                drawTile(tileIdx, tileCount, gridCols, frameW, frameH, jpeg)
             }
         } catch (_: java.util.concurrent.RejectedExecutionException) {
             // Pool already shut down (session teardown) - drop the tile.
         }
     }
 
-    /** Decode + blit ONE tile onto the WRITE buffer, then maybe swap+present.
-     *  Decode runs outside the swap lock (the parallel part); blit and the
-     *  buffer swap are micro-locked; the fenced GPU upload runs AFTER the
-     *  swap released everything - blits continue while it fences. */
+    /** Decode + blit ONE tile onto the WRITE buffer. Decode runs outside the
+     *  swap lock (the parallel part); the blit is micro-locked. Marks the
+     *  buffer dirty - the present thread picks it up on its cadence. */
     private fun drawTile(
         tileIdx: Int,
         tileCount: Int,
-        isLastOfFrame: Boolean,
         gridCols: Int,
         frameW: Int,
         frameH: Int,
@@ -139,7 +137,6 @@ class TileRenderer(
             return
         }
 
-        var doPresent = false
         synchronized(swapLock) {
             if (writeBuf == null || readBuf == null ||
                 writeBuf!!.width != frameW || writeBuf!!.height != frameH
@@ -162,28 +159,12 @@ class TileRenderer(
             val rect = android.graphics.Rect(tx * tileW, ty * TileH, tx * tileW + tw, ty * TileH + th)
             android.graphics.Canvas(writeBuf!!).drawBitmap(bmp, null, rect, null)
             renderedTiles++
-
-            // Present decision INSIDE the lock (cheap): swap pointers, the
-            // fenced upload happens outside.
-            val now = System.nanoTime()
-            val sincePresentMs = (now - lastPresentNs) / 1e6
-            if ((isLastOfFrame || sincePresentMs >= 12.0) && !presenting) {
-                // Swap: the accumulated WRITE buffer becomes the presented
-                // READ buffer; the workers continue on the old presented
-                // content (incremental state preserved - no tile lost).
-                val tmp = writeBuf
-                writeBuf = readBuf
-                readBuf = tmp
-                presentedFrames++
-                lastPresentNs = now
-                presenting = true
-                doPresent = true
-            }
+            dirty = true
             lastDecodeMs = (System.nanoTime() - start) / 1e6
             if (renderedTiles % 120 == 1) {
                 android.util.Log.d(
                     "DirectRtp",
-                    "tile: rendered=$renderedTiles idx=$tileIdx/$tileCount last=$isLastOfFrame decode=${"%.1f".format(lastDecodeMs)}ms fails=$decodeFailures",
+                    "tile: rendered=$renderedTiles idx=$tileIdx/$tileCount decode=${"%.1f".format(lastDecodeMs)}ms fails=$decodeFailures",
                 )
             }
             if (dumpDir != null && renderedTiles % 150 == 1) {
@@ -197,14 +178,47 @@ class TileRenderer(
             }
         }
         bmp.recycle()
-
-        if (doPresent) presentReadBuffer()
     }
 
-    /** Present the READ buffer to the SurfaceTexture. Called AFTER the swap
-     *  released the lock - the GPU upload fences here while the workers keep
-     *  blitting into the (new) WRITE buffer. [presenting] defers the next
-     *  swap until this completes. */
+    /** The present thread: fires at a steady ~60Hz cadence, swapping the
+     *  buffers and uploading the latest accumulated state when new tiles
+     *  landed. DISPLAY priority - the present IS the visible output. The
+     *  fence (lockHardwareCanvas) blocks THIS thread only: the decode
+     *  workers never touch it. */
+    private fun startPresentThread() {
+        presentThread = Thread({
+            android.os.Process.setThreadPriority(
+                android.os.Process.THREAD_PRIORITY_DISPLAY)
+            while (!decodePool.isShutdown) {
+                try {
+                    Thread.sleep(16)
+                } catch (e: InterruptedException) {
+                    break
+                }
+                var doPresent = false
+                synchronized(swapLock) {
+                    if (!dirty || writeBuf == null) return@synchronized
+                    // Swap: the accumulated WRITE buffer becomes the presented
+                    // READ buffer; the workers continue on the old presented
+                    // content (incremental state preserved - no tile lost).
+                    val tmp = writeBuf
+                    writeBuf = readBuf
+                    readBuf = tmp
+                    dirty = false
+                    presentedFrames++
+                    doPresent = true
+                }
+                if (doPresent) presentReadBuffer()
+            }
+        }, "tile-present").apply {
+            priority = Thread.MAX_PRIORITY
+            start()
+        }
+    }
+
+    /** Present the READ buffer to the SurfaceTexture. The GPU upload fences
+     *  HERE (on the present thread) - the decode workers keep blitting into
+     *  the (new) WRITE buffer meanwhile. */
     private fun presentReadBuffer() {
         try {
             val canvas = surface.lockHardwareCanvas()
@@ -222,13 +236,12 @@ class TileRenderer(
             }
         } catch (e: Exception) {
             android.util.Log.w("DirectRtp", "present failed: ${e.message}")
-        } finally {
-            presenting = false
         }
     }
 
     override fun close() {
         decodePool.shutdownNow()
+        presentThread?.interrupt()
         synchronized(swapLock) {
             writeBuf?.recycle()
             writeBuf = null

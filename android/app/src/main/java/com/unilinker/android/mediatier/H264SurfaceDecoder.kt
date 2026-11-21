@@ -3,26 +3,30 @@ package com.unilinker.android.mediatier
 import android.media.MediaCodec
 import android.media.MediaFormat
 import android.view.Surface
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.Job
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.isActive
+import java.util.concurrent.ConcurrentLinkedQueue
 import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.launch
 
 /**
- * Hardware H.264 decoder feeding a Surface (MediaCodec async-free variant).
- * [submitAnnexB] enqueues one complete Annex-B access unit; a drain loop
- * renders decoded frames to the surface. v7a devices have H.264 hardware
- * decode across the board (the decode side is not gated on encode, unlike
- * libwebrtc's H264 receive path).
+ * Hardware H.264 decoder feeding a Surface - ASYNC MediaCodec mode.
+ *
+ * Why async: the previous sync drain loop polled dequeueOutputBuffer with a
+ * 50ms timeout - a decoded frame waited up to 50ms (avg ~25ms) before being
+ * rendered, pure added latency on every frame. The async callback fires the
+ * moment a frame is ready: releaseOutputBuffer(index, true) renders
+ * immediately - zero poll delay on the critical path.
+ *
+ * Input feeding: pending AUs queue up; onInputBufferAvailable hands out
+ * codec input buffers, which are filled on the spot (a free-list bridges
+ * buffers that arrive before data). submitAnnexB is safe from any thread.
+ *
+ * v7a devices have H.264 hardware decode across the board (the decode side
+ * is not gated on encode, unlike libwebrtc's H264 receive path).
  */
 class H264SurfaceDecoder(surface: Surface) : AutoCloseable {
     private val codec: MediaCodec
-    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
-    private var drainJob: Job? = null
+    private val pendingAUs = ConcurrentLinkedQueue<Pair<ByteArray, Long>>()
+    private val freeInputs = ConcurrentLinkedQueue<Int>()
+    private val codecGate = Any() // queueInputBuffer is not thread-safe across callers
 
     /** Actual decoded stream size (from INFO_OUTPUT_FORMAT_CHANGED) — the UI
      *  uses it to aspect-fit the SurfaceView. Null until the first format. */
@@ -43,57 +47,74 @@ class H264SurfaceDecoder(surface: Surface) : AutoCloseable {
             }
         probeKeys = MediaCodecProbe.applyLowLatencyKeys(format)
         codec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
+
+        codec.setCallback(object : MediaCodec.Callback() {
+            override fun onInputBufferAvailable(mc: MediaCodec, index: Int) {
+                freeInputs.offer(index)
+                feedPending()
+            }
+
+            override fun onOutputBufferAvailable(mc: MediaCodec, index: Int, outInfo: MediaCodec.BufferInfo) {
+                // Render IMMEDIATELY - this is the latency-critical moment.
+                mc.releaseOutputBuffer(index, true)
+                decodedFrames++
+            }
+
+            override fun onOutputFormatChanged(mc: MediaCodec, f: MediaFormat) {
+                MediaCodecProbe.reportRecognized(mc, probeKeys)
+                val w = f.getInteger(MediaFormat.KEY_WIDTH)
+                val h = f.getInteger(MediaFormat.KEY_HEIGHT)
+                // Crop rect carries the REAL video size on some decoders.
+                streamSize.value = if (f.containsKey("crop-left") && f.containsKey("crop-right")) {
+                    Pair(
+                        f.getInteger("crop-right") - f.getInteger("crop-left") + 1,
+                        f.getInteger("crop-bottom") - f.getInteger("crop-top") + 1,
+                    )
+                } else {
+                    Pair(w, h)
+                }
+            }
+
+            override fun onError(mc: MediaCodec, e: MediaCodec.CodecException) {
+                android.util.Log.e("DirectRtp", "codec error: ${e.message}")
+            }
+        })
+
         codec.configure(format, surface, null, 0)
         codec.start()
-        MediaCodecProbe.reportRecognized(codec, probeKeys)
-        drainJob = scope.launch { drainLoop() }
     }
 
     /** Enqueue one Annex-B access unit. Safe from any thread. */
     fun submitAnnexB(au: ByteArray, timestampUs: Long) {
-        val index = codec.dequeueInputBuffer(10_000)
-        if (index < 0) return // decoder backpressured: drop, next IDR will recover
-        val input = codec.getInputBuffer(index) ?: return
-        input.clear()
-        input.put(au)
-        codec.queueInputBuffer(index, 0, au.size, timestampUs, 0)
+        pendingAUs.offer(Pair(au, timestampUs))
+        feedPending()
     }
 
-    private suspend fun drainLoop() {
-        val info = MediaCodec.BufferInfo()
-        while (scope.isActive) {
-            val out = codec.dequeueOutputBuffer(info, 50_000)
-            when {
-                out >= 0 -> {
-                    codec.releaseOutputBuffer(out, true) // render to surface
-                    decodedFrames++
+    /** Pair queued AUs with free input buffers. Locked: onInputBufferAvailable
+     *  (framework thread) and submitAnnexB (collector thread) both feed. */
+    private fun feedPending() {
+        synchronized(codecGate) {
+            while (true) {
+                val index = freeInputs.poll() ?: return
+                val au = pendingAUs.poll() ?: run {
+                    freeInputs.offer(index) // no data yet - keep the buffer
+                    return
                 }
-                out == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED -> {
-                    val f = codec.outputFormat
-                    MediaCodecProbe.reportRecognized(codec, probeKeys) // echo may arrive with the first real format
-                    val w = f.getInteger(MediaFormat.KEY_WIDTH)
-                    val h = f.getInteger(MediaFormat.KEY_HEIGHT)
-                    // Crop rect carries the REAL video size on some decoders.
-                    if (f.containsKey("crop-left") && f.containsKey("crop-right")) {
-                        val cw = f.getInteger("crop-right") - f.getInteger("crop-left") + 1
-                        val ch = f.getInteger("crop-bottom") - f.getInteger("crop-top") + 1
-                        streamSize.value = Pair(cw, ch)
-                    } else {
-                        streamSize.value = Pair(w, h)
-                    }
-                }
-                else -> { /* try again later */ }
+                val input = codec.getInputBuffer(index) ?: return
+                input.clear()
+                input.put(au.first)
+                codec.queueInputBuffer(index, 0, au.first.size, au.second, 0)
             }
         }
     }
 
     override fun close() {
-        drainJob?.cancel()
-        scope.cancel()
         try {
             codec.stop()
         } catch (_: Exception) {
         }
         codec.release()
+        pendingAUs.clear()
+        freeInputs.clear()
     }
 }
