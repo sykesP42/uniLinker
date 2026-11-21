@@ -51,7 +51,7 @@ class DirectRtpReceiver(
     private val depacketizer = H264RtpDepacketizer()
     private val nalBuffer = ArrayList<ByteArray>()
     private var socket: DatagramSocket? = null
-    private var loop: Job? = null
+    private var recvThread: Thread? = null
     private var lastPliMs = 0L
 
     // ── Reorder buffer + NACK (M5 RTX) ──
@@ -123,7 +123,7 @@ class DirectRtpReceiver(
     }
 
     fun start() {
-        if (loop?.isActive == true) return
+        if (recvThread?.isAlive == true) return
         val sock = DatagramSocket(null).apply {
             reuseAddress = true
             // The sender bursts whole IDR frames (hundreds of packets in
@@ -133,22 +133,33 @@ class DirectRtpReceiver(
             bind(java.net.InetSocketAddress(listenPort))
         }
         socket = sock
-        loop = scope.launch {
+        // Dedicated HIGH-priority receive thread: this loop is the critical
+        // path (decrypt + reorder + tile assembly for every packet) and was
+        // starving under the MAX_PRIORITY decode workers on the 4-core SoC —
+        // the socket buffer overflowed in bursts (resyncs of 1000+ packets)
+        // and the render collapsed to ~13fps. DISPLAY priority = the decode
+        // workers (BACKGROUND) always yield to it.
+        recvThread = Thread({
+            android.os.Process.setThreadPriority(
+                android.os.Process.THREAD_PRIORITY_DISPLAY)
             val buf = ByteArray(65536)
             val packet = DatagramPacket(buf, buf.size)
-            while (isActive && !sock.isClosed) {
+            while (!sock.isClosed) {
                 try {
                     sock.receive(packet)
                     handle(packet)
                 } catch (_: java.net.SocketTimeoutException) {
                     // continue
                 } catch (e: Exception) {
-                    if (sock.isClosed || !isActive) break
+                    if (sock.isClosed) break
                     // Swallowed exceptions here once silently froze the whole
                     // receive pipeline (pending-empty giveUp) — log them.
                     android.util.Log.e("DirectRtp", "receive loop error", e)
                 }
             }
+        }, "rtp-recv").apply {
+            priority = Thread.MAX_PRIORITY
+            start()
         }
     }
 
@@ -442,8 +453,7 @@ class DirectRtpReceiver(
     }
 
     override fun close() {
-        loop?.cancel()
-        socket?.close()
+        socket?.close() // unblocks the receive thread (it exits on the closed socket)
         socket = null
         unprotector.close()
         scope.cancel()

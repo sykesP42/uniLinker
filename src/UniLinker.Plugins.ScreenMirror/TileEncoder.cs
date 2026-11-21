@@ -26,13 +26,15 @@ public unsafe class TileEncoder : IEncoder
 {
 
     /// <summary>Tile grid cell width (multiple of 16 for YUVJ420P MCU).
-    /// 640x400 (was 320x200): the per-tile gate/blit/present overhead —
-    /// not the pixel decode — capped the tablet at ~200 tiles/s (12fps of
-    /// a 16-tile frame); quartering the tile count at the same pixel
-    /// throughput lifts the render floor ~4x (2026-11-21).</summary>
-    public const int TileW = 640;
+    /// 320x200 is deliberate: small tiles keep INCREMENTAL updates granular
+    /// — a cursor move or text scroll touches 2-3 tiles that decode in
+    /// 1-2ms and appear instantly. A 640x400 grid halves the tile count but
+    /// the same tiny change now decodes an 8-9ms 60KB tile and presents 4x
+    /// less often — measured tiles/s went up while the user-perceived
+    /// smoothness collapsed (reverted 2026-11-22, user report).</summary>
+    public const int TileW = 320;
     /// <summary>Tile grid cell height.</summary>
-    public const int TileH = 400;
+    public const int TileH = 200;
     /// <summary>RTP payload budget minus the 6-byte tile header and the 1-byte
     /// flags trailer: keeps the wire packet ≤ MTU with the 12B RTP header +
     /// 10B SRTP tag. Mirrors DirectRtpSender.MaxPayload (1400) — keep in sync.</summary>
