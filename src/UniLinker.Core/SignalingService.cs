@@ -182,7 +182,18 @@ public class SignalingService : IDisposable
             }
         }
 
-        IDirectRtpChannel channel = DirectRtpTransport.Mode switch
+        // The receiver's decode preference ships with the offer and wins
+        // (it is authoritative for this session, like the tier).
+        if (!string.IsNullOrEmpty(msg.TransportPref) &&
+            (msg.TransportPref == "auto" || msg.TransportPref == "tile" ||
+             msg.TransportPref == "sipsorcery" || msg.TransportPref == "rtx"))
+        {
+            DirectRtpTransport.Mode = msg.TransportPref;
+        }
+        var mode = DirectRtpTransport.Mode;
+        if (mode == "auto") mode = ResolveAutoMode(remoteIp.ToString());
+        Log.Info($"[transport] effective mode '{mode}' for {remoteIp} (pref '{DirectRtpTransport.Mode}')");
+        IDirectRtpChannel channel = mode switch
         {
             "tile" => new DirectRtpChannel(
                 peerInfo, msg.Capability ?? "screen-capture",
@@ -285,7 +296,19 @@ public class SignalingService : IDisposable
             .ToList();
         return string.Join("\r\n", kept);
     }
+    /// <summary>
+    /// Resolve the "auto" transport preference by the peer's link medium:
+    /// USB RNDIS (192.168.42.x) has a ~0ms RTT and no airtime budget, so the
+    /// Tile/JPEG path (lowest latency, RTX recovery in one hop) wins;
+    /// WiFi/LAN keep the SIPSorcery H264 session (stable, budget-friendly
+    /// quality with the receiver-driven ladder handling loss). Pure function
+    /// so tests can pin the recommendation table.
+    /// </summary>
+    public static string ResolveAutoMode(string remoteIp) =>
+        remoteIp.StartsWith("192.168.42.", StringComparison.Ordinal) ? "tile" : "sipsorcery";
 }
+
+
 
 /// <summary>
 /// /signaling wire DTO. Serialized AND deserialized with
@@ -307,6 +330,12 @@ public class SignalingMessage
     public int CaptureHeight { get; set; }
     public int BitrateKbps { get; set; }
     public int CaptureFps { get; set; }
+
+    /// <summary>type=="rtp": the receiver's decode preference —
+    /// "auto" | "tile" | "sipsorcery" | "rtx" (empty = keep current).
+    /// Applied to DirectRtpTransport.Mode BEFORE the channel is created,
+    /// so "auto" resolves per connection medium. </summary>
+    public string? TransportPref { get; set; }
 }
 
 /// <summary>/ice wire DTO (camelCase on the wire).</summary>

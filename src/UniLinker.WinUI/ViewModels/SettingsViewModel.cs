@@ -168,9 +168,11 @@ public partial class SettingsViewModel : ObservableObject
             // Transport applies to NEW rtp sessions immediately.
             UniLinker.Plugin.Sdk.DirectRtpTransport.Mode = TransportIndex switch
             {
-                0 => "rtx",
-                2 => "tile",
-                _ => "sipsorcery"
+                0 => "auto",
+                1 => "sipsorcery",
+                2 => "rtx",
+                3 => "tile",
+                _ => "auto"
             };
 
             // Push device name / port into the running platform (recreates

@@ -163,4 +163,14 @@ public class SignalingRtpSessionTests
 
         answer.Should().BeNull("transport maps null to 400 rtpPort required");
     }
+
+    [Fact]
+    public void AutoMode_recommendation_pins_link_medium()
+    {
+        // USB RNDIS: ~0ms RTT, no airtime budget -> Tile wins (low latency).
+        Assert.Equal("tile", SignalingService.ResolveAutoMode("192.168.42.129"));
+        // WiFi hotspot / LAN: SIPSorcery H264 (stable, ladder handles loss).
+        Assert.Equal("sipsorcery", SignalingService.ResolveAutoMode("192.168.137.47"));
+        Assert.Equal("sipsorcery", SignalingService.ResolveAutoMode("10.0.0.5"));
+    }
 }

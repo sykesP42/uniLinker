@@ -283,8 +283,10 @@
                 <ComboBox SelectedIndex="{Binding Settings.TransportIndex, Mode=TwoWay}"
                           HorizontalAlignment="Stretch"
                           MinHeight="36">
-                    <x:String>SIPSorcery（RTPSession 会话，稳定）</x:String>
-                    <x:String>Native RTX（自研管线 + NACK 重传）</x:String>
+                    <x:String>自动（推荐 · USB→Tile 低延迟 / WiFi→SIPSorcery）</x:String>
+                    <x:String>SIPSorcery（H264 硬解 · 稳定高画质）</x:String>
+                    <x:String>Native RTX（H264 硬解 · 自研管线 + NACK）</x:String>
+                    <x:String>Tile（JPEG 软解 · 最低延迟）</x:String>
                 </ComboBox>
             </StackPanel>
 

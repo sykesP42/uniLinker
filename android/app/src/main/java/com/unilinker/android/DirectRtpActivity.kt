@@ -212,6 +212,8 @@ fun DirectRtpScreen(
     var hudMediumOn by remember { mutableStateOf(prefs.getBoolean("hud_medium", false)) }
     val samples = remember { RollingSamples(60) }
     var transportMode by remember { mutableStateOf("sipsorcery") }
+    var decodePref by remember { mutableStateOf(prefs.getString("decode_pref", "auto") ?: "auto") }
+    var hudPollMs by remember { mutableIntStateOf(prefs.getInt("hud_poll_ms", 500)) }
     var chaosLossState by remember { mutableIntStateOf(chaosLoss) }
     var chaosDupState by remember { mutableIntStateOf(chaosDup) }
     var chaosLagState by remember { mutableIntStateOf(chaosLag) }
@@ -317,6 +319,7 @@ fun DirectRtpScreen(
         newClient.chaosLagMs = chaosLag
         android.util.Log.d("DirectRtp", "chaos: loss=$chaosLoss% dup=$chaosDup% lag=${chaosLag}ms")
         newClient.pinnedFingerprint = prefs.getString("pinned_fp", null)
+        newClient.transportPref = decodePref // ships with the offer; PC resolves auto per medium
         android.util.Log.d("DirectRtp", "toggle: pinned=${newClient.pinnedFingerprint} tls=$tlsPort")
         client = newClient
         panelState = PanelState.Connecting
@@ -469,7 +472,7 @@ fun DirectRtpScreen(
         // HUD stat updater: rolling decoded-fps, wire bitrate, jitter — the
         // dashboard reads these raw values through its per-metric switches.
         if (client != null) {
-            LaunchedEffect(Unit) {
+            LaunchedEffect(hudPollMs) {
                 // REAL output fps: the decoder's rendered-frame counter, NOT
                 // the AU submission count — corrupted AUs that MediaCodec
                 // discards must not show as frames (the HUD lied "30fps"
@@ -485,7 +488,7 @@ fun DirectRtpScreen(
                 var stallPolls = 0
                 var lastAutoReconnectMs = 0L
                 while (true) {
-                    kotlinx.coroutines.delay(500)
+                    kotlinx.coroutines.delay(hudPollMs.toLong())
                     sampleTick++
                     val now = System.nanoTime()
                     val dtSec = (now - lastTime) / 1e9

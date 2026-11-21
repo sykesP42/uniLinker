@@ -126,6 +126,10 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
 
     // Chaos injection passthrough (docs/spec/chaos-acceptance.md C1-C5),
     // set from the deep-link extras and applied to the receiver at connect.
+    /** Decode preference shipped with every connect offer:
+     *  "auto" | "tile" | "sipsorcery" | "rtx". */
+    @Volatile var transportPref: String = "auto"
+
     @Volatile var chaosLossPct: Int = 0
     @Volatile var chaosDupPct: Int = 0
     @Volatile var chaosLagMs: Int = 0
@@ -245,6 +249,7 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
             put("capability", "screen-capture")
             put("rtpPort", localPort)
             // Receiver-driven tier (0 values = sender defaults).
+            put("transportPref", transportPref)
             put("captureWidth", tier.width)
             put("captureHeight", tier.height)
             put("bitrateKbps", tier.bitrateKbps)

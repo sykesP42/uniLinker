@@ -228,6 +228,10 @@ fun FloatingPanel(
     fpsLabel: String,
     streaming: Boolean,
     transportMode: String,
+    decodePref: String = "auto",
+    onDecode: (String) -> Unit = {},
+    hudPollMs: Int = 500,
+    onCyclePoll: () -> Unit = {},
     hudFpsOn: Boolean,
     hudMbpsOn: Boolean,
     hudJitterOn: Boolean,
@@ -348,17 +352,22 @@ fun FloatingPanel(
                 TierChip(fpsLabel, Modifier.weight(1f), onCycleFps)
             }
 
-            // Transport (remote switch, auto-reconnect applies it)
-            SectionLabel("传输方式")
+            // Decode method (the recommendation resolves the transport by
+            // the link medium and applies the matching tier).
+            SectionLabel("解码方式")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                TransportChip("SIPSorcery · 稳定", transportMode == "sipsorcery", Modifier.weight(1f)) { onTransport("sipsorcery") }
-                TransportChip("Native RTX · 抗丢包", transportMode == "rtx", Modifier.weight(1f)) { onTransport("rtx") }
+                TransportChip("自动（推荐）", decodePref == "auto", Modifier.weight(1f)) { onDecode("auto") }
+                TransportChip("Tile 软解", decodePref == "tile", Modifier.weight(1f)) { onDecode("tile") }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                TransportChip("Tile · 低延迟推荐", transportMode == "tile", Modifier.fillMaxWidth()) { onTransport("tile") }
+                TransportChip("H264 硬解（画质优先）", decodePref == "h264", Modifier.fillMaxWidth()) { onDecode("h264") }
             }
             Text(
-                "切换后自动重连生效",
+                when (decodePref) {
+                    "auto" -> "自动：USB→Tile 低延迟 · WiFi→SIPSorcery 稳定"
+                    "tile" -> "Tile：JPEG 分块软解，最低延迟，丢包不级联"
+                    else -> "H264：硬件解码管线，稳定高画质（延迟较高）"
+                },
                 style = MaterialTheme.typography.labelSmall, color = TextSecondary,
             )
 
@@ -374,6 +383,23 @@ fun FloatingPanel(
             HudToggleRow("介质", hudMediumOn, onHudMedium)
             androidx.compose.material3.TextButton(onClick = onResetPositions) {
                 Text("重置悬浮位置", style = MaterialTheme.typography.labelSmall, color = Copper)
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(ChipBg)
+                    .clickable { onCyclePoll() }
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text("曲线刷新间隔", style = MaterialTheme.typography.bodySmall, color = TextPrimary)
+                Text(
+                    "$hudPollMs ms",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Copper,
+                )
             }
 
             // Connection
