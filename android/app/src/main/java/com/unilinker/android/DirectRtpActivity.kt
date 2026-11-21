@@ -57,6 +57,8 @@ import com.unilinker.android.mediatier.DirectRtpClient
 import com.unilinker.android.mediatier.H264SurfaceDecoder
 import com.unilinker.android.ui.FloatingBall
 import com.unilinker.android.ui.FloatingPanel
+import com.unilinker.android.ui.PanelState
+import com.unilinker.android.ui.friendlyError
 import com.unilinker.android.ui.theme.StatusError
 import com.unilinker.android.ui.theme.StatusSuccess
 import com.unilinker.android.ui.theme.StatusWarning
@@ -140,7 +142,9 @@ fun DirectRtpScreen(
     var client by remember { mutableStateOf<DirectRtpClient?>(null) }
     var decoder by remember { mutableStateOf<H264SurfaceDecoder?>(null) }
     var surfaceReady by remember { mutableStateOf(false) }
-    var statusText by remember { mutableStateOf("Idle") }
+    var panelState by remember { mutableStateOf(PanelState.Idle) }
+    var statusDetail by remember { mutableStateOf("") }
+    var transientMsg by remember { mutableStateOf<String?>(null) }
     var decodedCount by remember { mutableIntStateOf(0) }
     val scope = rememberCoroutineScope()
     var frameJob by remember { mutableStateOf<Job?>(null) }
@@ -164,7 +168,6 @@ fun DirectRtpScreen(
             else prefs.getInt("tier_fps", 0)
         )
     }
-    var hudText by remember { mutableStateOf("") }
     var ballExpanded by remember { mutableStateOf(false) }
 
     var hudFps by remember { mutableStateOf(0.0) }
@@ -182,15 +185,16 @@ fun DirectRtpScreen(
     var wifiLock by remember { mutableStateOf<android.net.wifi.WifiManager.WifiLock?>(null) }
     var pendingSurface by remember { mutableStateOf<android.graphics.SurfaceTexture?>(null) }
     var textureViewRef by remember { mutableStateOf<android.view.TextureView?>(null) }
-    val hudOn = mapOf(
-        "fps" to hudFpsOn,
-        "mbps" to hudMbpsOn,
-        "jitter" to hudJitterOn,
-        "loss" to hudLossOn,
-        "res" to hudResOn,
-    )
     var hudOffsetX by remember { mutableIntStateOf(prefs.getInt("hud_x", 0)) }
     var hudOffsetY by remember { mutableIntStateOf(prefs.getInt("hud_y", 0)) }
+    // Transient status note (transport switch, chaos tweaks): amber for 3s.
+    LaunchedEffect(transientMsg) {
+        if (transientMsg != null) {
+            kotlinx.coroutines.delay(3000)
+            transientMsg = null
+        }
+    }
+
     fun persistHud() {
         prefs.edit()
             .putBoolean("hud_fps", hudFpsOn)
@@ -239,12 +243,13 @@ fun DirectRtpScreen(
         if (client != null) {
             client?.stop()
             client = null
-            statusText = "Idle"
+            panelState = PanelState.Idle
             return
         }
         val parsed = address.split(":")
         if (parsed.size < 2) {
-            statusText = "Error: address must be ip:port"
+            panelState = PanelState.Error
+            statusDetail = "地址格式应为 IP:端口（如 192.168.42.39:9527）"
             return
         }
         prefs.edit()
@@ -266,7 +271,7 @@ fun DirectRtpScreen(
         newClient.pinnedFingerprint = prefs.getString("pinned_fp", null)
         android.util.Log.d("DirectRtp", "toggle: pinned=${newClient.pinnedFingerprint} tls=$tlsPort")
         client = newClient
-        statusText = "Connecting…"
+        panelState = PanelState.Connecting
         scope.launch {
             // M4 pairing: first contact probes the sender's TLS certificate;
             // the human compares the 6-digit SAS code with the code shown on
@@ -277,7 +282,8 @@ fun DirectRtpScreen(
                 val probe = newClient.probePairing()
                 android.util.Log.d("DirectRtp", "pairing: probe done ok=${probe != null}")
                 if (probe == null) {
-                    statusText = "Error: ${newClient.error.value}"
+                    panelState = PanelState.Error
+                    statusDetail = newClient.error.value ?: ""
                     client = null
                     return@launch
                 }
@@ -297,7 +303,8 @@ fun DirectRtpScreen(
                     }
                 }
                 if (!confirmed) {
-                    statusText = "Error: 配对被拒绝"
+                    panelState = PanelState.Error
+                    statusDetail = "配对被拒绝——请在分享端确认后重试"
                     client = null
                     return@launch
                 }
@@ -306,11 +313,12 @@ fun DirectRtpScreen(
             }
             val ok = newClient.connect(tier)
             if (!ok) {
-                statusText = "Error: ${newClient.error.value}"
+                panelState = PanelState.Error
+                statusDetail = newClient.error.value ?: ""
                 client = null
                 return@launch
             }
-            statusText = "Streaming"
+            panelState = PanelState.Streaming
             transportMode = newClient.transportMode
             // WiFi 省电模式 RTT ~130ms 是无线投屏延迟的最大单项——STREAMING
             // 期间持有 HIGH_PERF 锁（R1，实测收益 ~120ms）。
@@ -542,20 +550,22 @@ fun DirectRtpScreen(
         }
 
         if (client == null) {
+            val centerText = if (panelState == PanelState.Error)
+                "连接失败：${friendlyError(statusDetail)}" else "未连接"
             Text(
-                text = statusText,
+                text = centerText,
                 modifier = Modifier
                     .align(Alignment.Center)
                     .background(Color(0x66000000))
                     .padding(horizontal = 10.dp, vertical = 4.dp),
                 style = MaterialTheme.typography.bodyMedium,
-                color = if (statusText.startsWith("Error")) Color.Red else Color.White,
+                color = if (panelState == PanelState.Error) StatusError else Color.White,
             )
             Button(
                 onClick = { toggleConnect() },
                 modifier = Modifier.align(Alignment.Center).padding(top = 60.dp),
             ) {
-                Text("Connect (direct RTP)")
+                Text(if (panelState == PanelState.Connecting) "连接中…" else "连接投屏")
             }
         }
 
@@ -568,7 +578,9 @@ fun DirectRtpScreen(
 
         if (ballExpanded) {
             FloatingPanel(
-                statusText = statusText,
+                state = panelState,
+                statusDetail = statusDetail,
+                transient = transientMsg,
                 resIdx = resIdx,
                 brIdx = brIdx,
                 fpsIdx = fpsIdx,
@@ -610,7 +622,7 @@ fun DirectRtpScreen(
                     wifiLock?.release()
                     wifiLock = null
                     ballExpanded = false
-                    statusText = "Idle"
+                    panelState = PanelState.Idle
                 },
                 onPreset = { r, b, f ->
                     resIdx = r; brIdx = b; fpsIdx = f
@@ -622,7 +634,8 @@ fun DirectRtpScreen(
                     transportMode = mode
                     scope.launch {
                         val ok = client?.setTransport(mode) ?: false
-                        statusText = if (ok) "传输方式 → $mode（重连生效）" else "传输方式设置失败"
+                        transientMsg = if (ok) "传输方式 → $mode（重连生效）" else "传输方式设置失败"
+                        if (ok) panelState = PanelState.Connecting
                         if (ok) {
                             kotlinx.coroutines.delay(400)
                             client?.stop()

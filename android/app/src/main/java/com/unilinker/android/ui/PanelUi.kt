@@ -68,6 +68,37 @@ internal val ChipSelectedBg = Copper.copy(alpha = 0.18f)
 internal val OkBg = StatusSuccess.copy(alpha = 0.16f)
 internal val DangerBg = StatusError.copy(alpha = 0.16f)
 
+/** Connection lifecycle for the status line — replaces the old
+ *  startsWith("Error")/contains("传输") magic-string matching that broke
+ *  whenever a copy tweak moved a word. */
+enum class PanelState { Idle, Connecting, Streaming, Error }
+
+/** Raw sender errors mapped to copy a human can act on. */
+internal fun friendlyError(raw: String?): String {
+    val r = raw ?: return "未知错误"
+    return when {
+        r.contains("ECONNREFUSED", true) || r.contains("ConnectException", true) ||
+            r.contains("connect failed", true) ->
+            "无法连接分享端——请确认地址端口正确、分享端已启动"
+        r.contains("fingerprint mismatch", true) ->
+            "设备指纹与首次配对不符——分享端证书已变化，需重新配对"
+        r.contains("pairing", true) -> "配对探测失败——请确认分享端已启动"
+        r.contains("404") -> "信令服务不可用（404）"
+        r.contains("WRONG_VERSION_NUMBER", true) -> "端口指向了非 TLS 监听——请使用配对端口 9528"
+        else -> r
+    }
+}
+
+/** Quality presets as (resIdx, brIdx, fpsIdx) — index-based so the tables
+ *  stay owned by the activity; 极致 pairs the 32M budget with 60fps. */
+internal data class QualityPreset(val label: String, val res: Int, val br: Int, val fps: Int)
+internal val QualityPresets = listOf(
+    QualityPreset("流畅", 0, 0, 0),
+    QualityPreset("均衡", 0, 1, 0),
+    QualityPreset("高清", 1, 2, 0),
+    QualityPreset("极致", 0, 2, 1),
+)
+
 /** Draggable floating ball; auto-dims after 3 s without touch. Tap = toggle. */
 @Composable
 fun FloatingBall(expanded: Boolean, streaming: Boolean, onToggle: () -> Unit) {
@@ -147,7 +178,9 @@ fun FloatingBall(expanded: Boolean, streaming: Boolean, onToggle: () -> Unit) {
  */
 @Composable
 fun FloatingPanel(
-    statusText: String,
+    state: PanelState,
+    statusDetail: String,
+    transient: String?,
     resIdx: Int,
     brIdx: Int,
     fpsIdx: Int,
@@ -174,11 +207,15 @@ fun FloatingPanel(
     onDisconnect: () -> Unit,
     onTransport: (String) -> Unit,
 ) {
-    val statusColor = when {
-        statusText.startsWith("Streaming") || statusText.contains("传输") -> StatusSuccess
-        statusText.startsWith("Error") || statusText.contains("失败") -> StatusError
-        statusText.startsWith("Connecting") -> StatusWarning
-        else -> TextSecondary
+    // Status line: a transient note (transport switching, chaos injection)
+    // overrides the lifecycle state for a few seconds; otherwise the state
+    // maps to steady copy + color.
+    val (statusText, statusColor) = when {
+        transient != null -> transient to StatusWarning
+        state == PanelState.Streaming -> "投屏中" to StatusSuccess
+        state == PanelState.Connecting -> "连接中…" to StatusWarning
+        state == PanelState.Error -> "连接失败：${friendlyError(statusDetail)}" to StatusError
+        else -> "未连接" to TextSecondary
     }
 
     Box(modifier = Modifier.fillMaxSize().zIndex(2f)) {
@@ -210,12 +247,15 @@ fun FloatingPanel(
                 Text(statusText, style = MaterialTheme.typography.bodySmall, color = statusColor)
             }
 
-            // Quality presets
-            SectionLabel("画质预设")
+            // Quality presets — selected derived from the CURRENT tier, so a
+            // manual tier change re-aligns the highlight (the old exact-triple
+            // chips went all-dark the moment anything cycled).
+            SectionLabel("画质")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                PresetChip("流畅", resIdx == 0 && brIdx == 0 && fpsIdx == 0, Modifier.weight(1f)) { onPreset(0, 0, 0) }
-                PresetChip("均衡", resIdx == 0 && brIdx == 1 && fpsIdx == 0, Modifier.weight(1f)) { onPreset(0, 1, 0) }
-                PresetChip("高清", resIdx == 1 && brIdx == 2 && fpsIdx == 0, Modifier.weight(1f)) { onPreset(1, 2, 0) }
+                QualityPresets.forEachIndexed { i, p ->
+                    PresetChip(p.label, resIdx == p.res && brIdx == p.br && fpsIdx == p.fps,
+                        Modifier.weight(1f)) { onPreset(p.res, p.br, p.fps) }
+                }
             }
 
             // Advanced tiers
@@ -229,14 +269,14 @@ fun FloatingPanel(
             // Transport (remote switch, auto-reconnect applies it)
             SectionLabel("传输方式")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                TransportChip("SIPSorcery", transportMode == "sipsorcery", Modifier.weight(1f)) { onTransport("sipsorcery") }
-                TransportChip("Native RTX", transportMode == "rtx", Modifier.weight(1f)) { onTransport("rtx") }
+                TransportChip("SIPSorcery · 稳定", transportMode == "sipsorcery", Modifier.weight(1f)) { onTransport("sipsorcery") }
+                TransportChip("Native RTX · 抗丢包", transportMode == "rtx", Modifier.weight(1f)) { onTransport("rtx") }
             }
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
-                TransportChip("Tile（USB 直连）", transportMode == "tile", Modifier.fillMaxWidth()) { onTransport("tile") }
+                TransportChip("Tile · 低延迟推荐", transportMode == "tile", Modifier.fillMaxWidth()) { onTransport("tile") }
             }
             Text(
-                "切换后自动重连生效 · SIPSorcery 稳定 / RTX 抗丢包 / Tile 低延迟高画质",
+                "切换后自动重连生效",
                 style = MaterialTheme.typography.labelSmall, color = TextSecondary,
             )
 
