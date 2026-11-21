@@ -197,6 +197,7 @@ fun DirectRtpScreen(
     var hudFps by remember { mutableStateOf(0.0) }
     var hudMbps by remember { mutableStateOf(0.0) }
     var hudJitter by remember { mutableStateOf(0.0) }
+    var liveLossPct by remember { mutableStateOf(0.0) }
 
     // HUD dashboard: per-metric switches (persisted) + draggable position.
     var hudFpsOn by remember { mutableStateOf(prefs.getBoolean("hud_fps", true)) }
@@ -204,6 +205,9 @@ fun DirectRtpScreen(
     var hudJitterOn by remember { mutableStateOf(prefs.getBoolean("hud_jitter", true)) }
     var hudLossOn by remember { mutableStateOf(prefs.getBoolean("hud_loss", true)) }
     var hudResOn by remember { mutableStateOf(prefs.getBoolean("hud_res", true)) }
+    var hudEnabled by remember { mutableStateOf(prefs.getBoolean("hud_enabled", true)) }
+    var sampleTick by remember { mutableIntStateOf(0) }
+    val panelScroll = androidx.compose.foundation.rememberScrollState()
     var hudChartOn by remember { mutableStateOf(prefs.getBoolean("hud_chart", true)) }
     var hudMediumOn by remember { mutableStateOf(prefs.getBoolean("hud_medium", false)) }
     val samples = remember { RollingSamples(60) }
@@ -241,6 +245,7 @@ fun DirectRtpScreen(
             .putBoolean("hud_jitter", hudJitterOn)
             .putBoolean("hud_loss", hudLossOn)
             .putBoolean("hud_res", hudResOn)
+            .putBoolean("hud_enabled", hudEnabled)
             .putBoolean("hud_chart", hudChartOn)
             .putBoolean("hud_medium", hudMediumOn)
             .putInt("hud_x", hudOffsetX)
@@ -481,6 +486,7 @@ fun DirectRtpScreen(
                 var lastAutoReconnectMs = 0L
                 while (true) {
                     kotlinx.coroutines.delay(500)
+                    sampleTick++
                     val now = System.nanoTime()
                     val dtSec = (now - lastTime) / 1e9
                     val c = client
@@ -520,6 +526,8 @@ fun DirectRtpScreen(
                     hudFps = dFrames / dtSec
                     hudMbps = dBytes * 8 / dtSec / 1e6
                     hudJitter = c.receiverJitter
+                    val lw = c.receiverLossWindow ?: Pair(0, 0)
+                    liveLossPct = if (lw.second > 0) lw.first * 100.0 / lw.second else 0.0
                     val (lostN, totalN) = c.receiverLossWindow ?: Pair(0, 0)
                     samples.push(
                         hudFps.toFloat(),
@@ -545,9 +553,12 @@ fun DirectRtpScreen(
         }
 
         // HUD dashboard — default TOP-END, draggable, per-metric switches.
-        // Hidden while the panel is open: both anchor TopEnd and the panel
-        // (zIndex 2) fully covered it anyway.
-        if (!ballExpanded) HudDashboard(
+        // Hidden while the panel is open (both anchor TopEnd; the header
+        // stats strip keeps the numbers visible while adjusting). Master
+        // switch off, or every row+chart off, renders nothing.
+        val hudHasContent = hudRows().isNotEmpty() || hudChartOn || hudMediumOn
+        if (!ballExpanded && hudEnabled && hudHasContent) HudDashboard(
+            modifier = Modifier.align(Alignment.TopEnd),
             rows = hudRows(),
             samples = samples,
             chartOn = hudChartOn,
@@ -555,6 +566,7 @@ fun DirectRtpScreen(
             medium = client?.medium ?: "",
             offsetX = hudOffsetX,
             offsetY = hudOffsetY,
+            sampleTick = sampleTick,
             onDrag = { dx, dy -> hudOffsetX += dx.toInt(); hudOffsetY += dy.toInt() },
             onDragEnd = { persistHud() },
         )
@@ -676,6 +688,18 @@ fun DirectRtpScreen(
                 state = panelState,
                 statusDetail = statusDetail,
                 transient = transientMsg,
+                scrollState = panelScroll,
+                sampleTick = sampleTick,
+                liveFps = hudFps,
+                liveMbps = hudMbps,
+                liveLossPct = liveLossPct,
+                hudEnabled = hudEnabled,
+                onHudEnabled = { hudEnabled = it; persistHud() },
+                onResetPositions = {
+                    hudOffsetX = 0; hudOffsetY = 0
+                    ballOffsetX = 0; ballOffsetY = 0
+                    persistHud(); persistBall()
+                },
                 resIdx = resIdx,
                 brIdx = brIdx,
                 fpsIdx = fpsIdx,

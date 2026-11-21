@@ -17,6 +17,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Offset
@@ -49,10 +51,18 @@ class RollingSamples(private val capacity: Int = 60) {
     private var count = 0
     private var head = 0
 
+    /** Snapshot-state version bumped on every push: the Canvas draw lambdas
+     *  read it, so a push invalidates the DRAW phase directly — the charts
+     *  track the ring live with zero recomposition (a skipped composable
+     *  with an unchanged params list would never redraw otherwise). */
+    var version by androidx.compose.runtime.mutableIntStateOf(0)
+        private set
+
     fun push(f: Float, m: Float, l: Float) {
         fps[head] = f; mbps[head] = m; loss[head] = l
         head = (head + 1) % capacity
         if (count < capacity) count++
+        version++
     }
 
     /** Oldest→newest copy of one track; size = min(count, capacity). */
@@ -97,6 +107,7 @@ private fun androidx.compose.ui.graphics.drawscope.DrawScope.drawTrace(
 @Composable
 fun MiniChart(samples: RollingSamples, modifier: Modifier = Modifier) {
     Canvas(modifier = modifier.height(44.dp).fillMaxWidth()) {
+        @Suppress("UNUSED_EXPRESSION") samples.version // draw-phase state read → live redraw
         val w = size.width
         val h = size.height
         val stroke = 2.dp.toPx()
@@ -122,6 +133,7 @@ fun PanelChart(samples: RollingSamples, modifier: Modifier = Modifier) {
                 .fillMaxWidth()
                 .background(BackgroundDeep.copy(alpha = 0.6f), RoundedCornerShape(6.dp)),
         ) {
+            @Suppress("UNUSED_EXPRESSION") samples.version // draw-phase state read → live redraw
             val w = size.width
             val h = size.height
             val stroke = 2.dp.toPx()
@@ -156,11 +168,13 @@ fun HudDashboard(
     medium: String,
     offsetX: Int,
     offsetY: Int,
+    sampleTick: Int = 0,
+    modifier: Modifier = Modifier,
     onDrag: (Float, Float) -> Unit,
     onDragEnd: () -> Unit,
 ) {
     Column(
-        modifier = Modifier
+        modifier = modifier
             .offset { IntOffset(offsetX, offsetY) }
             .width(190.dp)
             .background(BackgroundDeep.copy(alpha = 0.67f), RoundedCornerShape(8.dp))
@@ -201,6 +215,10 @@ fun HudDashboard(
         }
         if (chartOn && samples != null) {
             Spacer(Modifier.height(2.dp))
+            // sampleTick re-runs this block on every poll tick so the mini
+            // chart tracks the ring buffer live (same-object redraws need
+            // the state bump).
+            @Suppress("UNUSED_EXPRESSION") sampleTick
             MiniChart(samples)
         }
     }

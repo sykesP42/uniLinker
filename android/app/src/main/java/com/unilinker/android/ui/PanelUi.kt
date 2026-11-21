@@ -208,6 +208,14 @@ fun FloatingPanel(
     state: PanelState,
     statusDetail: String,
     transient: String?,
+    scrollState: androidx.compose.foundation.ScrollState,
+    sampleTick: Int = 0,
+    liveFps: Double = 0.0,
+    liveMbps: Double = 0.0,
+    liveLossPct: Double = 0.0,
+    hudEnabled: Boolean = true,
+    onHudEnabled: (Boolean) -> Unit = {},
+    onResetPositions: () -> Unit = {},
     resIdx: Int,
     brIdx: Int,
     fpsIdx: Int,
@@ -266,7 +274,7 @@ fun FloatingPanel(
                 .clip(RoundedCornerShape(12.dp))
                 .background(PanelBg)
                 .border(1.dp, PanelBorder, RoundedCornerShape(12.dp))
-                .verticalScroll(rememberScrollState())
+                .verticalScroll(scrollState)
                 .padding(14.dp),
             verticalArrangement = Arrangement.spacedBy(10.dp),
         ) {
@@ -285,6 +293,24 @@ fun FloatingPanel(
                 Box(Modifier.size(8.dp).clip(CircleShape).background(statusColor))
                 Spacer(Modifier.width(6.dp))
                 Text(statusText, style = MaterialTheme.typography.bodySmall, color = statusColor)
+            }
+            if (state == PanelState.Streaming) {
+                // Live stats strip: the numbers stay visible while adjusting —
+                // the HUD hides under this panel (both TopEnd).
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(ChipBg)
+                        .padding(horizontal = 10.dp, vertical = 5.dp),
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                ) {
+                    @Suppress("UNUSED_EXPRESSION")
+                    sampleTick
+                    Text("%2.0f fps".format(liveFps), style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"), color = TextPrimary)
+                    Text("%4.1f Mbps".format(liveMbps), style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"), color = TextPrimary)
+                    Text("丢包 %4.1f%%".format(liveLossPct), style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"), color = TextSecondary)
+                }
             }
 
             // Quality presets — selected derived from the CURRENT tier, so a
@@ -333,6 +359,7 @@ fun FloatingPanel(
 
             // HUD visibility
             SectionLabel("HUD 显示项")
+            HudToggleRow("显示 HUD（总开关）", hudEnabled, onHudEnabled)
             HudToggleRow("帧率", hudFpsOn, onHudFps)
             HudToggleRow("码率", hudMbpsOn, onHudMbps)
             HudToggleRow("抖动", hudJitterOn, onHudJitter)
@@ -340,6 +367,9 @@ fun FloatingPanel(
             HudToggleRow("分辨率", hudResOn, onHudRes)
             HudToggleRow("曲线", hudChartOn, onHudChart)
             HudToggleRow("介质", hudMediumOn, onHudMedium)
+            androidx.compose.material3.TextButton(onClick = onResetPositions) {
+                Text("重置悬浮位置", style = MaterialTheme.typography.labelSmall, color = Copper)
+            }
 
             // Connection
             SectionLabel("连接")
