@@ -30,10 +30,10 @@ import android.view.Surface
  *   single-digit fps). DEFAULT gives them the fair-share rest.
  */
 class TileRenderer(
-    private val surfaceTexture: android.graphics.SurfaceTexture,
+    private val surface: Surface,
+    private val setBufferSize: (Int, Int) -> Unit,
     private val dumpDir: String? = null,
 ) : AutoCloseable {
-    private val surface = Surface(surfaceTexture)
 
     // Double-buffered accumulation (both created at the tier size).
     private var writeBuf: Bitmap? = null
@@ -150,7 +150,7 @@ class TileRenderer(
                 readBuf = Bitmap.createBitmap(frameW, frameH, Bitmap.Config.ARGB_8888)
                 if (bufferSizedFor != frameW to frameH) {
                     try {
-                        surfaceTexture.setDefaultBufferSize(frameW, frameH)
+                        setBufferSize(frameW, frameH)
                     } catch (e: Exception) {
                     }
                     bufferSizedFor = frameW to frameH

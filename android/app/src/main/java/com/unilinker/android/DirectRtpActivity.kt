@@ -224,8 +224,8 @@ fun DirectRtpScreen(
     var chaosLagState by remember { mutableIntStateOf(chaosLag) }
     var tileRenderer by remember { mutableStateOf<com.unilinker.android.mediatier.TileRenderer?>(null) }
     var wifiLock by remember { mutableStateOf<android.net.wifi.WifiManager.WifiLock?>(null) }
-    var pendingSurface by remember { mutableStateOf<android.graphics.SurfaceTexture?>(null) }
-    var textureViewRef by remember { mutableStateOf<android.view.TextureView?>(null) }
+    var pendingSurface by remember { mutableStateOf<Surface?>(null) }
+    var textureViewRef by remember { mutableStateOf<android.view.View?>(null) }
     var hudOffsetX by remember { mutableIntStateOf(prefs.getInt("hud_x", 0)) }
     var hudOffsetY by remember { mutableIntStateOf(prefs.getInt("hud_y", 0)) }
     // Pending pairing ask: (sasCode, fingerprint) or null; the deferred is
@@ -400,7 +400,9 @@ fun DirectRtpScreen(
                                 val dumpDir = (textureViewRef?.context as? android.app.Activity)
                                     ?.getExternalFilesDir(null)?.absolutePath
                                 val r = com.unilinker.android.mediatier.TileRenderer(
-                                    pendingSurface ?: return@collect, dumpDir)
+                                    pendingSurface ?: return@collect,
+                                    { w, h -> (textureViewRef as? android.view.SurfaceView)?.holder?.setFixedSize(w, h) },
+                                    dumpDir)
                                 tileRenderer = r
                                 r
                             }
@@ -414,7 +416,7 @@ fun DirectRtpScreen(
                         if (surfaceReady) {
                             val dec = decoder ?: run {
                                 val st = pendingSurface ?: return@collect
-                                val d = com.unilinker.android.mediatier.H264SurfaceDecoder(Surface(st))
+                                val d = com.unilinker.android.mediatier.H264SurfaceDecoder(st)
                                 decoder = d
                                 d
                             }
@@ -442,52 +444,47 @@ fun DirectRtpScreen(
     }
 
     Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-        // Video surface fills the screen; every configured tier is 16:10, the
-        // same ratio as the panel display, so fill = correct aspect.
-        // TextureView, not SurfaceView: it composes as a NORMAL view, so the
-        // HUD/floating ball sit above it without Z-order tricks, and Compose
-        // can overlay anything. (setZOrderOnTop(true) made the video cover
-        // the entire Compose layer — HUD was invisible.)
+        // Video surface: SurfaceView with the DEFAULT z-order (behind the
+        // window) - the view itself is the transparent hole through which the
+        // video shows, and the Compose HUD draws ABOVE it naturally. The M4
+        // failure used setZOrderOnTop(true), which put the video ABOVE the
+        // whole Compose layer (the flag was the problem, not SurfaceView).
+        // SurfaceView composites its buffers DIRECTLY via SurfaceFlinger -
+        // no UI draw pass needed, one less latency layer than TextureView
+        // (whose new frames only appear during the UI traversal).
         AndroidView(
             modifier = Modifier.fillMaxSize(),
             factory = { ctx ->
-                val tv = android.view.TextureView(ctx)
-                tv.apply {
-                    surfaceTextureListener = object : TextureView.SurfaceTextureListener {
-                        override fun onSurfaceTextureAvailable(
-                            st: SurfaceTexture,
-                            width: Int,
-                            height: Int,
-                        ) {
+                val sv = android.view.SurfaceView(ctx)
+                sv.apply {
+                    setZOrderOnTop(false)
+                    setZOrderMediaOverlay(false)
+                    holder.setFormat(android.graphics.PixelFormat.OPAQUE)
+                    holder.addCallback(object : android.view.SurfaceHolder.Callback {
+                        override fun surfaceCreated(holder: android.view.SurfaceHolder) {
                             // Store the surface; the mode-specific pipeline
                             // (MediaCodec OR tile canvas) is created LAZILY
-                            // at first data. Attaching MediaCodec to the
-                            // SurfaceTexture AND drawing tiles via canvas put
-                            // two producers on one buffer queue = black screen.
-                            pendingSurface = st
-                            textureViewRef = tv
+                            // at first data.
+                            pendingSurface = holder.surface
                             surfaceReady = true
                         }
 
-                        override fun onSurfaceTextureSizeChanged(
-                            st: SurfaceTexture,
+                        override fun surfaceChanged(
+                            holder: android.view.SurfaceHolder,
+                            format: Int,
                             width: Int,
                             height: Int,
                         ) {}
 
-                        override fun onSurfaceTextureDestroyed(st: SurfaceTexture): Boolean {
+                        override fun surfaceDestroyed(holder: android.view.SurfaceHolder) {
                             surfaceReady = false
                             decoder?.close()
                             decoder = null
                             tileRenderer?.close()
                             tileRenderer = null
                             pendingSurface = null
-                            textureViewRef = null
-                            return true
                         }
-
-                        override fun onSurfaceTextureUpdated(st: SurfaceTexture) {}
-                    }
+                    })
                 }
             },
         )
