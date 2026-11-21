@@ -536,8 +536,13 @@ fun DirectRtpScreen(
                     lastBytes = st.third
                     lastTime = now
                     if (dtSec <= 0) continue
-                    hudFps = dFrames / dtSec
-                    hudMbps = dBytes * 8 / dtSec / 1e6
+                    // EMA-smoothed readouts: the raw per-window values jump
+                    // 0-70 window to window (paced bursts + counter resets) -
+                    // the smoothed series matches what the eye perceives.
+                    val instFps = dFrames / dtSec
+                    val instMbps = dBytes * 8 / dtSec / 1e6
+                    hudFps = if (hudFps > 0) hudFps * 0.6 + instFps * 0.4 else instFps
+                    hudMbps = if (hudMbps > 0) hudMbps * 0.6 + instMbps * 0.4 else instMbps
                     hudJitter = c.receiverJitter
                     val lw = c.receiverLossWindow ?: Pair(0, 0)
                     liveLossPct = if (lw.second > 0) lw.first * 100.0 / lw.second else 0.0

@@ -100,10 +100,13 @@ class DirectRtpReceiver(
     @Volatile var bytesReceived: Long = 0
         private set
 
-    /** RFC-3550-style interarrival jitter (ms), exponentially smoothed. */
+    /** Frame-cadence jitter (ms): at each frame boundary the deviation of
+     *  the arrival spacing from the sender's timestamp spacing — the stutter
+     *  the eye perceives. Exponentially smoothed. */
     @Volatile var jitterMs: Double = 0.0
         private set
-    private var lastArrivalMs: Long = -1
+    private var lastFrameRtpTs = -1L
+    private var lastFrameArrivalNs = 0L
 
     /** Sliding loss window: (timestampMs, lost?) per packet, trimmed to 5 s.
      *  Guarded by [lossGate] — the RTP loop mutates it while the HUD poller
@@ -377,16 +380,34 @@ class DirectRtpReceiver(
             )
             return@synchronized
         }
-        // Shared accounting (jitter/bytes/loss-window) runs for BOTH payload
+        // Shared accounting (bytes/loss-window/jitter) runs for BOTH payload
         // types — the tile branch once returned early and skipped it, making
         // the HUD report 100% loss on a healthy stream.
-        // RFC-3550-style interarrival jitter, exponentially smoothed.
-        if (lastArrivalMs > 0) {
-            val delta = (nowArrival - lastArrivalMs).coerceAtLeast(0).toDouble()
-            jitterMs += (kotlin.math.abs(delta - 33.3) - jitterMs) / 16.0
-        }
-        lastArrivalMs = nowArrival
         bytesReceived += bytes.size
+        // Frame-cadence jitter: at each FRAME boundary (RTP timestamp change)
+        // compare the arrival spacing with the sender's timestamp spacing
+        // (90kHz clock) — their difference is the network-induced cadence
+        // jitter, exactly the stutter the eye perceives. The old algorithm
+        // compared PACKET arrival against the hardcoded 33.3ms FRAME interval
+        // — at ~3000pps every packet contributed ~33ms of fake jitter and the
+        // readout was a constant lie.
+        val rtpTs = ((clear[4].toInt() and 0xFF).toLong() shl 24) or
+            ((clear[5].toInt() and 0xFF).toLong() shl 16) or
+            ((clear[6].toInt() and 0xFF).toLong() shl 8) or
+            (clear[7].toInt() and 0xFF).toLong()
+        val nowNs = System.nanoTime()
+        if (rtpTs != lastFrameRtpTs) {
+            if (lastFrameRtpTs != -1L && lastFrameArrivalNs > 0) {
+                val dArrMs = (nowNs - lastFrameArrivalNs) / 1e6
+                val dSendMs = ((rtpTs - lastFrameRtpTs + 0x100000000L) % 0x100000000L) / 90.0
+                if (dSendMs > 0) {
+                    val dev = kotlin.math.abs(dArrMs - dSendMs)
+                    jitterMs += (dev - jitterMs) / 8.0
+                }
+            }
+            lastFrameRtpTs = rtpTs
+            lastFrameArrivalNs = nowNs
+        }
         synchronized(lossGate) {
             lossWindow.add(Pair(nowArrival, false))
             val cutoff = nowArrival - 5000L
@@ -415,14 +436,6 @@ class DirectRtpReceiver(
             }
             return@synchronized
         }
-
-        // RFC-3550-style interarrival jitter, exponentially smoothed.
-        if (lastArrivalMs > 0) {
-            val delta = (nowArrival - lastArrivalMs).coerceAtLeast(0).toDouble()
-            jitterMs += (kotlin.math.abs(delta - 33.3) - jitterMs) / 16.0
-        }
-        lastArrivalMs = nowArrival
-        bytesReceived += bytes.size
 
         val marker = (clear[1].toInt() and 0x80) != 0
         nalBuffer.addAll(depacketizer.push(H264RtpDepacketizer.rtpPayload(clear)))
