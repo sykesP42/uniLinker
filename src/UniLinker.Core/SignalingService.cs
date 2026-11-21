@@ -315,15 +315,14 @@ public class SignalingService : IDisposable
         return string.Join("\r\n", kept);
     }
     /// <summary>
-    /// Resolve the "auto" transport preference by the peer's link medium:
-    /// USB RNDIS (192.168.42.x) has a ~0ms RTT and no airtime budget, so the
-    /// Tile/JPEG path (lowest latency, RTX recovery in one hop) wins;
-    /// WiFi/LAN keep the SIPSorcery H264 session (stable, budget-friendly
-    /// quality with the receiver-driven ladder handling loss). Pure function
-    /// so tests can pin the recommendation table.
+    /// Resolve the "auto" transport preference. USER VERDICT (2026-11-22):
+    /// SIPSorcery H264 feels smooth at any latency (complete frames, steady
+    /// decoder pacing), while the Tile incremental path reads as jittery on
+    /// video content — smoothness outranks raw latency, so auto always picks
+    /// SIPSorcery. Tile stays a MANUAL choice for latency-sensitive static
+    /// use. Pure function so tests can pin the recommendation table.
     /// </summary>
-    public static string ResolveAutoMode(string remoteIp) =>
-        remoteIp.StartsWith("192.168.42.", StringComparison.Ordinal) ? "tile" : "sipsorcery";
+    public static string ResolveAutoMode(string remoteIp) => "sipsorcery";
 }
 
 

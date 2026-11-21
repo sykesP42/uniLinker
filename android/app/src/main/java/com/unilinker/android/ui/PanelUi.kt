@@ -383,7 +383,7 @@ fun FloatingPanel(
             }
             Text(
                 when {
-                    decodePref == "auto" -> "自动：USB→Tile 低延迟 · WiFi→SIPSorcery 稳定（自动重连生效）"
+                    decodePref == "auto" -> "自动：SIPSorcery 稳定流畅——看视频/日常首选（Tile 留给低延迟交互）"
                     decodePref == "tile" -> "Tile：JPEG 分块软解 2ms/格——本机最快解码路径，丢包不级联"
                     decodePref == "tile-hq" -> "Tile 高画质：JPEG q92，码率 ~1.5×，画质优先"
                     decodePref == "sipsorcery" -> "H264 硬解：本机 Venus 管线地板 ~100ms——比 Tile 慢，胜在码率效率"
