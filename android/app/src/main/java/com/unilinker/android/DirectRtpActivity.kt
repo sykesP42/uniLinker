@@ -57,6 +57,8 @@ import com.unilinker.android.mediatier.CaptureTier
 import com.unilinker.android.mediatier.DirectRtpClient
 import com.unilinker.android.mediatier.H264SurfaceDecoder
 import com.unilinker.android.ui.FloatingBall
+import com.unilinker.android.ui.HudDashboard
+import com.unilinker.android.ui.RollingSamples
 import com.unilinker.android.ui.FloatingPanel
 import com.unilinker.android.ui.PanelState
 import com.unilinker.android.ui.friendlyError
@@ -202,6 +204,9 @@ fun DirectRtpScreen(
     var hudJitterOn by remember { mutableStateOf(prefs.getBoolean("hud_jitter", true)) }
     var hudLossOn by remember { mutableStateOf(prefs.getBoolean("hud_loss", true)) }
     var hudResOn by remember { mutableStateOf(prefs.getBoolean("hud_res", true)) }
+    var hudChartOn by remember { mutableStateOf(prefs.getBoolean("hud_chart", true)) }
+    var hudMediumOn by remember { mutableStateOf(prefs.getBoolean("hud_medium", false)) }
+    val samples = remember { RollingSamples(60) }
     var transportMode by remember { mutableStateOf("sipsorcery") }
     var chaosLossState by remember { mutableIntStateOf(chaosLoss) }
     var chaosDupState by remember { mutableIntStateOf(chaosDup) }
@@ -227,6 +232,8 @@ fun DirectRtpScreen(
             .putBoolean("hud_jitter", hudJitterOn)
             .putBoolean("hud_loss", hudLossOn)
             .putBoolean("hud_res", hudResOn)
+            .putBoolean("hud_chart", hudChartOn)
+            .putBoolean("hud_medium", hudMediumOn)
             .putInt("hud_x", hudOffsetX)
             .putInt("hud_y", hudOffsetY)
             .apply()
@@ -520,6 +527,12 @@ fun DirectRtpScreen(
                     hudFps = dFrames / dtSec
                     hudMbps = dBytes * 8 / dtSec / 1e6
                     hudJitter = c.receiverJitter
+                    val (lostN, totalN) = c.receiverLossWindow ?: Pair(0, 0)
+                    samples.push(
+                        hudFps.toFloat(),
+                        hudMbps.toFloat(),
+                        (if (totalN > 0) lostN * 100f / totalN else 0f),
+                    )
                     android.util.Log.d("DirectRtp",
                         "hud: fps=${"%.1f".format(hudFps)} dFrames=$dFrames decoded=${decoder?.decodedFrames} decNull=${decoder == null} sReady=$surfaceReady subCount=$decodedCount state=${c.state.value} pkts=${st.first} assembled=${c.receiverAssembledAUs} corruptDropped=${c.receiverDroppedCorruptAUs} pendingNals=${c.receiverNalsBuffered}")
 
@@ -539,42 +552,17 @@ fun DirectRtpScreen(
         }
 
         // HUD dashboard — default TOP-END, draggable, per-metric switches.
-        Column(
-            modifier = Modifier
-                .align(Alignment.TopEnd)
-                .padding(10.dp)
-                .offset { IntOffset(hudOffsetX, hudOffsetY) }
-                .width(190.dp)
-                .background(com.unilinker.android.ui.theme.BackgroundDeep.copy(alpha = 0.67f), RoundedCornerShape(8.dp))
-                .padding(horizontal = 8.dp, vertical = 5.dp)
-                .pointerInput(Unit) {
-                    detectDragGestures(
-                        onDrag = { change, drag ->
-                            change.consume()
-                            hudOffsetX += drag.x.toInt()
-                            hudOffsetY += drag.y.toInt()
-                        },
-                        onDragEnd = { persistHud() },
-                    )
-                },
-            verticalArrangement = Arrangement.spacedBy(1.dp),
-        ) {
-            hudRows().forEach { (label, value, color) ->
-                Row(modifier = Modifier.fillMaxWidth()) {
-                    Text(
-                        label,
-                        modifier = Modifier.weight(1f),
-                        style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
-                        color = TextTertiary,
-                    )
-                    Text(
-                        value,
-                        style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
-                        color = color,
-                    )
-                }
-            }
-        }
+        HudDashboard(
+            rows = hudRows(),
+            samples = samples,
+            chartOn = hudChartOn,
+            mediumOn = hudMediumOn,
+            medium = client?.medium ?: "",
+            offsetX = hudOffsetX,
+            offsetY = hudOffsetY,
+            onDrag = { dx, dy -> hudOffsetX += dx.toInt(); hudOffsetY += dy.toInt() },
+            onDragEnd = { persistHud() },
+        )
 
         if (client == null) {
             // Idle card: status + address input + connect — the no-adb path.
@@ -670,6 +658,7 @@ fun DirectRtpScreen(
                 onRefresh = {
                     scope.launch { client?.requestKeyFrame() }
                 },
+                samples = samples,
                 chaosLoss = chaosLossState,
                 chaosDup = chaosDupState,
                 chaosLagMs = chaosLagState,
@@ -687,6 +676,8 @@ fun DirectRtpScreen(
                 onHudJitter = { hudJitterOn = it; persistHud() },
                 onHudLoss = { hudLossOn = it; persistHud() },
                 onHudRes = { hudResOn = it; persistHud() },
+                onHudChart = { hudChartOn = it; persistHud() },
+                onHudMedium = { hudMediumOn = it; persistHud() },
                 onCycleRes = {
                     resIdx = (resIdx + 1) % resOptions.size
                     prefs.edit().putInt("tier_res", resIdx).apply()

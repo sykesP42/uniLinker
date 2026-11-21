@@ -207,8 +207,11 @@ fun FloatingPanel(
     hudJitterOn: Boolean,
     hudLossOn: Boolean,
     hudResOn: Boolean,
+    hudChartOn: Boolean = true,
+    hudMediumOn: Boolean = false,
     diagProvider: (() -> DiagStats?)? = null,
     onRefresh: (() -> Unit)? = null,
+    samples: RollingSamples? = null,
     chaosLoss: Int = 0,
     chaosDup: Int = 0,
     chaosLagMs: Int = 0,
@@ -218,6 +221,8 @@ fun FloatingPanel(
     onHudJitter: (Boolean) -> Unit,
     onHudLoss: (Boolean) -> Unit,
     onHudRes: (Boolean) -> Unit,
+    onHudChart: (Boolean) -> Unit = {},
+    onHudMedium: (Boolean) -> Unit = {},
     onCycleRes: () -> Unit,
     onCycleBr: () -> Unit,
     onCycleFps: () -> Unit,
@@ -278,6 +283,13 @@ fun FloatingPanel(
                 }
             }
 
+            // Real-time chart (while streaming; the buffer fills from the
+            // HUD poll — empty before the first samples land).
+            if (samples != null && streaming) {
+                SectionLabel("实时曲线")
+                PanelChart(samples, Modifier.fillMaxWidth())
+            }
+
             // Advanced tiers
             SectionLabel("高级档位")
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {
@@ -307,6 +319,8 @@ fun FloatingPanel(
             HudToggleRow("抖动", hudJitterOn, onHudJitter)
             HudToggleRow("丢包", hudLossOn, onHudLoss)
             HudToggleRow("分辨率", hudResOn, onHudRes)
+            HudToggleRow("曲线", hudChartOn, onHudChart)
+            HudToggleRow("介质", hudMediumOn, onHudMedium)
 
             // Connection
             SectionLabel("连接")
