@@ -147,6 +147,7 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
     val tileOrphans: Int get() = receiver?.tileOrphans ?: 0
     val receiverDroppedCorruptAUs: Int get() = receiver?.droppedCorruptAUs ?: 0
     val receiverNalsBuffered: Int get() = receiver?.nalsBuffered ?: 0
+    val receiverAuthFailures: Int get() = receiver?.authFailures ?: 0
 
     /** SHA-256 fingerprint of a DER-encoded certificate, uppercase hex. */
     private fun fingerprintOf(cert: X509Certificate): String =
@@ -291,7 +292,7 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
                     masterKey = kv.copyOfRange(0, 16),
                     masterSalt = kv.copyOfRange(16, kv.size),
                     onAu = { au -> _frames.tryEmit(au) },
-                    onKeyFrameNeeded = { sendPli() },
+                    onKeyFrameNeeded = { requestKeyFrame() },
                     nackTarget = java.net.InetSocketAddress(host, receiverPort),
                     onTile = { tileIdx, tileCount, isLastOfFrame, jpeg ->
                         _tileFrames.tryEmit(
@@ -355,7 +356,10 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
 
     /** Media-plane PLI: ask the sender for an IDR over the TLS pairing
      *  channel. Fire-and-forget — the next loss event re-requests anyway. */
-    private fun sendPli() {
+    /** Manual IDR request (the 刷新画面 button): POSTs a PLI to the sender;
+     *  the sender's KeyFrameBroker rate-limits to 250ms. Async enqueue —
+     *  safe from the UI thread. */
+    fun requestKeyFrame() {
         try {
             val body = JSONObject().put("type", "pli").put("fromPeerId", "android-direct")
             val request = Request.Builder()

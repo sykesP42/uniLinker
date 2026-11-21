@@ -650,6 +650,23 @@ fun DirectRtpScreen(
                 fpsLabel = "${fpsOptions[fpsIdx]} fps",
                 streaming = client != null,
                 transportMode = transportMode,
+                diagProvider = {
+                    val c = client
+                    val st = c?.receiverStats
+                    if (c == null || st == null) null
+                    else com.unilinker.android.ui.DiagStats(
+                        medium = c.medium,
+                        received = st.first,
+                        lost = st.second,
+                        tileAssembled = c.tileAssembled,
+                        tileDropped = c.tileDropped,
+                        tileOrphans = c.tileOrphans,
+                        authFailures = c.receiverAuthFailures,
+                    )
+                },
+                onRefresh = {
+                    scope.launch { client?.requestKeyFrame() }
+                },
                 hudFpsOn = hudFpsOn,
                 hudMbpsOn = hudMbpsOn,
                 hudJitterOn = hudJitterOn,

@@ -33,6 +33,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.foundation.clickable
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.text.font.FontWeight
@@ -97,6 +98,18 @@ internal val QualityPresets = listOf(
     QualityPreset("均衡", 0, 1, 0),
     QualityPreset("高清", 1, 2, 0),
     QualityPreset("极致", 0, 2, 1),
+)
+
+/** Receiver-side diagnostics snapshot for the 诊断 section (polled at 1 Hz
+ *  by the section itself while expanded — not on the hot recompose path). */
+data class DiagStats(
+    val medium: String,
+    val received: Int,
+    val lost: Int,
+    val tileAssembled: Int,
+    val tileDropped: Int,
+    val tileOrphans: Int,
+    val authFailures: Int,
 )
 
 /** Draggable floating ball; auto-dims after 3 s without touch. Tap = toggle. */
@@ -194,6 +207,8 @@ fun FloatingPanel(
     hudJitterOn: Boolean,
     hudLossOn: Boolean,
     hudResOn: Boolean,
+    diagProvider: (() -> DiagStats?)? = null,
+    onRefresh: (() -> Unit)? = null,
     onHudFps: (Boolean) -> Unit,
     onHudMbps: (Boolean) -> Unit,
     onHudJitter: (Boolean) -> Unit,
@@ -209,10 +224,11 @@ fun FloatingPanel(
 ) {
     // Status line: a transient note (transport switching, chaos injection)
     // overrides the lifecycle state for a few seconds; otherwise the state
-    // maps to steady copy + color.
+    // maps to steady copy + color. Streaming appends the link medium.
+    val mediumLabel = diagProvider?.invoke()?.medium
     val (statusText, statusColor) = when {
         transient != null -> transient to StatusWarning
-        state == PanelState.Streaming -> "投屏中" to StatusSuccess
+        state == PanelState.Streaming -> "投屏中 · $mediumLabel" to StatusSuccess
         state == PanelState.Connecting -> "连接中…" to StatusWarning
         state == PanelState.Error -> "连接失败：${friendlyError(statusDetail)}" to StatusError
         else -> "未连接" to TextSecondary
@@ -298,6 +314,18 @@ fun FloatingPanel(
                     colors = ButtonDefaults.buttonColors(
                         containerColor = OkBg, contentColor = StatusSuccess),
                 ) { Text("重连", fontWeight = FontWeight.SemiBold) }
+                if (onRefresh != null) {
+                    Button(
+                        onClick = onRefresh,
+                        modifier = Modifier.weight(1f).height(40.dp),
+                        enabled = streaming,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = ChipBg, contentColor = TextPrimary,
+                            disabledContainerColor = ChipBg,
+                            disabledContentColor = TextTertiary),
+                    ) { Text("刷新画面", fontWeight = FontWeight.SemiBold) }
+                }
                 Button(
                     onClick = onDisconnect,
                     modifier = Modifier.weight(1f).height(40.dp),
@@ -308,6 +336,10 @@ fun FloatingPanel(
                         disabledContainerColor = ChipBg,
                         disabledContentColor = TextTertiary),
                 ) { Text("断开", fontWeight = FontWeight.SemiBold) }
+            }
+
+            if (diagProvider != null) {
+                DiagnosticsSection(diagProvider)
             }
         }
     }
@@ -321,6 +353,78 @@ internal fun SectionLabel(text: String) {
         Spacer(Modifier.width(6.dp))
         Text(text, style = MaterialTheme.typography.labelMedium, color = Copper,
             fontWeight = FontWeight.SemiBold)
+    }
+}
+
+/** Collapsible diagnostics section: receiver-side counters polled at 1 Hz
+ *  WHILE expanded (self-contained polling — the hot recompose path never
+ *  touches it). Drop/orphan/auth counters turn amber when non-zero. */
+@Composable
+private fun DiagnosticsSection(provider: () -> DiagStats?) {
+    var expanded by remember { mutableStateOf(false) }
+    var diag by remember { mutableStateOf<DiagStats?>(null) }
+
+    LaunchedEffect(expanded) {
+        while (expanded) {
+            diag = provider()
+            delay(1000)
+        }
+    }
+
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .background(ChipBg)
+            .clickable { expanded = !expanded }
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text("诊断", style = MaterialTheme.typography.bodySmall, color = TextPrimary)
+        Text(
+            if (expanded) "收起 ▲" else "展开 ▼",
+            style = MaterialTheme.typography.labelSmall,
+            color = Copper,
+        )
+    }
+
+    if (!expanded) return
+    val d = diag ?: return
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(6.dp))
+            .background(ChipBg)
+            .padding(horizontal = 10.dp, vertical = 6.dp),
+        verticalArrangement = Arrangement.spacedBy(2.dp),
+    ) {
+        DiagRow("介质", d.medium, TextPrimary)
+        DiagRow("已收 / 丢包", "${d.received} / ${d.lost}", TextPrimary)
+        DiagRow("Tile 已组装", "${d.tileAssembled}", TextPrimary)
+        DiagRow("Tile 丢弃", "${d.tileDropped}",
+            if (d.tileDropped > 0) StatusWarning else TextPrimary)
+        DiagRow("Tile 孤儿", "${d.tileOrphans}",
+            if (d.tileOrphans > 0) StatusWarning else TextPrimary)
+        DiagRow("认证失败", "${d.authFailures}",
+            if (d.authFailures > 0) StatusWarning else TextPrimary)
+    }
+}
+
+@Composable
+private fun DiagRow(label: String, value: String, color: Color) {
+    Row(modifier = Modifier.fillMaxWidth()) {
+        Text(
+            label,
+            modifier = Modifier.weight(1f),
+            style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
+            color = TextTertiary,
+        )
+        Text(
+            value,
+            style = MaterialTheme.typography.labelSmall.copy(fontFeatureSettings = "tnum"),
+            color = color,
+        )
     }
 }
 
