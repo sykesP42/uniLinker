@@ -41,8 +41,13 @@ internal sealed class DirectRtpSender : IDisposable
     private Task? _nackLoop;
     private bool _disposed;
 
-    private readonly (ushort Seq, byte[] Packet)[] _ring = new (ushort, byte[])[RingCapacity];
+    private readonly (ushort Seq, byte[] Packet, long LastResendMs)[] _ring = new (ushort, byte[], long)[RingCapacity];
     private int _ringCursor;
+    /// <summary>Per-seq resend dedup window: duplicate NACK requests inside
+    /// the window skip the resend (the tablet throttles itself to 15ms per
+    /// hole; 10ms here lets a legitimate retry through but collapses a
+    /// request storm to ≤100 resends per seq per second).</summary>
+    private const long ResendDedupMs = 10;
     private readonly object _sendGate = new();
 
     private ushort _seq;
@@ -67,7 +72,11 @@ internal sealed class DirectRtpSender : IDisposable
     private long _lastTileTsUs = -1;
     /// <summary>Instant-burst allowance: the first ~42 packets of a frame go
     /// out at once, the rest of a large IDR trickles at 1.5× tier.</summary>
-    private const long MaxInstantBurstBytes = 64 * 1024;
+    // 16KB (11 packets): the instant burst rides on top of the paced drain,
+    // and 64KB spikes overflowed the WiFi hotspot queue as burst-TAIL drops
+    // — a systematic 1-8 packet hole every frame (USB buffers absorb 64KB
+    // fine; the hotspot queue does not).
+    private const long MaxInstantBurstBytes = 16 * 1024;
 
     /// <summary>The SDES crypto attribute the receiver unprotects with.</summary>
     public string CryptoLine { get; }
@@ -173,6 +182,7 @@ internal sealed class DirectRtpSender : IDisposable
         lock (_sendGate)
         {
             var misses = new List<ushort>();
+            long nowMs = Environment.TickCount64;
             for (int i = 0; i < count; i++)
             {
                 ushort seq = BinaryPrimitives.ReadUInt16BigEndian(datagram.AsSpan(6 + i * 2));
@@ -181,11 +191,15 @@ internal sealed class DirectRtpSender : IDisposable
                 bool found = false;
                 for (int slot = 0; slot < _ring.Length; slot++)
                 {
-                    var (s, packet) = _ring[slot];
+                    var (s, packet, lastResendMs) = _ring[slot];
                     if (packet != null && s == seq)
                     {
-                        _udp.Send(packet, packet.Length, _destination);
-                        PacketsRetransmitted++;
+                        if (nowMs - lastResendMs >= ResendDedupMs)
+                        {
+                            _udp.Send(packet, packet.Length, _destination);
+                            PacketsRetransmitted++;
+                            _ring[slot] = (s, packet, nowMs);
+                        }
                         found = true;
                         break;
                     }
@@ -248,8 +262,8 @@ internal sealed class DirectRtpSender : IDisposable
     /// NACK resends take the same gate.</summary>
     private void PacerLoop()
     {
-        // Continuous-refill token bucket: credit accumulates at 2.5× tier
-        // bitrate, capped at 64KB instant burst. The earlier "spread from
+        // Continuous-refill token bucket: credit accumulates at 1.1× tier
+        // bitrate (the tier IS the link budget), capped at 64KB instant burst. The earlier "spread from
         // burst start + carry debt" formulation re-applied the full carried
         // bytes against a FRESH burst start each AU — a 300ms penalty per
         // frame that throttled the stream to 2fps.
@@ -287,65 +301,87 @@ internal sealed class DirectRtpSender : IDisposable
             catch (OperationCanceledException) { break; }
             catch (InvalidOperationException) { break; }
 
-            lock (_sendGate)
+            // Per-packet send: credit is waited for OUTSIDE the send gate —
+            // the gate is taken only for the (fast) transform+ring+send. The
+            // earlier whole-frame lock held the gate across the credit sleep,
+            // which starved NACK resends (blocked up to a frame's drain time
+            // behind a throttling media send) and stalled hole recovery.
+            try
             {
-                if (_disposed) break;
-                try
+                if (_tileMode)
                 {
-                    if (_tileMode)
+                    // Tile frames share one RTP timestamp (the frame id);
+                    // advance the 90 kHz clock once per frame.
+                    if (item.TsUs != _lastTileTsUs)
                     {
-                        // Tile frames share one RTP timestamp (the frame id);
-                        // advance the 90 kHz clock once per frame.
-                        if (item.TsUs != _lastTileTsUs)
-                        {
-                            uint durationRtp = RtpTiming.DurationFor(item.TsUs, ref _lastFrameTsUs, ref _lastDurationRtp);
-                            _timestamp += durationRtp;
-                            _lastTileTsUs = item.TsUs;
-                        }
-                        // Split the frame blob into its wire packets and pace
-                        // each; the tile assembler keys on the timestamp.
-                        var pos = 0;
-                        var blobData = item.Au;
-                        while (pos + 2 <= blobData.Length)
-                        {
-                            int len = (blobData[pos] << 8) | blobData[pos + 1];
-                            var rtp = new byte[12 + len];
-                            rtp[0] = 0x80;
-                            rtp[1] = 97;
-                            FillRtpHeader(rtp, _timestamp);
-                            Buffer.BlockCopy(blobData, pos + 2, rtp, 12, len);
+                        uint durationRtp = RtpTiming.DurationFor(item.TsUs, ref _lastFrameTsUs, ref _lastDurationRtp);
+                        _timestamp += durationRtp;
+                        _lastTileTsUs = item.TsUs;
+                    }
+                    // Split the frame blob into its wire packets and pace
+                    // each; the tile assembler keys on the timestamp.
+                    var pos = 0;
+                    var blobData = item.Au;
+                    while (pos + 2 <= blobData.Length)
+                    {
+                        int len = (blobData[pos] << 8) | blobData[pos + 1];
+                        var rtp = new byte[12 + len];
+                        rtp[0] = 0x80;
+                        rtp[1] = 97;
+                        FillRtpHeader(rtp, _timestamp);
+                        Buffer.BlockCopy(blobData, pos + 2, rtp, 12, len);
 
+                        // Wait for credit BEFORE taking the gate. Without a
+                        // credit wait at all the frame blasted instantly and
+                        // credit went unboundedly negative (the tile wire
+                        // rate ignored the tier budget entirely; ~27Mbps
+                        // measured on an 8.8Mbps budget, which overflowed
+                        // the WiFi airtime and poisoned every recovery).
+                        while (!_pacerCts.IsCancellationRequested)
+                        {
                             Refill();
-                            creditBytes -= rtp.Length;
+                            if (creditBytes >= rtp.Length) break;
+                            Thread.Sleep(2);
+                        }
+                        if (_pacerCts.IsCancellationRequested) break;
+                        creditBytes -= rtp.Length;
+
+                        lock (_sendGate)
+                        {
+                            if (_disposed) break;
                             byte[]? protectedPacket = _transformer.Transform(rtp);
                             if (protectedPacket != null)
                             {
                                 _ringCursor = (_ringCursor + 1) % RingCapacity;
-                                _ring[_ringCursor] = ((ushort)((rtp[2] << 8) | rtp[3]), protectedPacket);
+                                _ring[_ringCursor] = ((ushort)((rtp[2] << 8) | rtp[3]), protectedPacket, 0);
                                 _udp.Send(protectedPacket, protectedPacket.Length, _destination);
                                 PacketsSent++;
                             }
-                            pos += 2 + len;
                         }
+                        pos += 2 + len;
                     }
-                    else
+                }
+                else
+                {
+                    uint durationRtp = RtpTiming.DurationFor(item.TsUs, ref _lastFrameTsUs, ref _lastDurationRtp);
+                    _timestamp += durationRtp;
+                    var packets = PacketizeAu(item.Au, _timestamp);
+                    foreach (var rtp in packets)
                     {
-                        uint durationRtp = RtpTiming.DurationFor(item.TsUs, ref _lastFrameTsUs, ref _lastDurationRtp);
-                        _timestamp += durationRtp;
-                        var packets = PacketizeAu(item.Au, _timestamp);
-                        foreach (var rtp in packets)
+                        // Wait for credit before committing the packet.
+                        while (!_pacerCts.IsCancellationRequested)
                         {
-                            // Wait for credit before committing the packet.
-                            while (!_pacerCts.IsCancellationRequested)
-                            {
-                                Refill();
-                                if (creditBytes >= rtp.Length) break;
-                                Thread.Sleep(2);
-                            }
-                            if (_pacerCts.IsCancellationRequested) break;
-                            creditBytes -= rtp.Length;
+                            Refill();
+                            if (creditBytes >= rtp.Length) break;
+                            Thread.Sleep(2);
+                        }
+                        if (_pacerCts.IsCancellationRequested) break;
+                        creditBytes -= rtp.Length;
 
-                            ushort seq = (ushort)((rtp[2] << 8) | rtp[3]);
+                        ushort seq = (ushort)((rtp[2] << 8) | rtp[3]);
+                        lock (_sendGate)
+                        {
+                            if (_disposed) break;
                             byte[]? protectedPacket = _transformer.Transform(rtp);
                             if (protectedPacket == null)
                             {
@@ -353,16 +389,16 @@ internal sealed class DirectRtpSender : IDisposable
                                 continue;
                             }
                             _ringCursor = (_ringCursor + 1) % RingCapacity;
-                            _ring[_ringCursor] = (seq, protectedPacket);
+                            _ring[_ringCursor] = (seq, protectedPacket, 0);
                             _udp.Send(protectedPacket, protectedPacket.Length, _destination);
                             PacketsSent++;
                         }
                     }
                 }
-                catch (Exception ex)
-                {
-                    Log.Error($"[pacer] send failed: {ex.Message}");
-                }
+            }
+            catch (Exception ex)
+            {
+                Log.Error($"[pacer] send failed: {ex.Message}");
             }
         }
     }
