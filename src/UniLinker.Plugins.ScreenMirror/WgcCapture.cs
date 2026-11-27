@@ -34,7 +34,25 @@ public class WgcCapture : ICapture
     private int _framesDelivered;
     private long _lastReadbackTicks;
     private int _minReadbackIntervalMs = 33;
-    private System.Threading.Timer? _pollTimer;
+    private Thread? _pollThread;
+
+    /// <summary>Readback buffers, reused across frames: the previous
+    /// per-frame 4MB allocation was ~245MB/s of LOH churn at 60fps — gen2/LOH
+    /// GC pauses stalled EVERY pipeline thread (capture callback, encode
+    /// worker, pacer) and showed up as the e2e p95 tail. Consumption is
+    /// synchronous (FrameCaptured → Encode → EncodeOne inline), so 3 slots
+    /// are always free by the time they rotate back.</summary>
+    private byte[][]? _readbackRing;
+    private int _ringIdx;
+
+    private void PollLoop()
+    {
+        while (!_stopping && _isCapturing)
+        {
+            ReadLatestFrame();
+            Thread.Sleep(4);
+        }
+    }
     private int _emptyPolls;
     private Windows.Graphics.SizeInt32 _poolSize;
     private long _lastDownscaleMs;
@@ -164,9 +182,19 @@ public class WgcCapture : ICapture
             // 4ms poll: the drain-to-latest pattern needs a fresh frame per
             // encode - the poll interval adds up to its own length of latency
             // (avg half). 8ms -> 4ms measured free (TryGetNextFrame is cheap).
-            _pollTimer = new System.Threading.Timer(
-                _ => ReadLatestFrame(), null, TimeSpan.Zero,
-                TimeSpan.FromMilliseconds(4));
+            // DEDICATED THREAD, not System.Threading.Timer: the timer fires
+            // on ThreadPool threads with NO priority boost — the same
+            // EcoQoS/descheduling failure mode documented for the pacer
+            // thread (10-15ms stretches) applies to the capture stage, and
+            // it is latency-critical. AboveNormal + Sleep(4) mirrors the
+            // pacer pattern.
+            _pollThread = new Thread(PollLoop)
+            {
+                IsBackground = true,
+                Name = "WgcPoll",
+                Priority = ThreadPriority.AboveNormal,
+            };
+            _pollThread.Start();
             Log.Info($"WGC: session started (polling @ {_fps}fps), thread={Environment.CurrentManagedThreadId}");
 
             Log.Info("WGC capture started (staging readback)");
@@ -327,8 +355,13 @@ public class WgcCapture : ICapture
             _d3dContext.Map(_stagingSmall!, 0, MapMode.Read,
                 Vortice.Direct3D11.MapFlags.None, out MappedSubresource mapped);
             var rowPitch = (int)mapped.RowPitch;
-            var rawData = new byte[rowPitch * _outHeight];
-            Marshal.Copy(mapped.DataPointer, rawData, 0, rawData.Length);
+            var rawDataLen = rowPitch * _outHeight;
+            if (_readbackRing == null || _readbackRing[0].Length < rawDataLen)
+            {
+                _readbackRing = new[] { new byte[rawDataLen], new byte[rawDataLen], new byte[rawDataLen] };
+            }
+            var rawData = _readbackRing[_ringIdx++ % _readbackRing.Length];
+            Marshal.Copy(mapped.DataPointer, rawData, 0, rawDataLen);
             _d3dContext.Unmap(_stagingSmall!, 0);
 
             var ts = (long)(frame.SystemRelativeTime.TotalMilliseconds * 1000);
@@ -546,8 +579,10 @@ public class WgcCapture : ICapture
         _isCapturing = false;
         _stopping = true;
 
-        _pollTimer?.Dispose();
-        _pollTimer = null;
+        // The dedicated poll thread exits on the _stopping flag; join it so
+        // no in-flight ReadLatestFrame races the D3D disposal below.
+        _pollThread?.Join();
+        _pollThread = null;
 
         // Wait out an in-flight ReadLatestFrame before freeing what it uses
         // (see _deviceGate note at the call site). A queued callback that

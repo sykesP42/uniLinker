@@ -78,7 +78,16 @@ public unsafe class NvEncEncoder : IEncoder
 
         _initialized = true;
         _running = true;
-        _worker = new Thread(EncodeLoop) { IsBackground = true, Name = "NvEncEncoder" };
+        // AboveNormal: the encode worker IS the latency critical path — the
+        // capture callback feeds it inline and the pacer waits on its output.
+        // Normal priority exposed it to the same descheduling stretches the
+        // pacer thread suffered (see DirectRtpSender ctor note).
+        _worker = new Thread(EncodeLoop)
+        {
+            IsBackground = true,
+            Name = "NvEncEncoder",
+            Priority = ThreadPriority.AboveNormal,
+        };
         _worker.Start();
         return true;
     }

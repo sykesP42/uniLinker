@@ -21,9 +21,13 @@ public static class H264SpsFixup
     /// <summary>Patch every SPS NAL found in an Annex-B buffer. Non-SPS
     /// NALs and unparseable SPSs pass through verbatim (a parse miss must
     /// never break the stream). Returns the ORIGINAL array when nothing
-    /// matched, so the hot path (no SPS in a P-frame AU) costs one scan.</summary>
+    /// matched, so the hot path (no SPS in a P-frame AU) costs one header
+    /// scan and ZERO allocations — the earlier version rebuilt the whole
+    /// AU into a List&lt;byte&gt; per frame even when unpatched (~1-3ms of
+    /// encode-worker time per frame).</summary>
     public static byte[] PatchAnnexB(byte[] au)
     {
+        if (!ContainsSps(au)) return au;
         var outList = new List<byte>(au.Length + 16);
         int pos = 0;
         bool patched = false;
@@ -175,6 +179,25 @@ public static class H264SpsFixup
                 if (next != 0) last = next;
             }
         }
+    }
+
+    /// <summary>Cheap presence check: does any NAL in this Annex-B stream
+    /// have type 7 (SPS)? Walks start codes and reads one byte per NAL —
+    /// no buffer copies.</summary>
+    private static bool ContainsSps(byte[] au)
+    {
+        int i = 0;
+        while (i < au.Length - 4)
+        {
+            if (au[i] != 0 || au[i + 1] != 0) { i++; continue; }
+            int hdr;
+            if (au[i + 2] == 1) hdr = i + 3;
+            else if (au[i + 2] == 0 && au[i + 3] == 1) hdr = i + 4;
+            else { i++; continue; }
+            if (hdr < au.Length && (au[hdr] & 0x1F) == 7) return true;
+            i = hdr;
+        }
+        return false;
     }
 
     private static int FindStartCode(byte[] b, int from)
