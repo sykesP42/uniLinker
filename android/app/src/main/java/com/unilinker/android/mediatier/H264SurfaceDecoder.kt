@@ -44,6 +44,10 @@ class H264SurfaceDecoder(surface: Surface) : AutoCloseable {
                 // Receiver-side sizing: the encoder adapts resolution; these are
                 // just the initial hints. MediaCodec rescales to the stream.
                 setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 512 * 1024)
+                // Moonlight's QCOM trick: clamp the decoder's internal buffer
+                // depth to 1 frame - the pipeline depth IS latency on the
+                // Venus decoder. Unrecognized keys are ignored (harmless).
+                setInteger("max-dec-frame-buffering", 1)
             }
         probeKeys = MediaCodecProbe.applyLowLatencyKeys(format)
         codec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
@@ -84,8 +88,11 @@ class H264SurfaceDecoder(surface: Surface) : AutoCloseable {
         codec.start()
     }
 
-    /** Enqueue one Annex-B access unit. Safe from any thread. */
+    /** Enqueue one Annex-B access unit. Safe from any thread. The queue is
+     *  bounded (drop-oldest at 6): if hardware decode stalls, AUs accumulating
+     *  here grow latency silently - the pacer drop-oldest symmetry. */
     fun submitAnnexB(au: ByteArray, timestampUs: Long) {
+        while (pendingAUs.size >= 6) pendingAUs.poll()
         pendingAUs.offer(Pair(au, timestampUs))
         feedPending()
     }

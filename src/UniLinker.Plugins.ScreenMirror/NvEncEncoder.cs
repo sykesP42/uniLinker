@@ -193,23 +193,27 @@ public unsafe class NvEncEncoder : IEncoder
         }
     }
 
-    public void ForceKeyFrame() => _forceIdr = true;
+    public void ForceKeyFrame()
+    {
+        _forceIdr = true;
+        // Wake the event-driven loop so a forced IDR fires even on a static
+        // screen (the capture produces no frames to release the signal).
+        try { _workSignal.Release(); } catch (SemaphoreFullException) { }
+    }
 
     private void EncodeLoop()
     {
-        var frameInterval = TimeSpan.FromMilliseconds(1000.0 / _fps);
-        var nextDeadline = DateTime.UtcNow;
-
+        // Event-driven latest-wins: encode the newest capture the moment it
+        // arrives. The WGC capture throttle is the single fps stage - the old
+        // deadline loop added a SECOND uncorrelated 1/fps wait of up to a
+        // frame interval per frame (avg ~16-33ms of pure pacing wait at 30fps
+        // tier). Static screens produce no capture frames - ForceKeyFrame
+        // releases the signal so a forced IDR still fires on the cached frame.
         while (_running)
         {
             try
             {
-                var delay = nextDeadline - DateTime.UtcNow;
-                if (delay > TimeSpan.Zero) Thread.Sleep(delay);
-                nextDeadline += frameInterval;
-                // Sleep overshoot recovery: never let the deadline run away.
-                if (nextDeadline < DateTime.UtcNow - frameInterval)
-                    nextDeadline = DateTime.UtcNow + frameInterval;
+                _workSignal.Wait();
 
                 CaptureFrame? frame;
                 lock (_slotGate)
@@ -234,6 +238,7 @@ public unsafe class NvEncEncoder : IEncoder
                         (System.Diagnostics.Stopwatch.GetTimestamp() - _lastFrameCachedAt)
                         * 1_000_000L / System.Diagnostics.Stopwatch.Frequency;
                     EncodeOne(_lastFrame with { TimestampUs = _lastFrame.TimestampUs + elapsedUs });
+                    _forceIdr = false;
                 }
             }
             catch (Exception ex)

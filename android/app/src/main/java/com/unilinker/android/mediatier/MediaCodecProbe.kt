@@ -22,6 +22,10 @@ object MediaCodecProbe {
         "vendor.qti-ext-dec-low-latency.enable",   // Qualcomm (MSM8974 generation)
         "vendor.hisi-ext-low-latency-dec.enable",  // HiSilicon Kirin
         "vendor.mtk-vdec-lowlatancy.enable",       // MediaTek (sic — upstream typo)
+        // Moonlight's MediaCodecHelper sets this on QCOM decoders to clamp
+        // the pipeline depth to 1 frame - the probe now tests whether the
+        // Venus decoder honors it (it was never probed in R3).
+        "max-dec-frame-buffering",
     )
 
     @Volatile var probeResult: String = "not probed yet"
