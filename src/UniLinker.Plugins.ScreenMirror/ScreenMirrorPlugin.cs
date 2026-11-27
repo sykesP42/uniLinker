@@ -110,8 +110,22 @@ public class ScreenMirrorPlugin : IPlugin
         }
 
         channel.OnClose += () => ReleaseViewer(channel);
-        // Emit an IDR right away so the joining viewer can decode immediately.
+        // Emit IDRs so the joining viewer can decode immediately. ONE IDR is
+        // not enough: the bind race (the receiver socket may open after the
+        // IDR is on the wire — the M3 lesson) plus the 10-minute GOP meant a
+        // mid-stream join could wait MINUTES for the next keyframe, the
+        // decoder stuck at decoded=0 with no seq gap to trigger a PLI.
+        // Three IDRs over ~600ms cover the race (the broker rate-limits to
+        // 250ms, so this fans out to at most 3 real keyframes).
         _encoder?.ForceKeyFrame();
+        _ = Task.Run(async () =>
+        {
+            foreach (var delayMs in new[] { 300, 600 })
+            {
+                await Task.Delay(delayMs);
+                _encoder?.ForceKeyFrame();
+            }
+        });
         return channel;
     }
 

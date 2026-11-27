@@ -164,9 +164,15 @@ public unsafe class NvEncEncoder : IEncoder
                 : AVPixelFormat.AV_PIX_FMT_YUV420P;
         }
         _codecCtx->bit_rate = (long)_bitrateKbps * 1000;
-        // Two-second GOP for screen content; no B-frames, no lookahead:
-        // every extra frame of pipeline is latency on the mirrored link.
-        _codecCtx->gop_size = _fps * 2;
+        // 5-SECOND GOP: the 2s cadence forced a 350KB IDR whose ~60ms
+        // Venus decode stall read as a rhythmic stutter (the user's
+        // 抽搐 report; the fps chart sawtoothed at the gop cadence).
+        // NOTE: a 600s GOP was tried and FREEZES this Venus — with no
+        // periodic IDR, any pendingAUs drop (overload blip) breaks the P
+        // reference chain with no recovery until the next IDR, and the
+        // decoder outputs ~2fps forever (measured twice, both transports).
+        // 5s halves the stutter frequency; recovery stays PLI/join-driven.
+        _codecCtx->gop_size = _fps * 5;
         _codecCtx->max_b_frames = 0;
         // The tier bitrate is now a LINK CAP, not a quality target (vbr+cq
         // above decides spend). VBV bounds the per-frame burst: cap the
@@ -190,11 +196,15 @@ public unsafe class NvEncEncoder : IEncoder
         av_opt_set(_codecCtx->priv_data, "spatial-aq", "1", 0);
         av_opt_set(_codecCtx->priv_data, "delay", "0", 0);
         av_opt_set(_codecCtx->priv_data, "zerolatency", "1", 0);
-        // Intra-refresh replaces periodic IDRs with intra-coded strips that
-        // sweep across frames — no 200-400KB IDR bursts (join/PLI spikes),
-        // constant wire load, loss regions heal as the sweep passes. The
-        // decoder-side impact: none (plain ISlices in P frames).
-        av_opt_set(_codecCtx->priv_data, "intra_refresh", "1", 0);
+        // NO intra_refresh on this link: its sweeping intra strips made
+        // every P frame carry 100-235KB of INTRA macroblocks, and intra
+        // decode cost (full prediction) is several times inter's on the
+        // SM-P605's Venus — measured: the decoder stalled at ~2fps with
+        // pendingAUs dropping the rest (each drop breaking the P reference
+        // chain → permanent freeze under a 10-minute GOP). Light inter-only
+        // P frames decode at 55fps+ on this decoder; recovery comes from
+        // PLI/join IDRs (the 10-minute GOP makes those the only IDRs, so a
+        // 2s-cadence 350KB IDR stutter is gone too).
         // 4 slices per frame: Moonlight's runtime rule for OLD Qualcomm
         // decoders (GLES < 3.1 → Adreno 330 on the SM-P605 hits it) — the
         // Venus decoder pipelines slices, so it can start decoding slice 1

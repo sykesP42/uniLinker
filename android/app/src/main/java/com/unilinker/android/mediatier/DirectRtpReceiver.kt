@@ -115,6 +115,29 @@ class DirectRtpReceiver(
         private set
     private var auFirstPacketNs = 0L
 
+    /** Long-GOP join safety: has an IDR arrived since connect? */
+    @Volatile private var seenKeyFrameSinceJoin = false
+    private var ausWithoutKey = 0
+
+    /** The assembled AU's NALs (start-code stripped) — a lightweight view
+     *  over the concat'd buffer for the IDR check (no extra copy). */
+    private fun nalBufferIfCopied(au: ByteArray): List<ByteArray> {
+        val nals = ArrayList<ByteArray>(4)
+        var i = 0
+        var start = -1
+        while (i < au.size - 3) {
+            val sc3 = au[i] == 0.toByte() && au[i + 1] == 0.toByte() && au[i + 2] == 1.toByte()
+            val sc4 = au[i] == 0.toByte() && au[i + 1] == 0.toByte() && au[i + 2] == 0.toByte() && au[i + 3] == 1.toByte()
+            if (sc3 || sc4) {
+                if (start >= 0) nals.add(au.copyOfRange(start, i))
+                start = i + (if (sc4) 4 else 3)
+                i = start
+            } else i++
+        }
+        if (start >= 0) nals.add(au.copyOfRange(start, au.size))
+        return nals
+    }
+
     /** Sliding loss window as 5 × 1-second buckets: O(1) per packet and per
      *  HUD query (the old per-packet deque reached ~27,600 entries at 5.5kpps
      *  and was iterated under the lock on every HUD poll — multi-ms recv-thread
@@ -490,6 +513,24 @@ class DirectRtpReceiver(
                 droppedCorruptAUs++
                 if (droppedCorruptAUs % 20 == 1) android.util.Log.w("DirectRtp", "dropped corrupt AU #$droppedCorruptAUs after mid-frame skip (${au.size}B)")
                 return@synchronized
+            }
+            // Long-GOP join safety: a mid-stream join receives P frames
+            // referencing keyframes we never saw — Venus outputs NOTHING
+            // and no seq gap ever triggers a PLI (the 10-minute GOP made
+            // the wait minutes). If the first AUs after connect carry no
+            // IDR NAL (type 5), request one.
+            if (!seenKeyFrameSinceJoin) {
+                auFirstPacketNs = 0L
+                var hasIdr = false
+                for (nal in nalBufferIfCopied(au)) if ((nal[0].toInt() and 0x1F) == 5) hasIdr = true
+                if (hasIdr) seenKeyFrameSinceJoin = true
+                else if (++ausWithoutKey >= 10) {
+                    ausWithoutKey = 0
+                    if (onKeyFrameNeeded != null && nowArrival - lastPliMs >= 500L) {
+                        lastPliMs = nowArrival
+                        try { onKeyFrameNeeded.invoke() } catch (_: Exception) { }
+                    }
+                }
             }
             if (au.isNotEmpty()) onAu(au, rtpTs, nowNs)
         }
