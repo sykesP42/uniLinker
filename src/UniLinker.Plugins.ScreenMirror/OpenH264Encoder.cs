@@ -44,7 +44,8 @@ public class OpenH264Encoder : IEncoder
     private int _framesSinceIdr;
     private int _consecutiveErrors;
 
-    public bool Initialize(int width, int height, int fps, int bitrateKbps)
+    public bool Initialize(int width, int height, int fps, int bitrateKbps,
+        nint sharedDevicePtr = 0, nint sharedContextPtr = 0, object? gpuGate = null)
     {
         // Actual capture dimensions are only known when the first frame
         // arrives; the real encoder is created lazily in the worker.

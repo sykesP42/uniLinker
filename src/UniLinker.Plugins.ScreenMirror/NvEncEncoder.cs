@@ -32,6 +32,11 @@ public unsafe class NvEncEncoder : IEncoder
     private long _lastFrameCachedAt;
     private readonly object _encoderGate = new();
     private SemaphoreSlim _workSignal = new(0, 128);
+    /// <summary>Cancelled by Dispose — the worker's Wait must be
+    /// interruptible: after _running=false the capture's Encode() returns
+    /// WITHOUT releasing, so a worker sleeping in Wait() would hang the
+    /// unbounded Dispose Join forever (the 03:06 watchdog-release hang).</summary>
+    private readonly CancellationTokenSource _disposeCts = new();
     private volatile bool _running;
     private Thread? _worker;
     private volatile bool _forceIdr;
@@ -57,15 +62,36 @@ public unsafe class NvEncEncoder : IEncoder
     /// <summary>True when nvenc accepts BGRA directly (ARGB hardware
     /// conversion) — the sws BGRA→YUV420P CPU pass is skipped entirely.</summary>
     private bool _useBgraDirect;
+    // ── Zero-copy D3D11 path (M7 round 4) ──
+    private nint _sharedDevicePtr;
+    private nint _sharedContextPtr;
+    private object? _gpuGate;
+    private bool _useHwFrames;
+    private AVBufferRef* _hwDeviceRef;
+    private AVBufferRef* _hwFramesRef;
+    private AVFrame* _hwFrame;
+    /// <summary>Cached wrapper over FFmpeg's pooled TEXTURE ARRAY (the
+    /// d3d11 hwframes convention: frame->data[0] = array texture,
+    /// data[1] = slice index). AddRef'd once — the pointer is borrowed
+    /// from FFmpeg's pool, so the wrapper's Release is balanced by ours.</summary>
+    private Vortice.Direct3D11.ID3D11Texture2D? _pooledArray;
+    /// <summary>AddRef'd wrapper over the capture's shared immediate
+    /// context — every CopySubresourceRegion runs under the shared GPU
+    /// gate (the capture's VP blit takes the same gate).</summary>
+    private Vortice.Direct3D11.ID3D11DeviceContext? _borrowedCtx;
 
     public event Action<EncodedPacket>? PacketEncoded;
 
-    public bool Initialize(int width, int height, int fps, int bitrateKbps)
+    public bool Initialize(int width, int height, int fps, int bitrateKbps,
+        nint sharedDevicePtr = 0, nint sharedContextPtr = 0, object? gpuGate = null)
     {
         _configuredWidth = width;
         _configuredHeight = height;
         _fps = fps;
         _bitrateKbps = bitrateKbps;
+        _sharedDevicePtr = sharedDevicePtr;
+        _sharedContextPtr = sharedContextPtr;
+        _gpuGate = gpuGate;
 
         lock (_encoderGate)
         {
@@ -92,6 +118,10 @@ public unsafe class NvEncEncoder : IEncoder
         return true;
     }
 
+    /// <summary>True when the zero-copy D3D11 path opened: the caller may
+    /// then switch the capture to GPU delivery (CaptureFrame.D3dTexture).</summary>
+    public bool UsesGpuFrames => _useHwFrames;
+
     private bool InitCodec()
     {
         var codec = avcodec_find_encoder_by_name("h264_nvenc");
@@ -108,16 +138,31 @@ public unsafe class NvEncEncoder : IEncoder
         _codecCtx->height = _configuredHeight;
         _codecCtx->time_base = new AVRational { num = 1, den = _fps };
         _codecCtx->framerate = new AVRational { num = _fps, den = 1 };
-        // Pixel format: BGRA direct when this nvenc build supports it — the
-        // ARGB hardware conversion kills the sws BGRA→YUV420P CPU pass
-        // (1.3-2.1ms/frame plus a CPU contention source at 60fps). Detected
-        // from the codec's supported-format list; yuv420p+sws stays as the
-        // fallback so an unexpected build can never silently drop the
-        // whole session to the CPU encoder.
-        _useBgraDirect = NvEncSupportsBgra(codec);
-        _codecCtx->pix_fmt = _useBgraDirect
-            ? AVPixelFormat.AV_PIX_FMT_BGRA
-            : AVPixelFormat.AV_PIX_FMT_YUV420P;
+        // Pixel format: zero-copy D3D11 when a shared capture device was
+        // provided AND the codec accepts D3D11 frames — the encoder then
+        // consumes GPU-resident textures (no readback, no upload). Falls
+        // back to BGRA-direct system memory (or sws yuv420p) so an
+        // unexpected build can never silently drop the session to the CPU
+        // encoder.
+        var d3d11Supported = NvEncSupportsPixelFormat(codec, AVPixelFormat.AV_PIX_FMT_D3D11);
+        Log.Info($"[NvEnc] hw probe: devPtr={_sharedDevicePtr:X} d3d11InPixfmts={d3d11Supported}");
+        _useHwFrames = _sharedDevicePtr != 0 && d3d11Supported;
+        _useBgraDirect = false;
+        if (_useHwFrames)
+        {
+            if (!InitHwFrames()) return false;
+            _codecCtx->pix_fmt = AVPixelFormat.AV_PIX_FMT_D3D11;
+        }
+        else
+        {
+            // BGRA direct when this nvenc build supports it — the ARGB
+            // hardware conversion kills the sws BGRA→YUV420P CPU pass
+            // (1.3-2.1ms/frame plus a CPU contention source at 60fps).
+            _useBgraDirect = NvEncSupportsBgra(codec);
+            _codecCtx->pix_fmt = _useBgraDirect
+                ? AVPixelFormat.AV_PIX_FMT_BGRA
+                : AVPixelFormat.AV_PIX_FMT_YUV420P;
+        }
         _codecCtx->bit_rate = (long)_bitrateKbps * 1000;
         // Two-second GOP for screen content; no B-frames, no lookahead:
         // every extra frame of pipeline is latency on the mirrored link.
@@ -175,7 +220,16 @@ public unsafe class NvEncEncoder : IEncoder
         }
         Log.Info("[NvEnc] codec context open");
 
-        if (_useBgraDirect)
+        if (_useHwFrames)
+        {
+            // Input frame receives pooled D3D11 array-texture slices from
+            // av_hwframe_get_buffer — GPU-resident, no CPU touch.
+            _hwFrame = av_frame_alloc();
+            _hwFrame->width = _configuredWidth;
+            _hwFrame->height = _configuredHeight;
+            _hwFrame->format = (int)AVPixelFormat.AV_PIX_FMT_D3D11;
+        }
+        else if (_useBgraDirect)
         {
             // Input frame wraps the PINNED capture buffer per encode (data
             // pointers set per frame) — zero conversion, zero extra copy.
@@ -209,14 +263,73 @@ public unsafe class NvEncEncoder : IEncoder
         }
 
         _pkt = av_packet_alloc();
-        Log.Info($"[NvEnc] initialized {_configuredWidth}x{_configuredHeight}@{_fps} CBR {_bitrateKbps}kbps fmt={(_useBgraDirect ? "bgra-direct" : "sws-yuv420p")} slices=4");
+        Log.Info($"[NvEnc] initialized {_configuredWidth}x{_configuredHeight}@{_fps} CBR {_bitrateKbps}kbps fmt={(_useHwFrames ? "d3d11-zero-copy" : _useBgraDirect ? "bgra-direct" : "sws-yuv420p")} slices=4");
         return true;
+    }
+
+    /// <summary>Zero-copy hwframes setup: wrap the capture's D3D11 device in
+    /// an FFmpeg hwdevice (pre-filled AVD3D11VADeviceContext — a NEW device
+    /// would break same-device CopySubresourceRegion), build the pooled
+    /// texture-array frames context, and attach both to the codec context.
+    /// Returns false on any failure (the caller falls back to the system-
+    /// memory path). FFmpeg holds its own refs on the borrowed pointers.</summary>
+    private unsafe bool InitHwFrames()
+    {
+        try
+        {
+            _hwDeviceRef = av_hwdevice_ctx_alloc(AVHWDeviceType.AV_HWDEVICE_TYPE_D3D11VA);
+            if (_hwDeviceRef == null) return false;
+            var devCtxStruct = (AVHWDeviceContext*)_hwDeviceRef->data;
+            var d3d11 = (AVD3D11VADeviceContext*)devCtxStruct->hwctx;
+            d3d11->device = (FFmpeg.AutoGen.ID3D11Device*)_sharedDevicePtr;
+            d3d11->device_context = (FFmpeg.AutoGen.ID3D11DeviceContext*)_sharedContextPtr;
+            if (av_hwdevice_ctx_init(_hwDeviceRef) < 0)
+            {
+                Log.Error("[NvEnc] av_hwdevice_ctx_init(d3d11va) failed");
+                return false;
+            }
+
+            _hwFramesRef = av_hwframe_ctx_alloc(_hwDeviceRef);
+            if (_hwFramesRef == null) return false;
+            var frames = (AVHWFramesContext*)_hwFramesRef->data;
+            frames->format = AVPixelFormat.AV_PIX_FMT_D3D11;
+            frames->sw_format = AVPixelFormat.AV_PIX_FMT_BGRA;
+            frames->width = _configuredWidth;
+            frames->height = _configuredHeight;
+            frames->initial_pool_size = 8;
+            // The capture VP-blits into pooled slices — DECODER-bound default
+            // textures cannot take VideoProcessorOutputViews.
+            var framesD3d11 = (AVD3D11VAFramesContext*)frames->hwctx;
+            framesD3d11->BindFlags = (uint)Vortice.Direct3D11.BindFlags.RenderTarget;
+            if (av_hwframe_ctx_init(_hwFramesRef) < 0)
+            {
+                Log.Error("[NvEnc] av_hwframe_ctx_init failed");
+                return false;
+            }
+
+            _codecCtx->hw_device_ctx = av_buffer_ref(_hwDeviceRef);
+            _codecCtx->hw_frames_ctx = av_buffer_ref(_hwFramesRef);
+            // Borrow the shared immediate context (AddRef so the wrapper's
+            // eventual Release cannot destroy the capture-owned object).
+            Marshal.AddRef(_sharedContextPtr);
+            _borrowedCtx = new Vortice.Direct3D11.ID3D11DeviceContext(_sharedContextPtr);
+            Log.Info("[NvEnc] zero-copy d3d11 hwframes ready (shared capture device)");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Log.Error($"[NvEnc] hwframes init failed: {ex.Message}");
+            return false;
+        }
     }
 
     /// <summary>Check the codec's supported pixel-format list for BGRA.
     /// Unknown/failed lookups conservatively return false (the sws fallback
     /// is always correct, only slower).</summary>
-    private static unsafe bool NvEncSupportsBgra(AVCodec* codec)
+    private static unsafe bool NvEncSupportsBgra(AVCodec* codec) =>
+        NvEncSupportsPixelFormat(codec, AVPixelFormat.AV_PIX_FMT_BGRA);
+
+    private static unsafe bool NvEncSupportsPixelFormat(AVCodec* codec, AVPixelFormat fmt)
     {
         try
         {
@@ -230,7 +343,7 @@ public unsafe class NvEncEncoder : IEncoder
             var fmts = (AVPixelFormat*)cfg;
             for (int i = 0; i < num; i++)
             {
-                if (fmts[i] == AVPixelFormat.AV_PIX_FMT_BGRA) return true;
+                if (fmts[i] == fmt) return true;
             }
             return false;
         }
@@ -280,7 +393,15 @@ public unsafe class NvEncEncoder : IEncoder
         {
             try
             {
-                _workSignal.Wait();
+                _workSignal.Wait(_disposeCts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                break;
+            }
+            try
+            {
+                // (original loop body continues below)
 
                 CaptureFrame? frame;
                 lock (_slotGate)
@@ -313,16 +434,25 @@ public unsafe class NvEncEncoder : IEncoder
                 Log.Error($"[NvEnc] encode loop error: {ex.Message}");
             }
         }
+        Log.Info("[NvEnc] worker loop exited");
     }
 
     private void EncodeOne(CaptureFrame frame)
     {
-        if (frame.RawData == null || frame.Width <= 0 || frame.Height <= 0) return;
+        if (!_useHwFrames && frame.RawData == null) return;
+        if (frame.Width <= 0 || frame.Height <= 0) return;
 
         lock (_encoderGate)
         {
-            if (!_initialized || _codecCtx == null || _inputFrame == null ||
-                (!_useBgraDirect && _swsCtx == null)) return;
+            if (!_initialized || _codecCtx == null) return;
+
+            if (_useHwFrames)
+            {
+                EncodeOneHw(frame);
+                return;
+            }
+
+            if (_inputFrame == null || (!_useBgraDirect && _swsCtx == null)) return;
 
             // The source is read straight from the PINNED managed frame
             // buffer — no per-frame 4MB HGlobal alloc+copy (measured: this
@@ -423,14 +553,118 @@ public unsafe class NvEncEncoder : IEncoder
         }
     }
 
+    /// <summary>Zero-copy encode: pull a pooled D3D11 array-texture slice,
+    /// CopySubresourceRegion the capture ring slot's frame into it under the
+    /// shared GPU gate (same gate as the capture VP blit — the immediate
+    /// context is not thread-safe), and hand the GPU-resident frame to
+    /// nvenc. No CPU readback, no upload — the frame never leaves the GPU.</summary>
+    private int dbgHwFrames;
+
+    private unsafe void EncodeOneHw(CaptureFrame frame)
+    {
+        if (_hwFrame == null || _hwFramesRef == null || _borrowedCtx == null ||
+            frame.D3dTexture == nint.Zero || _gpuGate == null) return;
+
+        if (av_hwframe_get_buffer(_hwFramesRef, _hwFrame, 0) < 0)
+        {
+            // Pool exhausted (encoder backed up): latest-wins drops this frame.
+            return;
+        }
+
+        // d3d11 hwframes convention: data[0] = pooled texture array,
+        // data[1] = slice index (AVD3D11FrameDescriptor).
+        var pooledPtr = (nint)_hwFrame->data[0];
+        var sliceIdx = (uint)(nuint)_hwFrame->data[1];
+        if (dbgHwFrames < 3)
+        {
+            dbgHwFrames++;
+            Log.Info($"[NvEnc] hw#{dbgHwFrames}: pooled={pooledPtr:X} slice={sliceIdx} src={frame.D3dTexture:X}");
+        }
+        if (_pooledArray == null || _pooledArray.NativePointer != pooledPtr)
+        {
+            // Cache the wrapper per returned texture pointer: FFmpeg's d3d11
+            // pool is normally ONE texture2D array (data[0] constant), but a
+            // fallback build may hand out separate textures — a stale
+            // wrapper here AVed in CopySubresourceRegion.
+            _pooledArray?.Dispose();
+            Marshal.AddRef(pooledPtr);
+            _pooledArray = new Vortice.Direct3D11.ID3D11Texture2D(pooledPtr);
+        }
+
+        // The source ring-slot texture pointer is likewise borrowed from the
+        // capture — AddRef before wrapping, Release after the copy.
+        Marshal.AddRef(frame.D3dTexture);
+        var srcTexture = new Vortice.Direct3D11.ID3D11Texture2D(frame.D3dTexture);
+        try
+        {
+            lock (_gpuGate)
+            {
+                _borrowedCtx.CopySubresourceRegion(_pooledArray, sliceIdx,
+                    0, 0, 0, srcTexture, 0, null);
+            }
+        }
+        finally
+        {
+            srcTexture.Dispose();
+            Marshal.Release(frame.D3dTexture);
+        }
+
+        _hwFrame->pts = frame.TimestampUs * _fps / 1_000_000;
+        _hwFrame->pict_type = _forceIdr ? AVPictureType.AV_PICTURE_TYPE_I : AVPictureType.AV_PICTURE_TYPE_NONE;
+        _forceIdr = false;
+
+        var encStart = System.Diagnostics.Stopwatch.GetTimestamp();
+
+        int sendRc = avcodec_send_frame(_codecCtx, _hwFrame);
+        // Return the pool slice: the codec holds its own ref after send.
+        av_frame_unref(_hwFrame);
+        if (sendRc < 0)
+        {
+            Log.Error($"[NvEnc] send_frame(d3d11) rc={sendRc}");
+            return;
+        }
+
+        while (true)
+        {
+            int rc = avcodec_receive_packet(_codecCtx, _pkt);
+            if (rc != 0 || _pkt == null) break;
+
+            var au = new byte[_pkt->size];
+            Marshal.Copy((nint)_pkt->data, au, 0, _pkt->size);
+            bool isKey = (_pkt->flags & AV_PKT_FLAG_KEY) != 0;
+            _isKey = isKey;
+
+            _emittedFrames++;
+            _auBytes += au.Length;
+            if (_isKey) _keyFrames++;
+            if (_emittedFrames % 60 == 1)
+            {
+                var avgEnc = _encTicks / 60.0;
+                var avgAu = _auBytes / 60.0 / 1000.0;
+                Log.Info($"[NvEnc] emitted {_emittedFrames} frames (keys {_keyFrames}, last {au.Length}B key={isKey}) avgAu={avgAu:F1}KB ({avgAu * 60 * 8 / 1000:F1}Mbps) encAvg={avgEnc:F1}ms loops={_loopCount} fmt=d3d11-zero-copy");
+                _encTicks = 0;
+                _encTotalTicks = 0;
+                _auBytes = 0;
+                _loopCount = 0;
+            }
+
+            PacketEncoded?.Invoke(new EncodedPacket(au, frame.TimestampUs, isKey));
+        }
+
+        _encTicks += (System.Diagnostics.Stopwatch.GetTimestamp() - encStart) * 1000 / System.Diagnostics.Stopwatch.Frequency;
+    }
+
     public void Dispose()
     {
         _running = false;
+        try { _disposeCts.Cancel(); } catch { }
+        Log.Info("[NvEnc] dispose: joining worker");
         // Unbounded join: the worker checks _running every iteration and the
         // current EncodeOne holds _encoderGate — freeing the codec while the
         // worker is mid-encode was a use-after-free (coreclr 0xc0000005
         // crash, observed when the viewer disconnected mid-encode).
         _worker?.Join();
+        Log.Info("[NvEnc] dispose: worker joined");
         _worker = null;
         lock (_encoderGate)
         {
@@ -449,6 +683,28 @@ public unsafe class NvEncEncoder : IEncoder
             avcodec_free_context(&ctx);
             _codecCtx = null;
         }
+        if (_hwFramesRef != null)
+        {
+            var r = _hwFramesRef;
+            av_buffer_unref(&r);
+            _hwFramesRef = null;
+        }
+        if (_hwDeviceRef != null)
+        {
+            var r = _hwDeviceRef;
+            av_buffer_unref(&r);
+            _hwDeviceRef = null;
+        }
+        if (_hwFrame != null)
+        {
+            var f = _hwFrame;
+            av_frame_free(&f);
+            _hwFrame = null;
+        }
+        _pooledArray?.Dispose();
+        _pooledArray = null;
+        _borrowedCtx?.Dispose();
+        _borrowedCtx = null;
         if (_swsCtx != null)
         {
             sws_freeContext(_swsCtx);

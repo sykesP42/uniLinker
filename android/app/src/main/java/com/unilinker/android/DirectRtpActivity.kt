@@ -526,7 +526,7 @@ fun DirectRtpScreen(
                 while (true) {
                     val c = client ?: break
                     var best: com.unilinker.android.mediatier.DirectRtpClient.ClockSync? = null
-                    repeat(3) {
+                    repeat(5) {
                         val s = c.measureClockSync()
                         if (s != null && (best == null || s.rttMs < best!!.rttMs)) best = s
                     }

@@ -280,12 +280,23 @@ internal sealed class DirectRtpSender : IDisposable
         {
             while (_pacerQueue.Count >= 6) _pacerQueue.TryTake(out _);
         }
+        // NON-BLOCKING: the earlier blocking Add deadlocked the whole session
+        // teardown — a dead receiver fills the OS send buffer, the pacer's
+        // _udp.Send blocks, the queue fills, and Add blocked the ENCODE
+        // worker forever (Dispose's Join then hung; the watchdog could never
+        // stop a dead session). A full queue here drops the frame — the
+        // receiver's PLI rebuilds, latest-wins semantics already tolerate it.
         try
         {
-            _pacerQueue.Add((annexBAu, timestampUs), _pacerCts.Token);
+            if (!_pacerQueue.TryAdd((annexBAu, timestampUs), 50, _pacerCts.Token))
+            {
+                Interlocked.Increment(ref _pacerDrops);
+            }
         }
         catch (InvalidOperationException) { } // completing on dispose
     }
+
+    private long _pacerDrops;
 
     /// <summary>Tile mode: enqueue one frame blob (all wire packets
     /// concatenated, u16-length-prefixed). Queue cap 4 FRAMES — dropping a
@@ -302,9 +313,13 @@ internal sealed class DirectRtpSender : IDisposable
         {
             while (_tileQueue.Count >= 4) _tileQueue.TryTake(out _);
         }
+        // Non-blocking (see SendAu — the blocking Add deadlocked teardown).
         try
         {
-            _tileQueue.Add((blob, timestampUs, isKeyFrame), _pacerCts.Token);
+            if (!_tileQueue.TryAdd((blob, timestampUs, isKeyFrame), 50, _pacerCts.Token))
+            {
+                Interlocked.Increment(ref _pacerDrops);
+            }
         }
         catch (InvalidOperationException) { }
     }
@@ -475,7 +490,7 @@ internal sealed class DirectRtpSender : IDisposable
                     if (ageMs > _ageMaxMs) _ageMaxMs = ageMs;
                     if (++_framesSent % 60 == 1)
                     {
-                        Log.Info($"[RTX] frame age {ageMs:F1}ms ema={_ageEmaMs:F1}ms max={_ageMaxMs:F1}ms (capture→wire) {packets.Count} pkts {item.Au.Length}B");
+                        Log.Info($"[RTX] frame age {ageMs:F1}ms ema={_ageEmaMs:F1}ms max={_ageMaxMs:F1}ms (capture→wire) {packets.Count} pkts {item.Au.Length}B drops={Interlocked.Read(ref _pacerDrops)}");
                         _ageMaxMs = 0;
                     }
                     var frameSendStart = System.Diagnostics.Stopwatch.GetTimestamp();

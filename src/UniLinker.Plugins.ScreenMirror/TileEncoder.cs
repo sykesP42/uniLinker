@@ -88,7 +88,8 @@ public unsafe class TileEncoder : IEncoder
     /// no signal (quality stays at the top rung).</summary>
     public Func<int>? TileBacklogProvider { get; set; }
 
-    public bool Initialize(int width, int height, int fps, int bitrateKbps)
+    public bool Initialize(int width, int height, int fps, int bitrateKbps,
+        nint sharedDevicePtr = 0, nint sharedContextPtr = 0, object? gpuGate = null)
     {
         // Quality ladder base from the decode preference (82 = 极速, 92 =
         // 高画质 via TileQualityBase); rungs keep the -18/-16 spacing.

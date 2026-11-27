@@ -117,6 +117,19 @@ public class ScreenMirrorPlugin : IPlugin
 
     private void StartSession(int fps, int bitrateKbps, int tierW = 0, int tierH = 0)
     {
+        // A reconnect (a new viewer arriving while the previous session
+        // still lives — the stale tablet channel may not have fired OnClose
+        // yet) used to LEAK the previous capture/encoder: their threads
+        // kept running and the old encoder's PacketEncoded (which snapshots
+        // _viewers at emit time) interleaved a SECOND stream into the same
+        // receiver — measured as 114fps with two SSRCs and rising
+        // corruptDropped (2026-11-28). At most one live session, ever.
+        if (_capture != null || _encoder != null)
+        {
+            _ctx?.Logger.Warn("StartSession while a session is live — tearing it down first");
+            StopSession();
+        }
+
         _capture = new WgcCapture();
         // Capture resolution precedence: the receiver's tier (drives capture
         // AND encoder grid) > the PC config > native. The frame pool is
@@ -257,9 +270,18 @@ public class ScreenMirrorPlugin : IPlugin
             try
             {
                 var nvenc = new NvEncEncoder();
-                if (nvenc.Initialize(width, height, fps, bitrateKbps))
+                // Zero-copy: hand the capture's D3D11 device/context over —
+                // a successful hw open switches the capture to GPU delivery
+                // (CaptureFrame.D3dTexture); failure falls back to the CPU
+                // readback path with the same encoder.
+                var zeroCopy = (config?.EncoderCopy ?? "auto") == "d3d11";
+                if (nvenc.Initialize(width, height, fps, bitrateKbps,
+                        zeroCopy ? _capture?.NativeDevicePointer ?? 0 : 0,
+                        zeroCopy ? _capture?.NativeContextPointer ?? 0 : 0,
+                        zeroCopy ? _capture?.GpuGate : null))
                 {
-                    _ctx?.Logger.Info($"Encoder: NVENC {width}x{height}@{fps} {bitrateKbps}kbps");
+                    if (_capture != null) _capture.PreferGpuDelivery = nvenc.UsesGpuFrames;
+                    _ctx?.Logger.Info($"Encoder: NVENC {width}x{height}@{fps} {bitrateKbps}kbps gpu={(nvenc.UsesGpuFrames ? "zero-copy" : "system-memory")}");
                     return nvenc;
                 }
                 nvenc.Dispose();
@@ -314,24 +336,31 @@ public class ScreenMirrorPlugin : IPlugin
         // Dispose chains can race the capture/encoder worker threads; a throw
         // here must not leave the session half-torn-down nor break the caller
         // (direct-RTP reconnect disposes the stale channel before rebinding).
-        try
-        {
-            _capture?.Dispose();
-        }
-        catch (Exception ex)
-        {
-            _ctx?.Logger.Error($"capture dispose threw: {ex.Message}", ex);
-        }
-        _capture = null;
+        // Zero-copy ordering: the encoder BORROWS the capture's D3D11
+        // device/context — free the encoder (its hw refs + borrowed
+        // wrappers) BEFORE the capture destroys those objects.
+        _ctx?.Logger.Info("session stop: disposing encoder");
         try
         {
             _encoder?.Dispose();
+            _ctx?.Logger.Info("session stop: encoder disposed");
         }
         catch (Exception ex)
         {
             _ctx?.Logger.Error($"encoder dispose threw: {ex.Message}", ex);
         }
         _encoder = null;
+        _ctx?.Logger.Info("session stop: disposing capture");
+        try
+        {
+            _capture?.Dispose();
+            _ctx?.Logger.Info("session stop: capture disposed");
+        }
+        catch (Exception ex)
+        {
+            _ctx?.Logger.Error($"capture dispose threw: {ex.Message}", ex);
+        }
+        _capture = null;
         _ctx?.Logger.Info("Screen sharing session stopped");
     }
 
@@ -361,4 +390,10 @@ public class ScreenMirrorConfig
     public int BitrateKbps { get; set; } = 8000;
     /// <summary>"auto" (NVENC first, CPU fallback) | "nvenc" | "openh264".</summary>
     public string Encoder { get; set; } = "auto";
+    /// <summary>Zero-copy D3D11 delivery to nvenc. "auto" keeps the
+    /// verified system-memory BGRA path — the d3d11 hwframes path still
+    /// AVs in CopySubresourceRegion on this build (slice 7 pinned, pool
+    /// not recycling; suspected the mandatory AVD3D11VADeviceContext
+    /// lock/unlock callbacks being unset). "d3d11" opts in for debugging.</summary>
+    public string EncoderCopy { get; set; } = "auto";
 }

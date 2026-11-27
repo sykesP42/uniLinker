@@ -36,6 +36,30 @@ public class WgcCapture : ICapture
     private int _minReadbackIntervalMs = 33;
     private Thread? _pollThread;
 
+    // ── Zero-copy GPU delivery (M7 round 4) ──
+    // A 3-slot ring of owned BGRA textures: the VP blits the tier-sized
+    // frame into a slot, and CaptureFrame.D3dTexture carries the slot's
+    // native pointer to a zero-copy encoder (no readback at all). All
+    // immediate-context use (VP blit, readback copy, encoder
+    // CopySubresourceRegion) serializes on [_gpuGate] — D3D11's immediate
+    // context is not internally synchronized across threads.
+    private ID3D11Texture2D[]? _gpuRing;
+    private ID3D11VideoProcessorOutputView?[]? _gpuRingViews;
+    private int _gpuRingIdx;
+    private readonly object _gpuGate = new();
+
+    /// <summary>Set by the plugin after a zero-copy encoder initializes
+    /// successfully: DeliverFrameGPU then hands GPU textures instead of CPU
+    /// readback. Before that (and on any CPU-encoder fallback) the classic
+    /// readback path runs.</summary>
+    public bool PreferGpuDelivery { get; set; }
+
+    /// <summary>Borrowed device/context pointers for a zero-copy encoder
+    /// (owned by this capture — the encoder must treat them as borrowed).</summary>
+    public nint NativeDevicePointer => _d3dDevice?.NativePointer ?? nint.Zero;
+    public nint NativeContextPointer => _d3dContext?.NativePointer ?? nint.Zero;
+    public object GpuGate => _gpuGate;
+
     /// <summary>Readback buffers, reused across frames: the previous
     /// per-frame 4MB allocation was ~245MB/s of LOH churn at 60fps — gen2/LOH
     /// GC pauses stalled EVERY pipeline thread (capture callback, encode
@@ -162,6 +186,32 @@ public class WgcCapture : ICapture
                     CPUAccessFlags = CpuAccessFlags.Read,
                 });
                 Log.Info($"WGC: VideoProcessor chain ready {_poolSize.Width}x{_poolSize.Height} → {_outWidth}x{_outHeight}");
+
+                // Zero-copy ring: 3 owned tier-sized textures + cached VP
+                // output views. DeliverFrameGPU blits into a slot and hands
+                // its pointer to a zero-copy encoder.
+                _gpuRing = new ID3D11Texture2D[3];
+                _gpuRingViews = new ID3D11VideoProcessorOutputView?[3];
+                for (int i = 0; i < _gpuRing.Length; i++)
+                {
+                    _gpuRing[i] = _d3dDevice.CreateTexture2D(new Texture2DDescription
+                    {
+                        Width = (uint)_outWidth,
+                        Height = (uint)_outHeight,
+                        MipLevels = 1,
+                        ArraySize = 1,
+                        Format = Format.B8G8R8A8_UNorm,
+                        SampleDescription = new SampleDescription(1, 0),
+                        Usage = ResourceUsage.Default,
+                        BindFlags = BindFlags.RenderTarget,
+                    });
+                    _gpuRingViews[i] = _videoDevice.CreateVideoProcessorOutputView(
+                        _gpuRing[i], _vpEnum!, new VideoProcessorOutputViewDescription
+                        {
+                            ViewDimension = VideoProcessorOutputViewDimension.Texture2D,
+                            Texture2D = new Texture2DVideoProcessorOutputView { MipSlice = 0 },
+                        });
+                }
             }
 
             _session = _framePool.CreateCaptureSession(_item);
@@ -321,52 +371,68 @@ public class WgcCapture : ICapture
             var frameTexture = new ID3D11Texture2D(texturePtr);
             var desc = frameTexture.Description;
 
-            using var inputView = _videoDevice!.CreateVideoProcessorInputView(
-                frameTexture, _vpEnum!, new VideoProcessorInputViewDescription
-                {
-                    ViewDimension = VideoProcessorInputViewDimension.Texture2D,
-                    Texture2D = new Texture2DVideoProcessorInputView { MipSlice = 0 },
-                });
-            using var outputView = _videoDevice.CreateVideoProcessorOutputView(
-                _scaledTexture!, _vpEnum!, new VideoProcessorOutputViewDescription
-                {
-                    ViewDimension = VideoProcessorOutputViewDimension.Texture2D,
-                    Texture2D = new Texture2DVideoProcessorOutputView { MipSlice = 0 },
-                });
-
-            _videoContext!.VideoProcessorSetStreamFrameFormat(_videoProcessor!, 0, VideoFrameFormat.Progressive);
-            _videoContext.VideoProcessorSetStreamSourceRect(_videoProcessor!, 0, true,
-                new Vortice.RawRect(0, 0, (int)desc.Width, (int)desc.Height));
-            _videoContext.VideoProcessorSetStreamDestRect(_videoProcessor!, 0, true,
-                new Vortice.RawRect(0, 0, _outWidth, _outHeight));
-
-            var stream = new VideoProcessorStream
+            var slotIdx = 0;
+            nint gpuTexturePtr = nint.Zero;
+            byte[]? rawData = null;
+            var rowPitch = _outWidth * 4;
+            lock (_gpuGate)
             {
-                Enable = true,
-                OutputIndex = 0,
-                InputFrameOrField = 0,
-                InputSurface = inputView,
-            };
-            _videoContext.VideoProcessorBlt(_videoProcessor!, outputView, 0, new[] { stream });
+                using var inputView = _videoDevice!.CreateVideoProcessorInputView(
+                    frameTexture, _vpEnum!, new VideoProcessorInputViewDescription
+                    {
+                        ViewDimension = VideoProcessorInputViewDimension.Texture2D,
+                        Texture2D = new Texture2DVideoProcessorInputView { MipSlice = 0 },
+                    });
+                var slot = _gpuRingIdx++ % 3;
+                slotIdx = slot;
+                using var outputView = _gpuRingViews![slot];
 
-            // Read back the SCALED texture (4 MB) — the VP blit and the copy
-            // both complete before the CPU-visible map.
-            _d3dContext!.CopyResource(_stagingSmall!, _scaledTexture!);
-            _d3dContext.Map(_stagingSmall!, 0, MapMode.Read,
-                Vortice.Direct3D11.MapFlags.None, out MappedSubresource mapped);
-            var rowPitch = (int)mapped.RowPitch;
-            var rawDataLen = rowPitch * _outHeight;
-            if (_readbackRing == null || _readbackRing[0].Length < rawDataLen)
-            {
-                _readbackRing = new[] { new byte[rawDataLen], new byte[rawDataLen], new byte[rawDataLen] };
+                _videoContext!.VideoProcessorSetStreamFrameFormat(_videoProcessor!, 0, VideoFrameFormat.Progressive);
+                _videoContext.VideoProcessorSetStreamSourceRect(_videoProcessor!, 0, true,
+                    new Vortice.RawRect(0, 0, (int)desc.Width, (int)desc.Height));
+                _videoContext.VideoProcessorSetStreamDestRect(_videoProcessor!, 0, true,
+                    new Vortice.RawRect(0, 0, _outWidth, _outHeight));
+
+                var stream = new VideoProcessorStream
+                {
+                    Enable = true,
+                    OutputIndex = 0,
+                    InputFrameOrField = 0,
+                    InputSurface = inputView,
+                };
+                _videoContext.VideoProcessorBlt(_videoProcessor!, outputView, 0, new[] { stream });
+
+                if (!PreferGpuDelivery)
+                {
+                    // Classic readback: copy from the ring slot the blit just
+                    // wrote (the VP blit and the copy both complete before
+                    // the CPU-visible map).
+                    _d3dContext!.CopyResource(_stagingSmall!, _gpuRing![slot]!);
+                    _d3dContext.Map(_stagingSmall!, 0, MapMode.Read,
+                        Vortice.Direct3D11.MapFlags.None, out MappedSubresource mapped);
+                    rowPitch = (int)mapped.RowPitch;
+                    var rawDataLen = rowPitch * _outHeight;
+                    if (_readbackRing == null || _readbackRing[0].Length < rawDataLen)
+                    {
+                        _readbackRing = new[] { new byte[rawDataLen], new byte[rawDataLen], new byte[rawDataLen] };
+                    }
+                    rawData = _readbackRing[_ringIdx++ % _readbackRing.Length];
+                    Marshal.Copy(mapped.DataPointer, rawData, 0, rawDataLen);
+                    _d3dContext.Unmap(_stagingSmall!, 0);
+                }
+                else
+                {
+                    // Zero-copy: hand the ring slot's texture to the encoder.
+                    // The slot stays owned here; the encoder copies out under
+                    // this same gate before the slot rotates back (3 slots x
+                    // ~5ms encode < slot lifetime).
+                    gpuTexturePtr = _gpuRing![slot]!.NativePointer;
+                }
             }
-            var rawData = _readbackRing[_ringIdx++ % _readbackRing.Length];
-            Marshal.Copy(mapped.DataPointer, rawData, 0, rawDataLen);
-            _d3dContext.Unmap(_stagingSmall!, 0);
 
             var ts = (long)(frame.SystemRelativeTime.TotalMilliseconds * 1000);
             var captureFrame = new CaptureFrame(
-                D3dTexture: nint.Zero,
+                D3dTexture: gpuTexturePtr,
                 Width: _outWidth,
                 Height: _outHeight,
                 Pitch: rowPitch,
@@ -593,6 +659,16 @@ public class WgcCapture : ICapture
         _videoProcessor = null;
         _vpEnum?.Dispose();
         _vpEnum = null;
+        if (_gpuRing != null)
+        {
+            foreach (var t in _gpuRing) t?.Dispose();
+            _gpuRing = null;
+        }
+        if (_gpuRingViews != null)
+        {
+            foreach (var v in _gpuRingViews) v?.Dispose();
+            _gpuRingViews = null;
+        }
         _scaledTexture?.Dispose();
         _scaledTexture = null;
         _stagingSmall?.Dispose();
