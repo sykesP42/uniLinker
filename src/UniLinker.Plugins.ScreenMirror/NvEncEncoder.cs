@@ -8,9 +8,11 @@ namespace UniLinker.Plugins.ScreenMirror;
 
 /// <summary>
 /// Hardware H.264 encoder via FFmpeg's h264_nvenc (NVIDIA NVENC).
-/// The BGRA readback frame is converted to YUV420P by swscale and handed
-/// to the GPU encoder — the encode stage itself costs near-zero CPU,
-/// which is what unlocks 60fps on the 22fps CPU-encoder ceiling.
+/// The BGRA readback frame is fed to the encoder DIRECTLY when the codec
+/// build supports it (nvenc converts ARGB→NV12 on the GPU — zero CPU
+/// conversion); older builds fall back to the swscale BGRA→YUV420P path.
+/// The encode stage itself costs near-zero CPU, which is what unlocks
+/// 60fps on the 22fps CPU-encoder ceiling.
 ///
 /// Same IEncoder contract as OpenH264Encoder: latest-wins frame slot,
 /// background worker, periodic IDR via ForceKeyFrame.
@@ -49,9 +51,12 @@ public unsafe class NvEncEncoder : IEncoder
 
     private AVCodecContext* _codecCtx;
     private SwsContext* _swsCtx;
-    private AVFrame* _yuvFrame;
+    private AVFrame* _inputFrame;
     private AVPacket* _pkt;
     private byte[]? _compactBuf;
+    /// <summary>True when nvenc accepts BGRA directly (ARGB hardware
+    /// conversion) — the sws BGRA→YUV420P CPU pass is skipped entirely.</summary>
+    private bool _useBgraDirect;
 
     public event Action<EncodedPacket>? PacketEncoded;
 
@@ -94,7 +99,16 @@ public unsafe class NvEncEncoder : IEncoder
         _codecCtx->height = _configuredHeight;
         _codecCtx->time_base = new AVRational { num = 1, den = _fps };
         _codecCtx->framerate = new AVRational { num = _fps, den = 1 };
-        _codecCtx->pix_fmt = AVPixelFormat.AV_PIX_FMT_YUV420P;
+        // Pixel format: BGRA direct when this nvenc build supports it — the
+        // ARGB hardware conversion kills the sws BGRA→YUV420P CPU pass
+        // (1.3-2.1ms/frame plus a CPU contention source at 60fps). Detected
+        // from the codec's supported-format list; yuv420p+sws stays as the
+        // fallback so an unexpected build can never silently drop the
+        // whole session to the CPU encoder.
+        _useBgraDirect = NvEncSupportsBgra(codec);
+        _codecCtx->pix_fmt = _useBgraDirect
+            ? AVPixelFormat.AV_PIX_FMT_BGRA
+            : AVPixelFormat.AV_PIX_FMT_YUV420P;
         _codecCtx->bit_rate = (long)_bitrateKbps * 1000;
         // Two-second GOP for screen content; no B-frames, no lookahead:
         // every extra frame of pipeline is latency on the mirrored link.
@@ -127,6 +141,12 @@ public unsafe class NvEncEncoder : IEncoder
         // constant wire load, loss regions heal as the sweep passes. The
         // decoder-side impact: none (plain ISlices in P frames).
         av_opt_set(_codecCtx->priv_data, "intra_refresh", "1", 0);
+        // 4 slices per frame: Moonlight's runtime rule for OLD Qualcomm
+        // decoders (GLES < 3.1 → Adreno 330 on the SM-P605 hits it) — the
+        // Venus decoder pipelines slices, so it can start decoding slice 1
+        // while slices 2-4 are still arriving instead of waiting for the
+        // whole frame bitstream. Costs a little compression efficiency.
+        av_opt_set(_codecCtx->priv_data, "slices", "4", 0);
 
         // Rate control: quality-targeted VBR (the OBS "cq" mode) instead of
         // CBR. Measured: CBR PADDING padded static-desktop P frames to
@@ -146,31 +166,69 @@ public unsafe class NvEncEncoder : IEncoder
         }
         Log.Info("[NvEnc] codec context open");
 
-        // BGRA -> YUV420P conversion context. NVENC accepts yuv420p system
-        // memory frames; the GPU-D3D11 NV12 path is a later optimization.
-        _swsCtx = sws_getContext(
-            _configuredWidth, _configuredHeight, AVPixelFormat.AV_PIX_FMT_BGRA,
-            _configuredWidth, _configuredHeight, AVPixelFormat.AV_PIX_FMT_YUV420P,
-            (int)SwsFlags.SWS_BILINEAR, null, null, null);
-        if (_swsCtx == null)
+        if (_useBgraDirect)
         {
-            Log.Error("[NvEnc] sws_getContext failed");
-            return false;
+            // Input frame wraps the PINNED capture buffer per encode (data
+            // pointers set per frame) — zero conversion, zero extra copy.
+            _inputFrame = av_frame_alloc();
+            _inputFrame->width = _configuredWidth;
+            _inputFrame->height = _configuredHeight;
+            _inputFrame->format = (int)AVPixelFormat.AV_PIX_FMT_BGRA;
         }
-
-        _yuvFrame = av_frame_alloc();
-        _yuvFrame->width = _configuredWidth;
-        _yuvFrame->height = _configuredHeight;
-        _yuvFrame->format = (int)AVPixelFormat.AV_PIX_FMT_YUV420P;
-        if (av_frame_get_buffer(_yuvFrame, 0) < 0)
+        else
         {
-            Log.Error("[NvEnc] av_frame_get_buffer failed");
-            return false;
+            // BGRA -> YUV420P conversion context (fallback codec builds).
+            _swsCtx = sws_getContext(
+                _configuredWidth, _configuredHeight, AVPixelFormat.AV_PIX_FMT_BGRA,
+                _configuredWidth, _configuredHeight, AVPixelFormat.AV_PIX_FMT_YUV420P,
+                (int)SwsFlags.SWS_BILINEAR, null, null, null);
+            if (_swsCtx == null)
+            {
+                Log.Error("[NvEnc] sws_getContext failed");
+                return false;
+            }
+
+            _inputFrame = av_frame_alloc();
+            _inputFrame->width = _configuredWidth;
+            _inputFrame->height = _configuredHeight;
+            _inputFrame->format = (int)AVPixelFormat.AV_PIX_FMT_YUV420P;
+            if (av_frame_get_buffer(_inputFrame, 0) < 0)
+            {
+                Log.Error("[NvEnc] av_frame_get_buffer failed");
+                return false;
+            }
         }
 
         _pkt = av_packet_alloc();
-        Log.Info($"[NvEnc] initialized {_configuredWidth}x{_configuredHeight}@{_fps} CBR {_bitrateKbps}kbps");
+        Log.Info($"[NvEnc] initialized {_configuredWidth}x{_configuredHeight}@{_fps} CBR {_bitrateKbps}kbps fmt={(_useBgraDirect ? "bgra-direct" : "sws-yuv420p")} slices=4");
         return true;
+    }
+
+    /// <summary>Check the codec's supported pixel-format list for BGRA.
+    /// Unknown/failed lookups conservatively return false (the sws fallback
+    /// is always correct, only slower).</summary>
+    private static unsafe bool NvEncSupportsBgra(AVCodec* codec)
+    {
+        try
+        {
+            void* cfg = null;
+            int num = 0;
+            if (avcodec_get_supported_config(null, codec,
+                    AVCodecConfig.AV_CODEC_CONFIG_PIX_FORMAT, 0, &cfg, &num) < 0 || num <= 0)
+            {
+                return false;
+            }
+            var fmts = (AVPixelFormat*)cfg;
+            for (int i = 0; i < num; i++)
+            {
+                if (fmts[i] == AVPixelFormat.AV_PIX_FMT_BGRA) return true;
+            }
+            return false;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     public EncoderInfo GetInfo() => new("h264-nvenc", _bitrateKbps, IsHardware: true);
@@ -254,11 +312,12 @@ public unsafe class NvEncEncoder : IEncoder
 
         lock (_encoderGate)
         {
-            if (!_initialized || _codecCtx == null || _swsCtx == null || _yuvFrame == null) return;
+            if (!_initialized || _codecCtx == null || _inputFrame == null ||
+                (!_useBgraDirect && _swsCtx == null)) return;
 
-            // sws_scale reads straight from the PINNED managed frame buffer —
-            // no per-frame 4MB HGlobal alloc+copy (measured: this was the
-            // 16fps bottleneck; pinned-direct restores the 30fps tier).
+            // The source is read straight from the PINNED managed frame
+            // buffer — no per-frame 4MB HGlobal alloc+copy (measured: this
+            // was the 16fps bottleneck; pinned-direct restores the tier).
             var srcData = new byte*[4];
             var srcStride = new int[4];
             GCHandle pinned = default;
@@ -287,23 +346,34 @@ public unsafe class NvEncEncoder : IEncoder
                     _ = toCopy;
                 }
 
-                var swsStart = System.Diagnostics.Stopwatch.GetTimestamp();
-                sws_scale(_swsCtx, srcData, srcStride, 0, frame.Height,
-                    _yuvFrame->data, _yuvFrame->linesize);
-                _swsTicks += (System.Diagnostics.Stopwatch.GetTimestamp() - swsStart) * 1000 / System.Diagnostics.Stopwatch.Frequency;
+                if (_useBgraDirect)
+                {
+                    // BGRA direct: the input frame wraps the pinned capture
+                    // buffer — nvenc does the ARGB→NV12 conversion on the
+                    // GPU. No sws, no extra copy.
+                    _inputFrame->data[0] = srcData[0];
+                    _inputFrame->linesize[0] = srcStride[0];
+                }
+                else
+                {
+                    var swsStart = System.Diagnostics.Stopwatch.GetTimestamp();
+                    sws_scale(_swsCtx, srcData, srcStride, 0, frame.Height,
+                        _inputFrame->data, _inputFrame->linesize);
+                    _swsTicks += (System.Diagnostics.Stopwatch.GetTimestamp() - swsStart) * 1000 / System.Diagnostics.Stopwatch.Frequency;
+                }
             }
             finally
             {
                 if (pinned.IsAllocated) pinned.Free();
             }
 
-            _yuvFrame->pts = frame.TimestampUs * _fps / 1_000_000;
-            _yuvFrame->pict_type = _forceIdr ? AVPictureType.AV_PICTURE_TYPE_I : AVPictureType.AV_PICTURE_TYPE_NONE;
+            _inputFrame->pts = frame.TimestampUs * _fps / 1_000_000;
+            _inputFrame->pict_type = _forceIdr ? AVPictureType.AV_PICTURE_TYPE_I : AVPictureType.AV_PICTURE_TYPE_NONE;
             _forceIdr = false;
 
             var encStart = System.Diagnostics.Stopwatch.GetTimestamp();
 
-            int sendRc = avcodec_send_frame(_codecCtx, _yuvFrame);
+            int sendRc = avcodec_send_frame(_codecCtx, _inputFrame);
             if (sendRc < 0)
             {
                 Log.Error($"[NvEnc] send_frame rc={sendRc}");
@@ -329,7 +399,7 @@ public unsafe class NvEncEncoder : IEncoder
                     var avgEnc = _encTicks / 60.0;
                     var avgTotal = _loopCount > 0 ? _encTotalTicks * 1000.0 / System.Diagnostics.Stopwatch.Frequency / _loopCount : 0;
                     var avgAu = _auBytes / 60.0 / 1000.0;
-                    Log.Info($"[NvEnc] emitted {_emittedFrames} frames (keys {_keyFrames}, last {au.Length}B key={isKey}) avgAu={avgAu:F1}KB ({avgAu * 60 * 8 / 1000:F1}Mbps) swsAvg={avgSws:F1}ms encAvg={avgEnc:F1}ms loops={_loopCount}");
+                    Log.Info($"[NvEnc] emitted {_emittedFrames} frames (keys {_keyFrames}, last {au.Length}B key={isKey}) avgAu={avgAu:F1}KB ({avgAu * 60 * 8 / 1000:F1}Mbps) swsAvg={avgSws:F1}ms encAvg={avgEnc:F1}ms loops={_loopCount} fmt={(_useBgraDirect ? "bgra" : "yuv420p")}");
                     _swsTicks = 0;
                     _encTicks = 0;
                     _encTotalTicks = 0;
@@ -375,11 +445,11 @@ public unsafe class NvEncEncoder : IEncoder
             sws_freeContext(_swsCtx);
             _swsCtx = null;
         }
-        if (_yuvFrame != null)
+        if (_inputFrame != null)
         {
-            var frame = _yuvFrame;
+            var frame = _inputFrame;
             av_frame_free(&frame);
-            _yuvFrame = null;
+            _inputFrame = null;
         }
         if (_pkt != null)
         {
