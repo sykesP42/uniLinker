@@ -35,6 +35,12 @@ class H264SurfaceDecoder(surface: Surface) : AutoCloseable {
     @Volatile var decodedFrames: Int = 0
         private set
 
+    /** Render callback: (pts µs as submitted, render instant in nanoTime).
+     *  The caller pairs pts back to the AU it submitted for the per-frame
+     *  latency decomposition (decode turnaround is nanoTime-domain, no
+     *  clock calibration needed). */
+    @Volatile var onRendered: ((Long, Long) -> Unit)? = null
+
     /** R3 probe: keys set pre-configure, checked against the output format. */
     private val probeKeys: List<String>
 
@@ -44,10 +50,24 @@ class H264SurfaceDecoder(surface: Surface) : AutoCloseable {
                 // Receiver-side sizing: the encoder adapts resolution; these are
                 // just the initial hints. MediaCodec rescales to the stream.
                 setInteger(MediaFormat.KEY_MAX_INPUT_SIZE, 512 * 1024)
-                // Moonlight's QCOM trick: clamp the decoder's internal buffer
-                // depth to 1 frame - the pipeline depth IS latency on the
-                // Venus decoder. Unrecognized keys are ignored (harmless).
+                // Moonlight's QCOM tricks for the old Venus decoder (the
+                // SM-P605's omx.qcom + Adreno 330 hits Moonlight's old-QCOM
+                // runtime rules). Unrecognized keys are ignored (harmless);
+                // the probe echoes back whichever ones the component accepts.
                 setInteger("max-dec-frame-buffering", 1)
+                // Decode-order output: skip the reorder buffer entirely (our
+                // stream has bf=0, so decode order == display order).
+                setInteger("vendor.qti-ext-dec-picture-order.enable", 1)
+                // The Android 11 low-latency key spelled as a raw string —
+                // ignored pre-R, recognized on builds that backport it.
+                setInteger("low-latency", 1)
+                // Maximum decoder operating rate (Moonlight sets Short.MAX on
+                // QCOM decoders): Venus runs at its top clock, cutting the
+                // per-frame decode time. NOTE: deliberately NOT setting
+                // KEY_PRIORITY - Moonlight documents reliable crashes when a
+                // realtime priority requirement coexists with a maxed
+                // operating rate the decoder can't satisfy.
+                setInteger(MediaFormat.KEY_OPERATING_RATE, Short.MAX_VALUE.toInt())
             }
         probeKeys = MediaCodecProbe.applyLowLatencyKeys(format)
         codec = MediaCodec.createDecoderByType(MediaFormat.MIMETYPE_VIDEO_AVC)
@@ -61,6 +81,7 @@ class H264SurfaceDecoder(surface: Surface) : AutoCloseable {
             override fun onOutputBufferAvailable(mc: MediaCodec, index: Int, outInfo: MediaCodec.BufferInfo) {
                 // Render IMMEDIATELY - this is the latency-critical moment.
                 mc.releaseOutputBuffer(index, true)
+                onRendered?.invoke(outInfo.presentationTimeUs, System.nanoTime())
                 decodedFrames++
             }
 

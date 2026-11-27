@@ -23,7 +23,7 @@ class DirectRtpReceiver(
     private val listenPort: Int,
     masterKey: ByteArray,
     masterSalt: ByteArray,
-    private val onAu: (ByteArray) -> Unit,
+    private val onAu: (ByteArray, Long, Long) -> Unit,
     /** Called (rate-limited) when a sequence gap means loss — the client
      *  sends a PLI so the sender forces an IDR instead of waiting for the
      *  periodic GOP boundary (up to 2 s of artifacts). */
@@ -461,7 +461,7 @@ class DirectRtpReceiver(
                 if (droppedCorruptAUs % 20 == 1) android.util.Log.w("DirectRtp", "dropped corrupt AU #$droppedCorruptAUs after mid-frame skip (${au.size}B)")
                 return@synchronized
             }
-            if (au.isNotEmpty()) onAu(au)
+            if (au.isNotEmpty()) onAu(au, rtpTs, nowNs)
         }
     }
 

@@ -74,6 +74,107 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 /**
+ * Per-frame latency decomposition (M7 round 3). Two segment families:
+ *
+ * - decode turnaround (submit→render): nanoTime-domain, exact, no clock
+ *   calibration — pts rides MediaCodec's presentationTimeUs round trip.
+ * - assembly queueing (assemble→submit): nanoTime-domain, exact.
+ * - E2E (capture on the PC → visible on the tablet): needs the sender's
+ *   RTP timestamp to be epoch-anchored (RTX/native path) plus the /ulp/time
+ *   offset calibration. The legacy SIPSorcery path owns its timestamp
+ *   accumulator internally (no absolute-ts API), so its ts/90 is a small
+ *   cumulative session value — DETECTED by range check against the wall
+ *   clock, and the E2E readout falls back to the chain segments only.
+ *
+ * All fields are EMA-smoothed; the E2E ring (last ~5s) feeds p50/p95/max.
+ */
+private class LatencyStats {
+    private val ring = ArrayDeque<Double>()
+    private val ptsToTs = ArrayDeque<Pair<Long, Long>>() // pts µs → RTP ts
+
+    @Volatile var e2eEma = 0.0; private set
+    @Volatile var decEma = 0.0; private set
+    @Volatile var queueEma = 0.0; private set
+    @Volatile var anchored = false; private set
+
+    // (RTP ts → capture-epoch) anchor from /ulp/time. The u32 RTP ts alone
+    // cannot carry an absolute epoch (wraps every ~13.2h) — the anchor pair
+    // + signed u32 deltas recover every later frame's capture epoch exactly.
+    @Volatile private var anchorTs = 0L
+    @Volatile private var anchorCapMs = 0L
+
+    fun setAnchor(ts: Long, capMs: Long) {
+        if (capMs > 0) {
+            anchorTs = ts
+            anchorCapMs = capMs
+        }
+    }
+
+    /** Called at submit: remember the AU's RTP ts under its pts (bounded —
+     *  the decoder queue is ≤6 deep; a dropped AU's pair is popped FIFO at
+     *  the next render, keeping the pairing exact-enough for a histogram). */
+    fun pair(pts: Long, rtpTs: Long) {
+        synchronized(this) {
+            ptsToTs.addLast(pts to rtpTs)
+            while (ptsToTs.size > 8) ptsToTs.removeFirst()
+        }
+    }
+
+    fun sampleQueue(ms: Double) {
+        queueEma = if (queueEma == 0.0) ms else queueEma * 0.8 + ms * 0.2
+    }
+
+    /** Called on every decoded frame (codec callback thread). */
+    fun onRendered(pts: Long, renderNs: Long, offsetMs: Long) {
+        val decMs = (renderNs - pts * 1000) / 1e6
+        decEma = if (decEma == 0.0) decMs else decEma * 0.8 + decMs * 0.2
+        val rtpTs = synchronized(this) { ptsToTs.removeFirstOrNull()?.second ?: -1L }
+        if (rtpTs < 0 || anchorCapMs <= 0) return
+        // Signed u32 delta from the anchor — exact for ±13.2h of stream time.
+        val delta = ((rtpTs - anchorTs + 0x80000000L) % 0x100000000L) - 0x80000000L
+        val capMs = anchorCapMs + delta / 90.0
+        val nowMs = System.currentTimeMillis()
+        anchored = kotlin.math.abs(capMs - (nowMs + offsetMs)) < 120_000
+        if (dbgSamples < 3) {
+            dbgSamples++
+            android.util.Log.w("DirectRtp",
+                "lat-dbg: rtpTs=$rtpTs capMs=${capMs} now+offset=${nowMs + offsetMs} diff=${capMs - (nowMs + offsetMs)} anchored=$anchored")
+        }
+        if (anchored) {
+            val e2e = nowMs + offsetMs - capMs
+            if (e2e in 0.0..500.0) {
+                e2eEma = if (e2eEma == 0.0) e2e else e2eEma * 0.8 + e2e * 0.2
+                synchronized(ring) {
+                    ring.addLast(e2e)
+                    while (ring.size > 300) ring.removeFirst()
+                }
+            }
+        }
+    }
+
+    private var dbgSamples = 0
+
+    /** (p50, p95, max) over the recent E2E ring, ms. */
+    fun e2ePercentiles(): Triple<Double, Double, Double> = synchronized(ring) {
+        if (ring.isEmpty()) Triple(0.0, 0.0, 0.0)
+        else {
+            val s = ring.sorted()
+            Triple(s[s.size / 2], s[(s.size * 95) / 100], s.last())
+        }
+    }
+
+    fun reset() {
+        synchronized(this) {
+            ring.clear(); ptsToTs.clear()
+            e2eEma = 0.0; decEma = 0.0; queueEma = 0.0; anchored = false
+            // The anchor pair belongs to the sender's session (a PC-side
+            // restart resets its ts to 0) — re-fetch on the next sync tick.
+            anchorTs = 0; anchorCapMs = 0
+        }
+    }
+}
+
+/**
  * Direct-RTP receiver screen (M3, docs/spec/M3-direct-rtp.md).
  *
  * UX: fullscreen immersive on entry (status + nav bars hidden), the video
@@ -210,6 +311,7 @@ fun DirectRtpScreen(
     val panelScroll = androidx.compose.foundation.rememberScrollState()
     var hudChartOn by remember { mutableStateOf(prefs.getBoolean("hud_chart", true)) }
     var hudMediumOn by remember { mutableStateOf(prefs.getBoolean("hud_medium", false)) }
+    var hudLatencyOn by remember { mutableStateOf(prefs.getBoolean("hud_latency", false)) }
     val samples = remember { RollingSamples(60) }
     var transportMode by remember { mutableStateOf("sipsorcery") }
     var decodePref by remember { mutableStateOf(prefs.getString("decode_pref", "auto") ?: "auto") }
@@ -218,6 +320,7 @@ fun DirectRtpScreen(
     // E2E latency overlay: the tablet's own epoch clock next to the mirrored
     // sender clock - their difference minus the calibrated offset = latency.
     var clockOffsetMs by remember { mutableLongStateOf(0L) }
+    val lat = remember { LatencyStats() }
     var clockNow by remember { mutableLongStateOf(0L) }
     var latencyOverlayOn by remember { mutableStateOf(prefs.getBoolean("latency_overlay", false)) }
     var chaosDupState by remember { mutableIntStateOf(chaosDup) }
@@ -255,6 +358,7 @@ fun DirectRtpScreen(
             .putBoolean("hud_enabled", hudEnabled)
             .putBoolean("hud_chart", hudChartOn)
             .putBoolean("hud_medium", hudMediumOn)
+            .putBoolean("hud_latency", hudLatencyOn)
             .putInt("hud_x", hudOffsetX)
             .putInt("hud_y", hudOffsetY)
             .apply()
@@ -278,6 +382,16 @@ fun DirectRtpScreen(
             val v = hudJitter
             val c = when { v < 30 -> StatusSuccess; v < 60 -> StatusWarning; else -> StatusError }
             rows.add(Triple("抖动", "%3.0f ms".format(v), c))
+        }
+        if (hudLatencyOn) {
+            // E2E (capture→visible, epoch-anchored ts) on the RTX/native
+            // path; chain (assemble→render) on the legacy path — labeled
+            // honestly by the mode suffix.
+            val e2e = lat.e2eEma
+            val mode = if (lat.anchored) "E2E" else "链路"
+            val v = if (lat.anchored) e2e else lat.decEma + lat.queueEma
+            val c = when { v <= 0 -> TextSecondary; v < 60 -> StatusSuccess; v < 90 -> StatusWarning; else -> StatusError }
+            rows.add(Triple("延迟($mode)", "%3.0f ms".format(v), c))
         }
         if (hudLossOn) {
             val (lost, total) = client?.receiverLossWindow ?: Pair(0, 0)
@@ -389,8 +503,27 @@ fun DirectRtpScreen(
             // saw 1-2 fps) while the swap counters spun on the workers.
             // Default dispatcher keeps the tile path entirely off Main.
             scope.launch {
-                clockOffsetMs = client?.measureClockOffsetMs() ?: 0L
-                android.util.Log.d("DirectRtp", "clock offset = ${clockOffsetMs}ms")
+                // Clock offset: re-measured every 30s — the E2E latency
+                // readout rides on it, and a single connect-time sample
+                // drifts as the TLS roundtrip degrades (measured: -0.4ms/s
+                // on this link). Three samples per cycle, smallest-RTT wins
+                // (the midpoint calibration only holds for symmetric RTTs).
+                while (true) {
+                    val c = client ?: break
+                    var best: com.unilinker.android.mediatier.DirectRtpClient.ClockSync? = null
+                    repeat(3) {
+                        val s = c.measureClockSync()
+                        if (s != null && (best == null || s.rttMs < best!!.rttMs)) best = s
+                    }
+                    val sync = best
+                    if (sync != null) {
+                        clockOffsetMs = if (clockOffsetMs == 0L) sync.offsetMs else (clockOffsetMs + sync.offsetMs) / 2
+                        lat.setAnchor(sync.anchorTs, sync.anchorCapMs)
+                        android.util.Log.d("DirectRtp",
+                            "clock offset = ${clockOffsetMs}ms (rtt=${sync.rttMs}ms anchor=${sync.anchorTs}/${sync.anchorCapMs})")
+                    }
+                    kotlinx.coroutines.delay(30_000)
+                }
             }
             frameJob = scope.launch(kotlinx.coroutines.Dispatchers.Default) {
                 if (newClient.transportIsTile) {
@@ -412,15 +545,19 @@ fun DirectRtpScreen(
                         }
                     }
                 } else {
-                    newClient.frames.collect { au ->
+                    newClient.frames.collect { f ->
                         if (surfaceReady) {
                             val dec = decoder ?: run {
                                 val st = pendingSurface ?: return@collect
                                 val d = com.unilinker.android.mediatier.H264SurfaceDecoder(st)
+                                d.onRendered = { pts, renderNs -> lat.onRendered(pts, renderNs, clockOffsetMs) }
                                 decoder = d
                                 d
                             }
-                            dec.submitAnnexB(au, System.nanoTime() / 1000)
+                            val pts = System.nanoTime() / 1000
+                            dec.submitAnnexB(f.au, pts)
+                            lat.pair(pts, f.rtpTs)
+                            lat.sampleQueue((System.nanoTime() - f.assembledNs) / 1e6)
                             decodedCount++
                         }
                     }
@@ -430,10 +567,13 @@ fun DirectRtpScreen(
     }
 
     // Latency-overlay ticker: runs only while the overlay switch is on.
+    // 60Hz refresh: the screenshot method reads this text as the tablet-side
+    // witness — a 10Hz ticker added 0-100ms of staleness to every reading
+    // (measured spread 9-88ms on identical latency).
     LaunchedEffect(latencyOverlayOn, client != null) {
         while (latencyOverlayOn && client != null) {
             clockNow = System.currentTimeMillis()
-            delay(100)
+            delay(16)
         }
     }
 
@@ -526,6 +666,7 @@ fun DirectRtpScreen(
                     if (renderedNow < lastFrames) lastFrames = renderedNow
                     if (c == null || c.state.value != com.unilinker.android.mediatier.DirectRtpClient.State.STREAMING) {
                         hudFps = 0.0; hudMbps = 0.0
+                        lat.reset()
                         lastFrames = renderedNow
                         lastBytes = 0
                         lastTime = now
@@ -570,6 +711,11 @@ fun DirectRtpScreen(
                     )
                     android.util.Log.d("DirectRtp",
                         "hud: fps=${"%.1f".format(hudFps)} dFrames=$dFrames decoded=${decoder?.decodedFrames} decNull=${decoder == null} sReady=$surfaceReady subCount=$decodedCount state=${c.state.value} pkts=${st.first} assembled=${c.receiverAssembledAUs} corruptDropped=${c.receiverDroppedCorruptAUs} pendingNals=${c.receiverNalsBuffered}")
+                    if (hudLatencyOn) {
+                        val (p50, p95, mx) = lat.e2ePercentiles()
+                        android.util.Log.d("DirectRtp",
+                            "lat: mode=${if (lat.anchored) "e2e" else "chain"} e2e=${"%.1f".format(lat.e2eEma)} p50=${"%.1f".format(p50)} p95=${"%.1f".format(p95)} max=${"%.1f".format(mx)} dec=${"%.1f".format(lat.decEma)} queue=${"%.1f".format(lat.queueEma)}")
+                    }
 
                     if (dBytes > 0) {
                         stallPolls = 0
@@ -821,6 +967,7 @@ fun DirectRtpScreen(
                     if (c == null || st == null) null
                     else {
                         val u = com.unilinker.android.mediatier.DeviceProbe.usageSample()
+                        val (p50, p95, mx) = lat.e2ePercentiles()
                         com.unilinker.android.ui.DiagStats(
                             medium = c.medium,
                             received = st.first,
@@ -833,6 +980,13 @@ fun DirectRtpScreen(
                             gpuPct = u.gpuPct,
                             memAvailMb = u.memAvailMb,
                             decodeMs = u.decodeMs,
+                            latMode = if (lat.anchored) "e2e" else "chain",
+                            latE2eMs = if (lat.anchored) lat.e2eEma else lat.decEma + lat.queueEma,
+                            latP50Ms = p50,
+                            latP95Ms = p95,
+                            latMaxMs = mx,
+                            latDecMs = lat.decEma,
+                            latQueueMs = lat.queueEma,
                         )
                     }
                 },
@@ -860,6 +1014,8 @@ fun DirectRtpScreen(
                 onHudRes = { hudResOn = it; persistHud() },
                 onHudChart = { hudChartOn = it; persistHud() },
                 onHudMedium = { hudMediumOn = it; persistHud() },
+                hudLatencyOn = hudLatencyOn,
+                onHudLatency = { hudLatencyOn = it; persistHud() },
                 onCycleRes = {
                     resIdx = (resIdx + 1) % resOptions.size
                     prefs.edit().putInt("tier_res", resIdx).apply()

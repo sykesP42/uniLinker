@@ -20,6 +20,8 @@ import android.os.Build
 object MediaCodecProbe {
     private val vendorKeys = listOf(
         "vendor.qti-ext-dec-low-latency.enable",   // Qualcomm (MSM8974 generation)
+        "vendor.qti-ext-dec-picture-order.enable", // Qualcomm: decode-order output
+        "low-latency",                             // Android 11 key (pre-R: ignored)
         "vendor.hisi-ext-low-latency-dec.enable",  // HiSilicon Kirin
         "vendor.mtk-vdec-lowlatancy.enable",       // MediaTek (sic — upstream typo)
         // Moonlight's MediaCodecHelper sets this on QCOM decoders to clamp

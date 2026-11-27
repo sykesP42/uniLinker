@@ -117,6 +117,16 @@ data class DiagStats(
     val gpuPct: Int = 0,
     val memAvailMb: Double = 0.0,
     val decodeMs: Double? = null,
+    // Per-frame latency decomposition (LatencyStats EMA + percentiles):
+    // mode = e2e (epoch-anchored ts, capture→visible) | chain (legacy path,
+    // assemble→render only). Percentiles over the last ~5s of frames.
+    val latMode: String = "chain",
+    val latE2eMs: Double = 0.0,
+    val latP50Ms: Double = 0.0,
+    val latP95Ms: Double = 0.0,
+    val latMaxMs: Double = 0.0,
+    val latDecMs: Double = 0.0,
+    val latQueueMs: Double = 0.0,
 )
 
 /** Draggable floating ball; auto-dims after 3 s without touch. Tap = toggle. */
@@ -238,6 +248,7 @@ fun FloatingPanel(
     hudResOn: Boolean,
     hudChartOn: Boolean = true,
     hudMediumOn: Boolean = false,
+    hudLatencyOn: Boolean = false,
     latencyOverlayOn: Boolean = false,
     onLatencyOverlay: (Boolean) -> Unit = {},
     onClose: () -> Unit = {},
@@ -256,6 +267,7 @@ fun FloatingPanel(
     onHudRes: (Boolean) -> Unit,
     onHudChart: (Boolean) -> Unit = {},
     onHudMedium: (Boolean) -> Unit = {},
+    onHudLatency: (Boolean) -> Unit = {},
     onCycleRes: () -> Unit,
     onCycleBr: () -> Unit,
     onCycleFps: () -> Unit,
@@ -414,6 +426,7 @@ fun FloatingPanel(
             HudToggleRow("分辨率", hudResOn, onHudRes)
             HudToggleRow("曲线", hudChartOn, onHudChart)
             HudToggleRow("介质", hudMediumOn, onHudMedium)
+            HudToggleRow("延迟", hudLatencyOn, onHudLatency)
             androidx.compose.material3.TextButton(onClick = onResetPositions) {
                 Text("重置悬浮位置", style = MaterialTheme.typography.labelSmall, color = Copper)
             }
@@ -551,6 +564,12 @@ private fun DiagnosticsSection(provider: () -> DiagStats?) {
             if (d.gpuPct > 80) StatusWarning else TextPrimary)
         DiagRow("内存可用", String.format("%.1f GB", d.memAvailMb), TextPrimary)
         DiagRow("解码耗时", d.decodeMs?.let { String.format("%.1f ms/帧", it) } ?: "硬件管线", TextSecondary)
+        DiagRow("延迟(${d.latMode}) EMA", String.format("%.1f ms", d.latE2eMs),
+            if (d.latE2eMs <= 0 || d.latE2eMs < 90) TextPrimary else StatusWarning)
+        DiagRow("延迟 p50 / p95", String.format("%.1f / %.1f ms", d.latP50Ms, d.latP95Ms), TextPrimary)
+        DiagRow("延迟 max(5s)", String.format("%.1f ms", d.latMaxMs), TextPrimary)
+        DiagRow("解码段(提交→上屏)", String.format("%.1f ms", d.latDecMs), TextPrimary)
+        DiagRow("组装排队(收包→提交)", String.format("%.1f ms", d.latQueueMs), TextPrimary)
     }
 }
 

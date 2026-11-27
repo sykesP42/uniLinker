@@ -77,11 +77,18 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
     private val _state = MutableStateFlow(State.IDLE)
     val state: StateFlow<State> = _state.asStateFlow()
 
+    /** One assembled access unit with its timing metadata: the sender's
+     *  RTP timestamp (epoch-anchored on the RTX/native path, cumulative on
+     *  the legacy path — distinguishable by range check against the wall
+     *  clock) and the local assembly instant (nanoTime). The per-frame
+     *  latency decomposition consumes both. */
+    class AuFrame(val au: ByteArray, val rtpTs: Long, val assembledNs: Long)
+
     private val _error = MutableStateFlow<String?>(null)
     val error: StateFlow<String?> = _error.asStateFlow()
 
-    private val _frames = MutableSharedFlow<ByteArray>(extraBufferCapacity = 8, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
-    val frames: SharedFlow<ByteArray> = _frames.asSharedFlow()
+    private val _frames = MutableSharedFlow<AuFrame>(extraBufferCapacity = 8, onBufferOverflow = kotlinx.coroutines.channels.BufferOverflow.DROP_OLDEST)
+    val frames: SharedFlow<AuFrame> = _frames.asSharedFlow()
 
     @Volatile private var receiver: DirectRtpReceiver? = null
 
@@ -296,7 +303,7 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
                     listenPort = localPort,
                     masterKey = kv.copyOfRange(0, 16),
                     masterSalt = kv.copyOfRange(16, kv.size),
-                    onAu = { au -> _frames.tryEmit(au) },
+                    onAu = { au, ts, ns -> _frames.tryEmit(AuFrame(au, ts, ns)) },
                     onKeyFrameNeeded = { requestKeyFrame() },
                     nackTarget = java.net.InetSocketAddress(host, receiverPort),
                     onTile = { tileIdx, tileCount, isLastOfFrame, jpeg ->
@@ -377,7 +384,16 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
      *  over the TLS pairing channel with RTT/2 correction - the E2E latency
      *  overlay uses it to read the mirrored sender clock meaningfully.
      *  Returns the offset, or null on failure. */
-    suspend fun measureClockOffsetMs(): Long? = withContext(Dispatchers.IO) {
+    /** (offsetMs, rttMs, anchorTs, anchorCapMs) or null: offset = PC−tablet
+     *  via RTT/2 midpoint — asymmetric (busy) calls bias the midpoint LOW,
+     *  so the caller samples a few times and trusts the smallest-RTT one.
+     *  (anchorTs, anchorCapMs) = the sender's latest (RTP ts, capture-epoch)
+     *  pair — the u32 RTP ts cannot carry an absolute epoch (wraps every
+     *  ~13.2h), so the receiver anchors on this pair and extrapolates later
+     *  frames with signed u32 deltas. anchorCapMs=0 = no stream yet. */
+    class ClockSync(val offsetMs: Long, val rttMs: Long, val anchorTs: Long, val anchorCapMs: Long)
+
+    suspend fun measureClockSync(): ClockSync? = withContext(Dispatchers.IO) {
         try {
             val request = Request.Builder()
                 .url("https://$host:$tlsPort/ulp/time")
@@ -385,11 +401,16 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
             val t0 = System.currentTimeMillis()
             http.newCall(request).execute().use { response ->
                 val t1 = System.currentTimeMillis()
-                val pcMs = JSONObject(response.body!!.string()).getLong("t")
-                pcMs - ((t0 + t1) / 2)
+                val json = JSONObject(response.body!!.string())
+                ClockSync(
+                    json.getLong("t") - ((t0 + t1) / 2),
+                    t1 - t0,
+                    json.optLong("ts", 0),
+                    json.optLong("tscap", 0),
+                )
             }
         } catch (e: Exception) {
-            android.util.Log.w("DirectRtp", "clock offset failed: ${e.message}")
+            android.util.Log.w("DirectRtp", "clock sync failed: ${e.message}")
             null
         }
     }
