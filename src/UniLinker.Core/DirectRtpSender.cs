@@ -27,9 +27,24 @@ namespace UniLinker.Core;
 /// </summary>
 internal sealed class DirectRtpSender : IDisposable
 {
-    /// <summary>RTP payload budget per packet: 1500 MTU − 20 IP − 8 UDP
-    /// − 12 RTP − 10 SRTP tag, trimmed for tunnel overhead.</summary>
-    public const int MaxPayload = 1400;
+    /// <summary>RTP payload budget per packet on the 1500-MTU path (WiFi):
+    /// 1500 − 20 IP − 8 UDP − 12 RTP − 10 SRTP tag, trimmed for tunnel
+    /// overhead.</summary>
+    public const int MaxPayloadWifi = 1400;
+    /// <summary>USB RNDIS payload budget: the serial per-packet cost
+    /// (SRTP transform + HMAC + syscall) dominates the frame budget at
+    /// 64Mbps/60fps — 92 packets × ~0.2ms = 18ms of serialized work per
+    /// 16.7ms frame on BOTH ends (pacer thread + receiver unprotect), the
+    /// measured p95 tail's main source. 8KB datagrams cut the packet count
+    /// ~7.5×; IP fragmentation splits them to the 1500 MTU link in-kernel
+    /// and the tablet's kernel reassembles before the SRTP unprotect, so
+    /// the crypto semantics (one seq, one HMAC over the whole datagram)
+    /// are unchanged. USB loses ~0% packets — the coarser NACK granularity
+    /// (one lost fragment = one 8KB seq) costs nothing there. WiFi keeps
+    /// 1400: a lost IP fragment there destroys the whole 8KB datagram.</summary>
+    public const int MaxPayloadUsb = 8000;
+    /// <summary>Per-instance packet budget, set by medium in the ctor.</summary>
+    public int MaxPayload { get; }
     public const int RingCapacity = 4096;
     public const uint NackMagic = 0x554E494E; // "UNIN"
 
@@ -55,6 +70,9 @@ internal sealed class DirectRtpSender : IDisposable
     /// <summary>Epoch-anchored timestamps (see RtpTiming.EpochTimestampFor):
     /// the boot-epoch sample + last emitted ts (the anti-collision ref).</summary>
     private readonly long _bootEpochMs = RtpTiming.SampleBootEpochMs();
+    private double _ageEmaMs;
+    private double _ageMaxMs;
+    private long _framesSent;
 
     // ── Packet pacer (M5) ──
     // SendAu runs on the ENCODE worker; pacing inline would stall it. AUs
@@ -111,9 +129,9 @@ internal sealed class DirectRtpSender : IDisposable
         // (12-34%). 32000kbps → 4000 B/ms tier → ×1.1 = 4400 B/ms.
         // USB RNDIS (192.168.42.x): NO airtime constraint (~35MB/s measured)
         // — drain at 30MB/s so a heavy frame serializes in single-digit ms.
-        _maxInstantBurstBytes = destination.Address.ToString().StartsWith("192.168.42.")
-            ? 256 * 1024
-            : 16 * 1024;
+        var isUsb = destination.Address.ToString().StartsWith("192.168.42.");
+        MaxPayload = isUsb ? MaxPayloadUsb : MaxPayloadWifi;
+        _maxInstantBurstBytes = isUsb ? 256 * 1024 : 16 * 1024;
         _pacerBytesPerMs = destination.Address.ToString().StartsWith("192.168.42.")
             ? 30_000L
             : (long)bitrateKbps * 11 / 80; // 32000kbps -> 4400 B/ms = 4.4MB/s
@@ -444,12 +462,23 @@ internal sealed class DirectRtpSender : IDisposable
                     _timestamp = RtpTiming.EpochTimestampFor(item.TsUs, _bootEpochMs, ref _timestamp);
                     RtpTimeAnchor.Update(_timestamp, _bootEpochMs + item.TsUs / 1000);
                     var packets = PacketizeAu(item.Au, _timestamp);
+                    // Frame age EMA + per-window max: the 1-in-60 instant
+                    // sample statistically misses GC pauses — the EMA and
+                    // max make the capture→wire distribution visible. Units:
+                    // Stopwatch→µs FIRST, then diff against the µs capture
+                    // timestamp (the ms−µs mix read as -16,280s on the first
+                    // RTX readout — the legacy branch had it right).
+                    var ageUs = (System.Diagnostics.Stopwatch.GetTimestamp() * 1_000_000 / System.Diagnostics.Stopwatch.Frequency
+                                 - item.TsUs);
+                    var ageMs = ageUs / 1000.0;
+                    _ageEmaMs = _ageEmaMs == 0 ? ageMs : _ageEmaMs * 0.95 + ageMs * 0.05;
+                    if (ageMs > _ageMaxMs) _ageMaxMs = ageMs;
                     if (++_framesSent % 60 == 1)
                     {
-                        var ageMs = (System.Diagnostics.Stopwatch.GetTimestamp() * 1000 / System.Diagnostics.Stopwatch.Frequency
-                                     - item.TsUs) / 1000;
-                        Log.Info($"[RTX] frame age {ageMs}ms (capture→wire) {packets.Count} pkts {item.Au.Length}B");
+                        Log.Info($"[RTX] frame age {ageMs:F1}ms ema={_ageEmaMs:F1}ms max={_ageMaxMs:F1}ms (capture→wire) {packets.Count} pkts {item.Au.Length}B");
+                        _ageMaxMs = 0;
                     }
+                    var frameSendStart = System.Diagnostics.Stopwatch.GetTimestamp();
                     foreach (var rtp in packets)
                     {
                         // Wait for credit before committing the packet.
@@ -472,6 +501,12 @@ internal sealed class DirectRtpSender : IDisposable
                             _udp.Send(protectedPacket, protectedPacket.Length, _destination);
                             PacketsSent++;
                         }
+                    }
+                    var frameSendMs = (System.Diagnostics.Stopwatch.GetTimestamp() - frameSendStart)
+                        * 1000 / System.Diagnostics.Stopwatch.Frequency;
+                    if (frameSendMs > 50)
+                    {
+                        Log.Info($"[pacer] slow frame: {frameSendMs}ms for {packets.Count} pkts ({item.Au.Length}B) budget {_pacerBytesPerMs}B/ms backlog now {_pacerQueue.Count}");
                     }
                 }
             }

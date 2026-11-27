@@ -296,6 +296,20 @@ public class DirectRtpChannelTests
     }
 
     [Fact]
+    public void MaxPayload_is_medium_aware()
+    {
+        // USB RNDIS: 8KB datagrams (the serial per-packet cost was the p95
+        // tail); WiFi keeps 1400 — a lost IP fragment there destroys the
+        // whole datagram.
+        using var usb = new UniLinker.Core.DirectRtpSender(
+            new IPEndPoint(IPAddress.Parse("192.168.42.39"), 5004), bindPort: 0);
+        usb.MaxPayload.Should().Be(UniLinker.Core.DirectRtpSender.MaxPayloadUsb);
+        using var wifi = new UniLinker.Core.DirectRtpSender(
+            new IPEndPoint(IPAddress.Parse("192.168.137.1"), 5004), bindPort: 0);
+        wifi.MaxPayload.Should().Be(UniLinker.Core.DirectRtpSender.MaxPayloadWifi);
+    }
+
+    [Fact]
     public async Task Nack_datagram_triggers_retransmission_of_ring_packets()
     {
         using var receiver = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));

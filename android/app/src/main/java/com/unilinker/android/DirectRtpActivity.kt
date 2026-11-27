@@ -90,6 +90,7 @@ import kotlinx.coroutines.withContext
  */
 private class LatencyStats {
     private val ring = ArrayDeque<Double>()
+    private val decRing = ArrayDeque<Double>()
     private val ptsToTs = ArrayDeque<Pair<Long, Long>>() // pts µs → RTP ts
 
     @Volatile var e2eEma = 0.0; private set
@@ -128,6 +129,10 @@ private class LatencyStats {
     fun onRendered(pts: Long, renderNs: Long, offsetMs: Long) {
         val decMs = (renderNs - pts * 1000) / 1e6
         decEma = if (decEma == 0.0) decMs else decEma * 0.8 + decMs * 0.2
+        synchronized(decRing) {
+            decRing.addLast(decMs)
+            while (decRing.size > 300) decRing.removeFirst()
+        }
         val rtpTs = synchronized(this) { ptsToTs.removeFirstOrNull()?.second ?: -1L }
         if (rtpTs < 0 || anchorCapMs <= 0) return
         // Signed u32 delta from the anchor — exact for ±13.2h of stream time.
@@ -163,9 +168,19 @@ private class LatencyStats {
         }
     }
 
+    /** (p50, p95) over the recent decode-turnaround ring, ms — separates a
+     *  Venus pipeline tail from a PC/network tail. */
+    fun decPercentiles(): Pair<Double, Double> = synchronized(decRing) {
+        if (decRing.isEmpty()) Pair(0.0, 0.0)
+        else {
+            val s = decRing.sorted()
+            Pair(s[s.size / 2], s[(s.size * 95) / 100])
+        }
+    }
+
     fun reset() {
         synchronized(this) {
-            ring.clear(); ptsToTs.clear()
+            ring.clear(); decRing.clear(); ptsToTs.clear()
             e2eEma = 0.0; decEma = 0.0; queueEma = 0.0; anchored = false
             // The anchor pair belongs to the sender's session (a PC-side
             // restart resets its ts to 0) — re-fetch on the next sync tick.
@@ -713,8 +728,9 @@ fun DirectRtpScreen(
                         "hud: fps=${"%.1f".format(hudFps)} dFrames=$dFrames decoded=${decoder?.decodedFrames} decNull=${decoder == null} sReady=$surfaceReady subCount=$decodedCount state=${c.state.value} pkts=${st.first} assembled=${c.receiverAssembledAUs} corruptDropped=${c.receiverDroppedCorruptAUs} pendingNals=${c.receiverNalsBuffered}")
                     if (hudLatencyOn) {
                         val (p50, p95, mx) = lat.e2ePercentiles()
+                        val (d50, d95) = lat.decPercentiles()
                         android.util.Log.d("DirectRtp",
-                            "lat: mode=${if (lat.anchored) "e2e" else "chain"} e2e=${"%.1f".format(lat.e2eEma)} p50=${"%.1f".format(p50)} p95=${"%.1f".format(p95)} max=${"%.1f".format(mx)} dec=${"%.1f".format(lat.decEma)} queue=${"%.1f".format(lat.queueEma)}")
+                            "lat: mode=${if (lat.anchored) "e2e" else "chain"} e2e=${"%.1f".format(lat.e2eEma)} p50=${"%.1f".format(p50)} p95=${"%.1f".format(p95)} max=${"%.1f".format(mx)} dec=${"%.1f".format(lat.decEma)} d95=${"%.1f".format(d95)} queue=${"%.1f".format(lat.queueEma)} wire=${"%.1f".format(c.receiverWireGapMs)}")
                     }
 
                     if (dBytes > 0) {

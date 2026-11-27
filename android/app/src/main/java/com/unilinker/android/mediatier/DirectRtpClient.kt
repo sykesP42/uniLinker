@@ -148,6 +148,11 @@ class DirectRtpClient(private val host: String, private val tlsPort: Int) {
     val receiverJitter: Double
         get() = receiver?.jitterMs ?: 0.0
 
+    /** wire→组装 gap (serial unprotect span) — the previously-unmeasured
+     *  latency segment. */
+    val receiverWireGapMs: Double
+        get() = receiver?.wireGapMs ?: 0.0
+
     val receiverLossWindow: Pair<Int, Int>?
         get() = receiver?.lossWindowStats()
 

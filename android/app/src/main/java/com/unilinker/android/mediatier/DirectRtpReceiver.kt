@@ -108,20 +108,51 @@ class DirectRtpReceiver(
     private var lastFrameRtpTs = -1L
     private var lastFrameArrivalNs = 0L
 
-    /** Sliding loss window: (timestampMs, lost?) per packet, trimmed to 5 s.
-     *  Guarded by [lossGate] — the RTP loop mutates it while the HUD poller
-     *  iterates on the UI thread (ConcurrentModificationException crash). */
-    private val lossWindow = ArrayDeque<Pair<Long, Boolean>>()
+    /** wire→组装 gap (ms, EMA): receive of an AU's FIRST packet → onAu —
+     *  the serial unprotect/depacketize span, invisible to every other
+     *  measured segment. Tail suspect #1 (the audit's unmeasured gap). */
+    @Volatile var wireGapMs: Double = 0.0
+        private set
+    private var auFirstPacketNs = 0L
+
+    /** Sliding loss window as 5 × 1-second buckets: O(1) per packet and per
+     *  HUD query (the old per-packet deque reached ~27,600 entries at 5.5kpps
+     *  and was iterated under the lock on every HUD poll — multi-ms recv-thread
+     *  stalls per poll). Guarded by [lossGate]: the RTP loop mutates while
+     *  the UI thread reads (the CCE crash pattern). */
+    private val lossBucketSec = LongArray(5)
+    private val lossBucketTotal = LongArray(5)
+    private val lossBucketLost = LongArray(5)
     private val lossGate = Any()
 
-    /** (lost, total) within the last [windowMs] milliseconds. */
-    fun lossWindowStats(windowMs: Long = 5000L): Pair<Int, Int> {
-        val cutoff = System.currentTimeMillis() - windowMs
+    private fun pushLoss(nowMs: Long, lostCount: Int = 0, totalCount: Int = 1) {
         synchronized(lossGate) {
-            while (lossWindow.isNotEmpty() && lossWindow.first().first < cutoff) lossWindow.removeFirst()
-            var lost = 0
-            for ((_, wasLost) in lossWindow) if (wasLost) lost++
-            return Pair(lost, lossWindow.size)
+            val sec = nowMs / 1000L
+            val slot = (sec % 5).toInt()
+            if (lossBucketSec[slot] != sec) {
+                lossBucketSec[slot] = sec
+                lossBucketTotal[slot] = 0
+                lossBucketLost[slot] = 0
+            }
+            lossBucketTotal[slot] += totalCount
+            lossBucketLost[slot] += lostCount
+        }
+    }
+
+    /** (lost, total) within the last ~5 seconds. */
+    fun lossWindowStats(windowMs: Long = 5000L): Pair<Int, Int> {
+        val nowSec = System.currentTimeMillis() / 1000L
+        synchronized(lossGate) {
+            var total = 0L
+            var lost = 0L
+            for (i in 0 until 5) {
+                val age = nowSec - lossBucketSec[i]
+                if (lossBucketSec[i] != 0L && age in 0 until (windowMs / 1000L)) {
+                    total += lossBucketTotal[i]
+                    lost += lossBucketLost[i]
+                }
+            }
+            return Pair(lost.toInt(), total.toInt())
         }
     }
 
@@ -182,6 +213,7 @@ class DirectRtpReceiver(
 
         val seq = ((bytes[2].toInt() and 0xFF) shl 8) or (bytes[3].toInt() and 0xFF)
         val now = System.currentTimeMillis()
+        pushLoss(now)
 
         // ── Reorder + NACK pipeline (single-threaded, lazy timeout) ──
         if (expectedSeq == -1) {
@@ -256,9 +288,7 @@ class DirectRtpReceiver(
             if (skipped > 0) {
                 lostPackets += skipped
                 frameCorrupted = true
-                synchronized(lossGate) {
-                    repeat(skipped.coerceAtMost(400)) { lossWindow.add(Pair(now, true)) }
-                }
+                pushLoss(now, skipped.coerceAtMost(400), skipped.coerceAtMost(400))
                 android.util.Log.w("DirectRtp", "resync $expectedSeq->$newestKey (skipped $skipped, pending=${pending.size})")
                 if (onKeyFrameNeeded != null && now - lastPliMs >= 500L) {
                     lastPliMs = now
@@ -277,9 +307,7 @@ class DirectRtpReceiver(
         if (skipped > 0) {
             lostPackets += skipped
             frameCorrupted = true
-            synchronized(lossGate) {
-                repeat(skipped.coerceAtMost(400)) { lossWindow.add(Pair(now, true)) }
-            }
+            pushLoss(now, skipped.coerceAtMost(400), skipped.coerceAtMost(400))
             android.util.Log.w("DirectRtp", "gap $expectedSeq->${nextPending} unrecovered (lost $skipped, waited ${now - holeSinceMs}ms)")
             if (onKeyFrameNeeded != null && now - lastPliMs >= 500L) {
                 lastPliMs = now
@@ -380,9 +408,11 @@ class DirectRtpReceiver(
             )
             return@synchronized
         }
-        // Shared accounting (bytes/loss-window/jitter) runs for BOTH payload
+        // Shared accounting (bytes/jitter) runs for BOTH payload
         // types — the tile branch once returned early and skipped it, making
-        // the HUD report 100% loss on a healthy stream.
+        // the HUD report 100% loss on a healthy stream. (Loss accounting is
+        // a single pushLoss at the accept point in handle() — it used to be
+        // double-counted here, once per payload type.)
         bytesReceived += bytes.size
         // Frame-cadence jitter: at each FRAME boundary (RTP timestamp change)
         // compare the arrival spacing with the sender's timestamp spacing
@@ -407,11 +437,6 @@ class DirectRtpReceiver(
             }
             lastFrameRtpTs = rtpTs
             lastFrameArrivalNs = nowNs
-        }
-        synchronized(lossGate) {
-            lossWindow.add(Pair(nowArrival, false))
-            val cutoff = nowArrival - 5000L
-            while (lossWindow.isNotEmpty() && lossWindow.first().first < cutoff) lossWindow.removeFirst()
         }
 
         // Tile transport dispatch (PT 97): each completed tile flows to the
@@ -438,18 +463,23 @@ class DirectRtpReceiver(
         }
 
         val marker = (clear[1].toInt() and 0x80) != 0
+        if (auFirstPacketNs == 0L) auFirstPacketNs = nowNs
         nalBuffer.addAll(depacketizer.push(H264RtpDepacketizer.rtpPayload(clear)))
         if (nalBuffer.size % 50 == 0 && nalBuffer.size > 0) nalsBuffered = nalBuffer.size
-        synchronized(lossGate) {
-            lossWindow.add(Pair(nowArrival, false))
-            val cutoff = nowArrival - 5000L
-            while (lossWindow.isNotEmpty() && lossWindow.first().first < cutoff) lossWindow.removeFirst()
-        }
 
         if (marker && nalBuffer.isNotEmpty()) {
             val au = concat(nalBuffer)
             nalBuffer.clear()
             assembledAUs++
+            // wire→组装 gap: receive of the AU's FIRST packet → onAu. The
+            // serial unprotect/depacketize span the old instrumentation
+            // never covered (the audit's tail suspect #1) — with 8KB USB
+            // packets this collapses from 9-18ms/frame to ~2ms.
+            if (auFirstPacketNs > 0) {
+                val gapMs = (nowNs - auFirstPacketNs) / 1e6
+                wireGapMs = if (wireGapMs == 0.0) gapMs else wireGapMs * 0.8 + gapMs * 0.2
+            }
+            auFirstPacketNs = 0L
             if (frameCorrupted) {
                 // A skipped packet landed inside this frame — feeding the
                 // decoder garbage poisons references for the whole GOP and
