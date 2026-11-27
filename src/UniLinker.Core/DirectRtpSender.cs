@@ -52,8 +52,9 @@ internal sealed class DirectRtpSender : IDisposable
 
     private ushort _seq;
     private uint _timestamp;
-    private long _lastFrameTsUs = -1;
-    private uint _lastDurationRtp = RtpTiming.DefaultDurationRtp;
+    /// <summary>Epoch-anchored timestamps (see RtpTiming.EpochTimestampFor):
+    /// the boot-epoch sample + last emitted ts (the anti-collision ref).</summary>
+    private readonly long _bootEpochMs = RtpTiming.SampleBootEpochMs();
 
     // ── Packet pacer (M5) ──
     // SendAu runs on the ENCODE worker; pacing inline would stall it. AUs
@@ -246,6 +247,13 @@ internal sealed class DirectRtpSender : IDisposable
     public void SendAu(byte[] annexBAu, long timestampUs, bool isKeyFrame = false)
     {
         if (_disposed) return;
+        // SPS VUI bitstream-restriction fixup: this device's Venus decoder
+        // honors NO low-latency MediaFormat key (probe verdict 2026-11-28) —
+        // the stream itself is the only lever (max_num_reorder_frames=0 +
+        // max_dec_frame_buffering=1). No-SPS AUs pass through unchanged
+        // (one NAL-type scan); patches live here so EVERY H264 encoder
+        // (nvenc / OpenH264) and both transports share one fixup.
+        annexBAu = H264SpsFixup.PatchAnnexB(annexBAu);
         if (isKeyFrame)
         {
             while (_pacerQueue.Count > 0) _pacerQueue.TryTake(out _);
@@ -361,12 +369,17 @@ internal sealed class DirectRtpSender : IDisposable
                 if (_tileMode)
                 {
                     // Tile frames share one RTP timestamp (the frame id);
-                    // advance the 90 kHz clock once per frame.
+                    // set the 90 kHz clock once per frame (epoch-anchored).
                     if (item.TsUs != _lastTileTsUs)
                     {
-                        uint durationRtp = RtpTiming.DurationFor(item.TsUs, ref _lastFrameTsUs, ref _lastDurationRtp);
-                        _timestamp += durationRtp;
+                        _timestamp = RtpTiming.EpochTimestampFor(item.TsUs, _bootEpochMs, ref _timestamp);
                         _lastTileTsUs = item.TsUs;
+                        if (++_framesSent % 60 == 1)
+                        {
+                            var ageMs = (System.Diagnostics.Stopwatch.GetTimestamp() * 1000 / System.Diagnostics.Stopwatch.Frequency
+                                         - item.TsUs) / 1000;
+                            Log.Info($"[RTX] frame age {ageMs}ms (capture→wire) tiles-blob {item.Au.Length}B");
+                        }
                     }
                     // Split the frame blob into its wire packets and pace
                     // each; the tile assembler keys on the timestamp.
@@ -428,9 +441,15 @@ internal sealed class DirectRtpSender : IDisposable
                 }
                 else
                 {
-                    uint durationRtp = RtpTiming.DurationFor(item.TsUs, ref _lastFrameTsUs, ref _lastDurationRtp);
-                    _timestamp += durationRtp;
+                    _timestamp = RtpTiming.EpochTimestampFor(item.TsUs, _bootEpochMs, ref _timestamp);
+                    RtpTimeAnchor.Update(_timestamp, _bootEpochMs + item.TsUs / 1000);
                     var packets = PacketizeAu(item.Au, _timestamp);
+                    if (++_framesSent % 60 == 1)
+                    {
+                        var ageMs = (System.Diagnostics.Stopwatch.GetTimestamp() * 1000 / System.Diagnostics.Stopwatch.Frequency
+                                     - item.TsUs) / 1000;
+                        Log.Info($"[RTX] frame age {ageMs}ms (capture→wire) {packets.Count} pkts {item.Au.Length}B");
+                    }
                     foreach (var rtp in packets)
                     {
                         // Wait for credit before committing the packet.

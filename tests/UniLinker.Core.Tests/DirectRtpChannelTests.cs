@@ -264,6 +264,38 @@ public class DirectRtpChannelTests
     }
 
     [Fact]
+    public void EpochTimestamp_maps_capture_us_to_90k_ticks_of_epoch()
+    {
+        // bootEpochMs=1000, capture at boot+2000ms → epoch 3000ms → 3000*90 ticks.
+        var last = 0u;
+        var ts = RtpTiming.EpochTimestampFor(2_000_000, 1000, ref last);
+        ts.Should().Be(3000u * 90);
+        last.Should().Be(ts);
+    }
+
+    [Fact]
+    public void EpochTimestamp_preserves_frame_deltas_and_survives_u32_wrap()
+    {
+        // Two frames 16.67ms apart keep their delta in ticks — the receiver
+        // diffs with unsigned 32-bit arithmetic, so the u32 wrap (13.2h)
+        // changes nothing about the delta.
+        var last = 0u;
+        long bootEpoch = 100_000;
+        var ts1 = RtpTiming.EpochTimestampFor(16_667_000, bootEpoch, ref last);
+        var ts2 = RtpTiming.EpochTimestampFor(33_333_000, bootEpoch, ref last);
+        (ts2 - ts1).Should().Be((uint)((33_333 - 16_667) * 90));
+    }
+
+    [Fact]
+    public void EpochTimestamp_breaks_ties_when_two_frames_share_one_millisecond()
+    {
+        var last = 0u;
+        var ts1 = RtpTiming.EpochTimestampFor(500_000, 0, ref last);
+        var ts2 = RtpTiming.EpochTimestampFor(500_400, 0, ref last); // same epoch ms
+        ts2.Should().Be(ts1 + 1, "the +1 guard keeps consecutive AUs distinct (tile assembler keys on ts)");
+    }
+
+    [Fact]
     public async Task Nack_datagram_triggers_retransmission_of_ring_packets()
     {
         using var receiver = new UdpClient(new IPEndPoint(IPAddress.Loopback, 0));

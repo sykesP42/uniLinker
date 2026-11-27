@@ -148,9 +148,24 @@ internal class DirectRtpChannelLegacy : IDirectRtpChannel
         if (session == null || State != ChannelState.Open) return;
 
         uint durationRtp = RtpTiming.DurationFor(packet.TimestampUs, ref _lastFrameTsUs, ref _lastDurationRtp);
-        session.SendVideo(durationRtp, packet.Data);
+        // SPS VUI fixup (see DirectRtpSender.SendAu — same verdict-driven
+        // patch; the legacy path hands the raw AU to SIPSorcery's internal
+        // packetizer, so the rewrite must happen before that).
+        var au = H264SpsFixup.PatchAnnexB(packet.Data);
+        session.SendVideo(durationRtp, au);
+        // Per-frame PC-side latency visibility (the legacy path has no
+        // epoch-anchored ts — the tablet computes wire→render locally, and
+        // this log closes the capture→wire half of the decomposition).
+        if (++_framesLogged % 60 == 1)
+        {
+            var ageUs = System.Diagnostics.Stopwatch.GetTimestamp() * 1_000_000 / System.Diagnostics.Stopwatch.Frequency
+                        - packet.TimestampUs;
+            Log.Info($"[legacy] frame age {ageUs / 1000.0:F1}ms (capture→send) {packet.Data.Length}B");
+        }
         await Task.CompletedTask;
     }
+
+    private long _framesLogged;
 
     public void Dispose()
     {

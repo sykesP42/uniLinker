@@ -4,6 +4,34 @@ using UniLinker.Plugin.Sdk;
 namespace UniLinker.Core;
 
 /// <summary>
+/// Latest (RTP timestamp, capture-epoch-ms) pair from the active H264 send
+/// path. The u32 RTP timestamp alone CANNOT carry an absolute epoch —
+/// epoch_ms × 90 ticks wraps the u32 every ~13.2h (the tablet-side reading
+/// of ts/90 degenerates to boot-time residue, measured 2026-11-28) — so
+/// the receiver needs ONE anchor pair, fetched over /ulp/time at connect,
+/// and derives every later frame's capture epoch as
+/// anchor + signed-u32-delta/90 (exact for ±13.2h).
+/// </summary>
+public static class RtpTimeAnchor
+{
+    private static readonly object _gate = new();
+    private static long _ts;
+    private static long _capEpochMs;
+
+    public static void Update(long ts, long captureEpochMs)
+    {
+        lock (_gate) { _ts = ts; _capEpochMs = captureEpochMs; }
+    }
+
+    /// <summary>(RTP ts, capture-epoch-ms) of the same frame — a locked pair
+    /// read (a torn read would poison the receiver's delta extrapolation).</summary>
+    public static (long Ts, long CapEpochMs) Latest
+    {
+        get { lock (_gate) { return (_ts, _capEpochMs); } }
+    }
+}
+
+/// <summary>
 /// Shared RTP timestamp logic for both media send paths: WebRTC
 /// (PeerChannel) and direct UDP (DirectRtpChannel). SIPSorcery's SendVideo
 /// takes a DURATION in RTP units (added to the previous timestamp), not an
@@ -14,6 +42,34 @@ internal static class RtpTiming
 {
     public const int ClockRate = 90000;
     public const int DefaultDurationRtp = ClockRate / 30;
+
+    /// <summary>Epoch-anchored RTP timestamp: maps a capture timestamp (µs
+    /// since boot — WGC SystemRelativeTime domain, the same clock as
+    /// <see cref="System.Diagnostics.Stopwatch"/>) to a 90 kHz RTP tick
+    /// whose absolute value IS the capture instant's epoch. A receiver that
+    /// knows the sender's wall clock (the /ulp/time offset calibration)
+    /// then computes per-frame E2E latency as (now − ts/90) with no further
+    /// signaling. The legacy SIPSorcery path keeps duration-based ts — it
+    /// owns its timestamp accumulator internally and has no absolute-ts API;
+    /// the receiver detects anchored vs unanchored streams by range check.
+    /// Wraps the u32 every ~13.2h (RFC 3550 unsigned-delta territory). The
+    /// +1 guard keeps consecutive AUs distinct when two frames land in the
+    /// same epoch millisecond.</summary>
+    public static uint EpochTimestampFor(long timestampUs, long bootEpochMs, ref uint lastTs)
+    {
+        // ms → 90 kHz ticks: 90 ticks per MILLISECOND (ClockRate is per
+        // second; the unit mix-up would wrap the u32 every 47 seconds).
+        var ts = (uint)((bootEpochMs + timestampUs / 1000) * (ClockRate / 1000));
+        if (ts == lastTs) ts++;
+        lastTs = ts;
+        return ts;
+    }
+
+    /// <summary>One-shot QPC-domain boot epoch (ms): epoch now minus ms
+    /// since boot. Sampled once per sender; drift ~1ms over hours.</summary>
+    public static long SampleBootEpochMs() =>
+        DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        - System.Diagnostics.Stopwatch.GetTimestamp() * 1000 / System.Diagnostics.Stopwatch.Frequency;
 
     /// <summary>Derive the RTP duration for this frame from its capture
     /// timestamp. Clamped to 1..120 fps so a bad timestamp cannot emit an

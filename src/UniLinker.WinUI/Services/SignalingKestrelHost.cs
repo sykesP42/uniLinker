@@ -116,9 +116,21 @@ public sealed class SignalingKestrelHost : IDisposable
 
         // Latency measurement: the tablet computes the clock offset against
         // this epoch-ms stamp (RTT/2 corrected) for the E2E latency overlay.
+        // The (ts, tscap) pair is the RTP-time anchor: the u32 RTP ts cannot
+        // carry an absolute epoch (epoch_ms × 90 wraps the u32 every ~13.2h —
+        // measured 2026-11-28), so the receiver takes ONE (ts → capture-epoch)
+        // pair here and extrapolates every later frame with signed u32
+        // deltas. Zeros on a not-yet-streaming session (receiver falls back
+        // to chain-mode latency until the first frame flows).
         app.MapGet("/ulp/time", () =>
         {
-            return Results.Json(new { t = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() }, jsonOpts);
+            var anchor = UniLinker.Core.RtpTimeAnchor.Latest;
+            return Results.Json(new
+            {
+                t = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                ts = anchor.Ts,
+                tscap = anchor.CapEpochMs,
+            }, jsonOpts);
         });
 
         // M4 pairing discovery (informational only — the SAS code is compared
